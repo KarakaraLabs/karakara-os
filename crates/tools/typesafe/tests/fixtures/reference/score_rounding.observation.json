@@ -1,0 +1,39 @@
+{
+  "evidence_kind": "playground_observation",
+  "source": "user-supplied TypeSafe Playground result",
+  "request_excerpt": {
+    "questions": {
+      "new_score_1": {
+        "type": "score",
+        "instructions": "Where does the state fall on the scale?",
+        "criteria": [
+          "Lowest level of one dimension",
+          "Middle level of the same dimension",
+          "Highest level of the same dimension"
+        ]
+      }
+    }
+  },
+  "displayed_answer": {
+    "type": "score",
+    "score": 0.71,
+    "confidence": 0.53,
+    "probabilities": {
+      "0": 0.3,
+      "1": 0.69,
+      "2": 0.01
+    }
+  },
+  "derived_checks": {
+    "probability_sum": 1.0,
+    "weighted_mean": 0.71,
+    "confidence_before_display_rounding": 0.535
+  },
+  "omitted_from_capture": [
+    "state",
+    "model",
+    "legend",
+    "usage",
+    "raw_http_response"
+  ]
+}

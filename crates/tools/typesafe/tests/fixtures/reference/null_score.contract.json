@@ -1,0 +1,24 @@
+{
+  "evidence_kind": "documented_request_contract_case",
+  "sources": [
+    "https://docs.typesafe.ai/primitives/advanced.md#where-structure-is-allowed",
+    "https://docs.typesafe.ai/sdk/javascript/api/type-aliases/EntryType.md"
+  ],
+  "note": "The advanced structure reference explicitly permits null Score criteria entries. This fixture records request acceptance, not a model answer.",
+  "request": {
+    "state": "The state supplies no named descriptions for the scale levels.",
+    "model": "jev-1.13.0",
+    "questions": {
+      "position": {
+        "type": "score",
+        "instructions": "Where does the state fall on the three-level scale?",
+        "criteria": [
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  },
+  "validation_expectation": "accept"
+}

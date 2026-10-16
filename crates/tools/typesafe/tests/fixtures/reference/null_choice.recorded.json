@@ -1,0 +1,31 @@
+{
+  "evidence_kind": "provider_documentation_recorded_example_excerpt",
+  "source": "https://docs.typesafe.ai/primitives/choice.md#a-more-complex-example",
+  "note": "The published request contained five questions. This fixture retains the null-description question and its matching answer.",
+  "request_excerpt": {
+    "state": "Shoes arrived two weeks late and in the wrong size. Also I see two charges of $120 on my card. What are you going to do about this?",
+    "model": "jev-latest",
+    "questions": {
+      "tone": {
+        "type": "choice",
+        "instructions": "What is the customer's tone?",
+        "criteria": {
+          "calm": null,
+          "frustrated": null,
+          "angry": null
+        }
+      }
+    }
+  },
+  "answer": {
+    "type": "choice",
+    "choice": "frustrated",
+    "confidence": 0.76,
+    "probabilities": {
+      "frustrated": 0.84,
+      "angry": 0.16,
+      "calm": 0.0
+    }
+  },
+  "response_model": "jev-1.13.0"
+}

@@ -1,0 +1,77 @@
+{
+  "evidence_kind": "provider_documentation_recorded_example",
+  "source": "https://docs.typesafe.ai/primitives/score.md#structured-level-descriptions",
+  "request": {
+    "state": "Export to PDF fails with a spinner that never finishes. Some of our team say CSV export still works for them, others say it fails too.",
+    "model": "jev-latest",
+    "questions": {
+      "bug_severity": {
+        "type": "score",
+        "instructions": "How severe is the reported issue?",
+        "criteria": [
+          {
+            "what": "Cosmetic; no impact to functionality",
+            "examples": [
+              "typo in a label",
+              "misaligned icon"
+            ]
+          },
+          {
+            "what": "Broken or degraded feature, but workaround exists",
+            "examples": [
+              "export fails in one browser but works in another"
+            ]
+          },
+          {
+            "what": "Blocking issue; no workaround exists",
+            "examples": [
+              "cannot log in",
+              "data loss"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "bug_severity": {
+        "type": "score",
+        "score": 1.09,
+        "confidence": 0.87,
+        "legend": {
+          "0": {
+            "what": "Cosmetic; no impact to functionality",
+            "examples": [
+              "typo in a label",
+              "misaligned icon"
+            ]
+          },
+          "1": {
+            "what": "Broken or degraded feature, but workaround exists",
+            "examples": [
+              "export fails in one browser but works in another"
+            ]
+          },
+          "2": {
+            "what": "Blocking issue; no workaround exists",
+            "examples": [
+              "cannot log in",
+              "data loss"
+            ]
+          }
+        },
+        "probabilities": {
+          "0": 0.0,
+          "1": 0.91,
+          "2": 0.09
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 379,
+      "output_tokens": 18
+    }
+  }
+}

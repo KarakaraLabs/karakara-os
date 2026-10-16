@@ -1,0 +1,26 @@
+{
+  "evidence_kind": "documented_contract_derived_validation_case",
+  "sources": [
+    "https://docs.typesafe.ai/api.md#choice-answer",
+    "https://docs.typesafe.ai/confidence.md#confidence-is-derived-from-the-probabilities"
+  ],
+  "note": "The Confidence page defines equal top probabilities as a tie and an even Choice distribution as confidence zero. The selected option is intentionally one of the tied maxima.",
+  "question": {
+    "type": "choice",
+    "instructions": "Which equally supported option should be selected?",
+    "criteria": {
+      "alpha": null,
+      "beta": null
+    }
+  },
+  "derived_answer": {
+    "type": "choice",
+    "choice": "alpha",
+    "probabilities": {
+      "alpha": 0.5,
+      "beta": 0.5
+    },
+    "confidence": 0.0
+  },
+  "validation_expectation": "accept"
+}
