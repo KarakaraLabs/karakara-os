@@ -288,14 +288,20 @@ pub trait BamlTool: Send + Sync + 'static {
         json_schema_value::<Self::Output>()
     }
 
-    /// Execute the tool with the given arguments
-    ///
-    /// # Arguments
-    /// * `args` - Typed input for the tool
-    ///
-    /// # Returns
-    /// Typed output for the tool
+    /// Execute the tool with the given arguments.
     async fn execute(&self, args: Self::Input) -> Result<Self::Output>;
+
+    /// Execute the tool with the session context resolved at Open.
+    ///
+    /// Tools that need invocation scope or resolved configuration can override this method.
+    /// Existing tools keep using [`Self::execute`] through this default implementation.
+    async fn execute_with_context(
+        &self,
+        _ctx: ToolSessionContext,
+        args: Self::Input,
+    ) -> Result<Self::Output> {
+        self.execute(args).await
+    }
 
     /// Compact a tool result and produce a natural language summary.
     ///
@@ -2286,11 +2292,13 @@ impl<T: BamlTool> ToolHandler for ToolWrapper<T> {
         validate_open_input::<T::OpenInput>(open_input)?;
 
         let tool = self.tool.clone();
+        let session_ctx = ctx.clone();
         let executor: Box<dyn ToolExecutor> = Box::new(ExecutorAdapter::new(move |input| {
             let tool = tool.clone();
+            let execute_ctx = session_ctx.clone();
             Box::pin(async move {
                 let parsed: T::Input = deserialize_tool_input(input)?;
-                let output = tool.execute(parsed).await?;
+                let output = tool.execute_with_context(execute_ctx, parsed).await?;
                 serialize_tool_output(output)
             })
         }));

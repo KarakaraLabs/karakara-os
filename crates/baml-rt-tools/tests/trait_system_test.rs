@@ -13,10 +13,10 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt::tools::BamlTool;
 use baml_rt_core::{
-    context,
-    ids::{AgentId, UuidId},
+    BamlRtError, context,
+    ids::{AgentId, ContextId, ExternalId, TaskId, UuidId},
 };
-use baml_rt_tools::bundles::BundleType;
+use baml_rt_tools::{ToolRegistry, ToolStep, bundles::BundleType, tools::ToolSessionContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use test_support::common::{
@@ -162,6 +162,102 @@ impl BamlTool for StringManipulationTool {
             result,
         })
     }
+}
+
+struct ContextAwareTool;
+
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+struct ContextAwareInput {
+    value: String,
+}
+
+impl baml_rt_tools::DescribeAction for ContextAwareInput {
+    fn describe(&self) -> String {
+        "context-aware input".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+struct ContextAwareOutput {
+    value: String,
+    context_id: String,
+    agent_id: String,
+    task_id: Option<String>,
+}
+
+#[async_trait]
+impl BamlTool for ContextAwareTool {
+    type Bundle = Test;
+    const LOCAL_NAME: &'static str = "context_aware";
+    type OpenInput = ();
+    type Input = ContextAwareInput;
+    type Output = ContextAwareOutput;
+
+    fn description(&self) -> &'static str {
+        "Returns the session context passed to execute_with_context"
+    }
+
+    async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
+        Err(BamlRtError::ToolExecution(
+            "execute should not be called when execute_with_context is available".to_string(),
+        ))
+    }
+
+    async fn execute_with_context(
+        &self,
+        ctx: ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
+        Ok(ContextAwareOutput {
+            value: args.value,
+            context_id: ctx.context_id.to_string(),
+            agent_id: ctx.agent_id.to_string(),
+            task_id: ctx.task_id.map(|task_id| task_id.to_string()),
+        })
+    }
+}
+
+/// **Purpose:** The trait wrapper must pass the Open-time scope to a context-aware executor.
+#[tokio::test]
+async fn test_trait_tool_execute_with_context_receives_session_scope() {
+    let registry = ToolRegistry::new();
+    registry
+        .register(ContextAwareTool)
+        .expect("register context-aware tool");
+    let context_id = ContextId::new(91, 7);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000091").unwrap());
+    let task_id = TaskId::from_external(ExternalId::new("context-aware-task"));
+
+    let session_id = registry
+        .open_session_scoped(
+            "test/context_aware",
+            json!({}),
+            &context_id,
+            &agent_id,
+            Some(&task_id),
+        )
+        .await
+        .expect("open context-aware session");
+    registry
+        .session_send(&session_id, json!({"value": "payload"}))
+        .await
+        .expect("send context-aware input");
+    let step = registry
+        .session_read(&session_id, json!({}))
+        .await
+        .expect("read context-aware output");
+    let ToolStep::Done {
+        output: Some(output),
+    } = step
+    else {
+        panic!("expected one-shot Done output")
+    };
+
+    assert_eq!(output["value"], "payload");
+    assert_eq!(output["context_id"], context_id.to_string());
+    assert_eq!(output["agent_id"], agent_id.to_string());
+    assert_eq!(output["task_id"], task_id.to_string());
 }
 
 /// **Purpose:** Register ArithmeticTool and StringManipulationTool, then execute
