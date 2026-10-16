@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -123,9 +124,9 @@ pub use tools::{
     SecretType, SessionPlanFunctionsMap, SessionPlanTypeName, SessionPolicy, SessionTypeNames,
     ToolAccess, ToolBackend, ToolBundle, ToolBundleMetadata, ToolCapability, ToolConfigMetadata,
     ToolDiscoveryRecord, ToolExecutor, ToolFunctionMetadataExport, ToolHandler,
-    ToolMetadataBuilder, ToolName, ToolOrigin, ToolRegistry, ToolSessionAdvance, ToolSessionHandle,
-    ToolSlug, ToolTypeSpec, TypeBasedMetadataBuilder, UnifiedStepExecutorFunctionsMap,
-    UnifiedStepExecutorRootConfig, capability_invocation_mode,
+    ToolMetadataBuilder, ToolName, ToolOrigin, ToolRegistry, ToolSessionAdvance,
+    ToolSessionContext, ToolSessionHandle, ToolSlug, ToolTypeSpec, TypeBasedMetadataBuilder,
+    UnifiedStepExecutorFunctionsMap, UnifiedStepExecutorRootConfig, capability_invocation_mode,
     create_multi_send_session_tool_from_async, create_one_shot_tool_from_async,
     create_one_shot_tool_from_async_with_context, parse_tool_name_and_class,
     parse_unified_step_executors_authoring_json, project_archive_action_identity_from_parts,

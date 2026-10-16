@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,9 +16,8 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result, retry_after::RetryAfter, semantics::ErrorDisposition};
 use baml_rt_tools::{
-    ClassifiedToolError, baml_tool,
-    bundles::Support,
-    tools::{BamlTool, ToolHandler, create_tool_handler},
+    BamlTool, ClassifiedToolError, ToolHandler, ToolSessionContext, baml_tool, bundles::Support,
+    tools::create_tool_handler,
 };
 use integrations_notion_read::{self as notion_read, NotionReadClient, NotionReadError};
 /// Notion REST API base URL.
@@ -1015,7 +1015,7 @@ impl BamlTool for NotionTool {
         "Read-only Notion access: search pages, get page, and retrieve page blocks."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let api_key = self.client.api_key();
         let mut output = match args {
             NotionInput::SearchPages(input) => {
@@ -1136,7 +1136,7 @@ impl BamlTool for NotionSearchPagesTool {
         "Search Notion pages by query. Read-only."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let api_key = self.client.api_key();
         let mut output = self
             .client
@@ -1207,7 +1207,7 @@ impl BamlTool for NotionGetPageTool {
         "Fetch a Notion page by id. Read-only."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let api_key = self.client.api_key();
         let mut output = self.client.get_page(api_key, &args.page_id).await?;
         output.operation = None;
@@ -1270,7 +1270,7 @@ impl BamlTool for NotionGetPageBlocksTool {
         "Retrieve Notion block children for a page or block. Read-only."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let api_key = self.client.api_key();
         let render_mode = args.raw_blocks.unwrap_or_default();
         let max_depth = args.max_depth.unwrap_or(2).min(MAX_BLOCK_DEPTH);

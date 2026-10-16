@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,7 +22,7 @@ pub mod webhook;
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result};
-use baml_rt_tools::{baml_tool, bundles::Support, tools::BamlTool};
+use baml_rt_tools::{BamlTool, ToolSessionContext, baml_tool, bundles::Support};
 pub use intake::{
     GRAFANA_INTAKE_KEY, GRAFANA_WEBHOOK_PATH, GrafanaAlertsConfig, GrafanaWebhookIntake,
 };
@@ -81,7 +82,7 @@ impl BamlTool for GrafanaAlertsTool {
         "opening Grafana alerts intake (webhook-driven)".to_string()
     }
 
-    async fn execute(&self, _args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, _args: Self::Input) -> Result<Self::Output> {
         Err(BamlRtError::InvalidArgument(
             "support/grafana-alerts is webhook-driven; subscribe to grafana.alert.v1 instead of invoking it".to_string(),
         ))

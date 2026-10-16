@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,10 +14,10 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt::tools::BamlTool;
 use baml_rt_core::{
-    BamlRtError, context,
+    context,
     ids::{AgentId, ContextId, ExternalId, TaskId, UuidId},
 };
-use baml_rt_tools::{ToolRegistry, ToolStep, bundles::BundleType, tools::ToolSessionContext};
+use baml_rt_tools::{ToolRegistry, ToolSessionContext, ToolStep, bundles::BundleType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use test_support::common::{
@@ -78,7 +79,11 @@ impl BamlTool for ArithmeticTool {
         "Performs basic arithmetic operations: add, subtract, multiply, divide"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         let op_str = match args.operation {
             ArithmeticOp::Add => "+",
             ArithmeticOp::Subtract => "-",
@@ -149,7 +154,11 @@ impl BamlTool for StringManipulationTool {
         "Performs string manipulation operations: uppercase, lowercase, reverse"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         let result = match args.operation {
             StringOp::Uppercase => args.text.to_uppercase(),
             StringOp::Lowercase => args.text.to_lowercase(),
@@ -194,32 +203,26 @@ impl BamlTool for ContextAwareTool {
     type Output = ContextAwareOutput;
 
     fn description(&self) -> &'static str {
-        "Returns the session context passed to execute_with_context"
+        "Returns the session context passed to execute"
     }
 
-    async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
-        Err(BamlRtError::ToolExecution(
-            "execute should not be called when execute_with_context is available".to_string(),
-        ))
-    }
-
-    async fn execute_with_context(
+    async fn execute(
         &self,
-        ctx: ToolSessionContext,
+        ctx: &ToolSessionContext,
         args: Self::Input,
     ) -> baml_rt::Result<Self::Output> {
         Ok(ContextAwareOutput {
             value: args.value,
             context_id: ctx.context_id.to_string(),
             agent_id: ctx.agent_id.to_string(),
-            task_id: ctx.task_id.map(|task_id| task_id.to_string()),
+            task_id: ctx.task_id.as_ref().map(|task_id| task_id.to_string()),
         })
     }
 }
 
 /// **Purpose:** The trait wrapper must pass the Open-time scope to a context-aware executor.
 #[tokio::test]
-async fn test_trait_tool_execute_with_context_receives_session_scope() {
+async fn test_trait_tool_execute_receives_session_scope() {
     let registry = ToolRegistry::new();
     registry
         .register(ContextAwareTool)

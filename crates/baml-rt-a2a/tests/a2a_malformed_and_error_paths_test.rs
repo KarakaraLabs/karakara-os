@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -30,7 +31,9 @@ use std::{sync::Arc, time::Duration};
 
 use baml_derive::BamlType;
 use baml_rt::{
-    A2aAgent, A2aRequestHandler, QuickJSConfig, baml::BamlRuntimeManager, tools::BamlTool,
+    A2aAgent, A2aRequestHandler, QuickJSConfig,
+    baml::BamlRuntimeManager,
+    tools::{BamlTool, ToolSessionContext},
 };
 use baml_rt_tools::bundles::BundleType;
 use serde::{Deserialize, Serialize};
@@ -232,7 +235,11 @@ impl BamlTool for FailingTool {
         "Fails on execute for error-path tests"
     }
 
-    async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        _args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Err(baml_rt_core::BamlRtError::InvalidArgument(
             "tool failed by design".to_string(),
         ))

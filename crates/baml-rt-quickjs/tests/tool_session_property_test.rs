@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -17,7 +18,7 @@ use baml_rt_core::{
     context::{self, InvocationScope, RuntimeScope},
     ids::{AgentId, ContextId, ExternalId, MessageId, UuidId},
 };
-use baml_rt_tools::{BamlTool, ToolStep, bundles::BundleType};
+use baml_rt_tools::{BamlTool, ToolSessionContext, ToolStep, bundles::BundleType};
 use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -64,7 +65,11 @@ impl BamlTool for EchoTool {
         "Echo for session property tests"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Ok(EchoOutput { echo: args.text })
     }
 }

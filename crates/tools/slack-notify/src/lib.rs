@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,7 +14,7 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result};
 use baml_rt_llm_config::FnoxFileSecretResolver;
-use baml_rt_tools::{ActionIdentity, baml_tool, bundles::Support, tools::BamlTool};
+use baml_rt_tools::{ActionIdentity, BamlTool, ToolSessionContext, baml_tool, bundles::Support};
 use reqwest::{StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -324,7 +325,7 @@ impl BamlTool for SlackNotifyTool {
         ))
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         self.client.post(args).await
     }
 }
@@ -338,6 +339,7 @@ mod tests {
         extract::State,
         routing::{get, post},
     };
+    use baml_rt_tools::{ToolName, tools::test_support::tool_session_context};
     use serde_json::json;
     use tokio::net::TcpListener;
 
@@ -428,17 +430,23 @@ mod tests {
 
         let tool = SlackNotifyTool::new();
         let first = tool
-            .execute(SlackNotifyInput {
-                text: "first".to_string(),
-                context_id: "ctx-a".to_string(),
-            })
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack_notify").unwrap()),
+                SlackNotifyInput {
+                    text: "first".to_string(),
+                    context_id: "ctx-a".to_string(),
+                },
+            )
             .await
             .unwrap();
         let second = tool
-            .execute(SlackNotifyInput {
-                text: "second".to_string(),
-                context_id: "ctx-a".to_string(),
-            })
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack_notify").unwrap()),
+                SlackNotifyInput {
+                    text: "second".to_string(),
+                    context_id: "ctx-a".to_string(),
+                },
+            )
             .await
             .unwrap();
 
@@ -463,10 +471,13 @@ mod tests {
         let _channel = EnvGuard::set(CHANNEL_ENV, "#ops".to_string());
 
         SlackNotifyTool::new()
-            .execute(SlackNotifyInput {
-                text: "hello".to_string(),
-                context_id: "ctx-name".to_string(),
-            })
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack_notify").unwrap()),
+                SlackNotifyInput {
+                    text: "hello".to_string(),
+                    context_id: "ctx-name".to_string(),
+                },
+            )
             .await
             .unwrap();
 

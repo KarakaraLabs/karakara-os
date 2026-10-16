@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -27,7 +28,7 @@ use baml_rt_core::{
 use baml_rt_provenance::{
     ProvEvent, ProvenanceEffectSubscriber, ProvenanceWriter, SurrealStoreBuilder,
 };
-use baml_rt_tools::{BamlTool, bundles::BundleType};
+use baml_rt_tools::{BamlTool, ToolSessionContext, bundles::BundleType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
@@ -463,7 +464,11 @@ impl BamlTool for ScopeEchoTool {
         "Echoes current runtime scope."
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Ok(ScopeEchoOutput {
             context_id: args.context_id,
             message_id: args.message_id,
@@ -505,7 +510,11 @@ impl BamlTool for BarrierTool {
         "Waits at a two-party barrier to prove concurrent execution."
     }
 
-    async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        _args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         self.0.wait().await;
         Ok(BarrierOutput { done: true })
     }

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,7 +14,7 @@ impl BamlRuntimeManager {
     /// # Example
     /// ```rust,no_run
     /// use baml_rt::baml::BamlRuntimeManager;
-    /// use baml_rt::tools::BamlTool;
+    /// use baml_rt::tools::{BamlTool, ToolSessionContext};
     /// use baml_rt_tools::DescribeAction;
     /// use baml_rt_tools::bundles::Support;
     /// use async_trait::async_trait;
@@ -44,7 +45,7 @@ impl BamlRuntimeManager {
     ///     type Input = MyInput;
     ///     type Output = MyOutput;
     ///     fn description(&self) -> &'static str { "Does something" }
-    ///     async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
+    ///     async fn execute(&self, _ctx: &ToolSessionContext, _args: Self::Input) -> baml_rt::Result<Self::Output> {
     ///         Ok(MyOutput { result: "success".to_string() })
     ///     }
     /// }

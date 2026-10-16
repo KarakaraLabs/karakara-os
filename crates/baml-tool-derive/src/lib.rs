@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -35,7 +36,7 @@
 //!     type Output = ClickUpOutput;
 //!
 //!     fn description(&self) -> &'static str { "..." }
-//!     async fn execute(&self, args: Self::Input) -> Result<Self::Output> { todo!() }
+//!     async fn execute(&self, _ctx: &baml_rt_tools::ToolSessionContext, args: Self::Input) -> Result<Self::Output> { todo!() }
 //! }
 //! ```
 //!

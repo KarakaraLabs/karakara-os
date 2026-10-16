@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -18,9 +19,8 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result, semantics::ErrorDisposition};
 use baml_rt_tools::{
-    ClassifiedToolError, baml_tool,
-    bundles::Support,
-    tools::{BamlTool, ToolHandler, create_tool_handler},
+    BamlTool, ClassifiedToolError, ToolHandler, ToolSessionContext, baml_tool, bundles::Support,
+    tools::create_tool_handler,
 };
 /// ClickUp v2 REST API base URL.
 pub use integrations_clickup_client::BASE_URL;
@@ -695,7 +695,7 @@ impl BamlTool for ClickUpTool {
         "Interact with ClickUp: navigate workspaces (teams, spaces, lists) and manage tasks."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let action = match &args {
             ClickUpInput::ListTeams(_) => "ListTeams",
             ClickUpInput::ListSpaces(_) => "ListSpaces",

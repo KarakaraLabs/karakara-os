@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +7,10 @@
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
-use baml_rt::{Result, tools::BamlTool};
+use baml_rt::{
+    Result,
+    tools::{BamlTool, ToolSessionContext},
+};
 use baml_rt_tools::bundles::{BundleType, Support};
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +50,7 @@ impl BamlTool for WeatherTool {
         "Gets the current weather for a specific location. Returns temperature, condition, and humidity."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let location = args.location;
 
         tracing::info!(location = location.as_str(), "WeatherTool executed");
@@ -94,7 +98,7 @@ impl BamlTool for UppercaseTool {
         "Converts a string to uppercase"
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         Ok(UppercaseOutput {
             result: args.text.to_uppercase(),
             original: args.text,
@@ -156,7 +160,7 @@ impl BamlTool for AddNumbersTool {
         "Adds two numbers"
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         Ok(AddNumbersOutput {
             result: args.a + args.b,
         })
@@ -181,7 +185,7 @@ impl BamlTool for DelayedResponseTool {
         "Returns a response after a short delay (simulates async operation)"
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         use tokio::time::{Duration, sleep};
 
         // Simulate async work

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -26,7 +27,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result, retry_after::RetryAfter, semantics::ErrorDisposition};
-use baml_rt_tools::{ClassifiedToolError, baml_tool, bundles::Support, tools::BamlTool};
+use baml_rt_tools::{
+    BamlTool, ClassifiedToolError, ToolSessionContext, baml_tool, bundles::Support,
+};
 pub use channel::{SlackChannelSelector, resolve_channel_name, resolve_selector_channel_id};
 use integrations_slack_read::{self as slack_read, SlackReadClient, SlackReadError};
 pub use normalize::{
@@ -1496,7 +1499,7 @@ impl BamlTool for SlackTool {
         "Read-only Slack access: list conversations, fetch history/thread replies, resolve users, and search messages."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let action = match &args {
             SlackInput::ListConversations(_) => "ListConversations",
             SlackInput::GetConversationHistory(_) => "GetConversationHistory",
@@ -1581,7 +1584,10 @@ mod tests {
         routing::get,
     };
     use baml_rt_core::BamlRtError;
-    use baml_rt_tools::tools::BamlTool;
+    use baml_rt_tools::{
+        ToolName,
+        tools::{BamlTool, test_support::tool_session_context},
+    };
     use serde_json::json;
     use test_support::common::TempEnvVar;
 
@@ -1675,14 +1681,17 @@ mod tests {
         let _env_user = TempEnvVar::remove("SLACK_USER_TOKEN");
         let tool = SlackTool::new();
         let err = tool
-            .execute(SlackInput::ListConversations(ListConversationsInput {
-                kinds: vec![SlackConversationKind::PublicChannel],
-                cursor: None,
-                limit: None,
-                exclude_archived: None,
-                include_num_members: None,
-                auth: None,
-            }))
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack").unwrap()),
+                SlackInput::ListConversations(ListConversationsInput {
+                    kinds: vec![SlackConversationKind::PublicChannel],
+                    cursor: None,
+                    limit: None,
+                    exclude_archived: None,
+                    include_num_members: None,
+                    auth: None,
+                }),
+            )
             .await
             .expect_err("expected missing token error");
         assert!(
@@ -1753,14 +1762,17 @@ mod tests {
 
         let tool = SlackTool::new();
         let output = tool
-            .execute(SlackInput::ListConversations(ListConversationsInput {
-                kinds: vec![SlackConversationKind::PublicChannel],
-                cursor: None,
-                limit: Some(1),
-                exclude_archived: Some(true),
-                include_num_members: Some(false),
-                auth: None,
-            }))
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack").unwrap()),
+                SlackInput::ListConversations(ListConversationsInput {
+                    kinds: vec![SlackConversationKind::PublicChannel],
+                    cursor: None,
+                    limit: Some(1),
+                    exclude_archived: Some(true),
+                    include_num_members: Some(false),
+                    auth: None,
+                }),
+            )
             .await
             .expect("list conversations should succeed");
         assert_eq!(output.next_cursor.as_deref(), Some("cursor-2"));
@@ -1791,8 +1803,9 @@ mod tests {
         let _env_base = TempEnvVar::set("SLACK_API_BASE_URL", &base_url);
         let tool = SlackTool::new();
         let err = tool
-            .execute(SlackInput::GetConversationHistory(
-                GetConversationHistoryInput {
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack").unwrap()),
+                SlackInput::GetConversationHistory(GetConversationHistoryInput {
                     channel_id: "C404".to_string(),
                     cursor: None,
                     limit: None,
@@ -1802,8 +1815,8 @@ mod tests {
                     order: None,
                     resolve_users: None,
                     auth: None,
-                },
-            ))
+                }),
+            )
             .await
             .expect_err("expected invalid argument mapping");
         assert!(
@@ -1854,14 +1867,17 @@ mod tests {
         let _env_base = TempEnvVar::set("SLACK_API_BASE_URL", &base_url);
         let tool = SlackTool::new();
         let output = tool
-            .execute(SlackInput::ListConversations(ListConversationsInput {
-                kinds: vec![SlackConversationKind::PublicChannel],
-                cursor: None,
-                limit: None,
-                exclude_archived: None,
-                include_num_members: None,
-                auth: None,
-            }))
+            .execute(
+                &tool_session_context(&ToolName::parse("support/slack").unwrap()),
+                SlackInput::ListConversations(ListConversationsInput {
+                    kinds: vec![SlackConversationKind::PublicChannel],
+                    cursor: None,
+                    limit: None,
+                    exclude_archived: None,
+                    include_num_members: None,
+                    auth: None,
+                }),
+            )
             .await
             .expect("tool should recover after one 429");
         assert_eq!(output.conversations.len(), 0);

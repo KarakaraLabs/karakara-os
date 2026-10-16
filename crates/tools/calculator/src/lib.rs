@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::Result;
-use baml_rt_tools::{ActionIdentity, baml_tool, bundles::Support, tools::BamlTool};
+use baml_rt_tools::{ActionIdentity, BamlTool, ToolSessionContext, baml_tool, bundles::Support};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -107,7 +108,7 @@ impl BamlTool for CalculatorTool {
         ))
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let left = args.expression.left as f64;
         let right = args.expression.right as f64;
         let (operation_symbol, result) = match args.expression.operation {

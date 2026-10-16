@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,7 +20,7 @@ use baml_rt_provenance::{
     ProvenanceOpsQueryRequest, ProvenanceOpsResource, SurrealStoreBuilder,
 };
 use baml_rt_quickjs::{BridgeHandle, QuickJSBridge, invoke_optional_js_function_handover};
-use baml_rt_tools::{BamlTool, bundles::BundleType};
+use baml_rt_tools::{BamlTool, ToolSessionContext, bundles::BundleType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
@@ -75,7 +76,11 @@ impl BamlTool for ScopeEchoTool {
         "Echoes current runtime scope."
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Ok(ScopeEchoOutput {
             context_id: args.context_id,
             message_id: args.message_id,

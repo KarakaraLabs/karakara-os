@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +11,7 @@
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::Result;
-use baml_rt_tools::{DescribeAction, baml_tool, bundles::Support, tools::BamlTool};
+use baml_rt_tools::{BamlTool, DescribeAction, ToolSessionContext, baml_tool, bundles::Support};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ impl BamlTool for EmailTool {
         "using email for message delivery".to_string()
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         Ok(EmailOutput {
             status: format!("queued for {}", args.to),
             message_id: Some(format!(

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -29,7 +30,7 @@ pub fn generate(name: &str, bundle: &str, access: &str, description: &str) -> St
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{{BamlRtError, Result}};
-use baml_rt_tools::{{baml_tool, bundles::{bundle_type}, tools::BamlTool}};
+use baml_rt_tools::{{BamlTool, ToolSessionContext, baml_tool, bundles::{bundle_type}}};
 use serde::{{Deserialize, Serialize}};
 
 // ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ impl BamlTool for {pascal_name}Tool {{
         "{description}"
     }}
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {{
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {{
         // TODO: Implement tool logic
         Ok({pascal_name}Output {{
             message: format!("Executed with query: {{}}", args.query),

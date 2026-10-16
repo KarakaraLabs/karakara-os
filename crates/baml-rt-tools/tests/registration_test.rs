@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,9 +16,8 @@ use baml_rt_core::{
 };
 use baml_rt_tools::{
     ToolCapability, ToolHandler, ToolMetadataBuilder, ToolName, ToolOrigin, ToolSession,
-    ToolSessionError, ToolStep, TypeBasedMetadataBuilder,
-    bundles::BundleType,
-    tools::{ToolFunctionMetadata, ToolSessionContext},
+    ToolSessionContext, ToolSessionError, ToolStep, TypeBasedMetadataBuilder, bundles::BundleType,
+    tools::ToolFunctionMetadata,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -67,7 +67,11 @@ impl BamlTool for AddNumbersTool {
         "Adds two numbers together"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Ok(AddNumbersOutput {
             result: args.a + args.b,
         })
@@ -103,7 +107,11 @@ impl BamlTool for GreetTool {
         "Returns a greeting message"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         Ok(GreetOutput {
             greeting: format!("Hello, {}!", args.name),
         })
@@ -152,7 +160,11 @@ impl BamlTool for SyntheticSessionEvalTool {
         "Deterministic test-only corpus slices"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         let corpus = ["slice-0", "slice-1", "slice-2"];
         if let Some(retrieve_ref) = args.retrieve_ref {
             let idx = retrieve_ref
@@ -189,7 +201,11 @@ impl BamlTool for StreamLettersTool {
         "Streams letters of a word one by one"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt::Result<Self::Output> {
         use tokio::time::{Duration, sleep};
 
         // Simulate streaming by waiting a bit
@@ -585,7 +601,11 @@ async fn test_js_tool_name_conflict_with_rust_tool() {
             "A Rust tool"
         }
 
-        async fn execute(&self, _args: Self::Input) -> baml_rt::Result<Self::Output> {
+        async fn execute(
+            &self,
+            _ctx: &ToolSessionContext,
+            _args: Self::Input,
+        ) -> baml_rt::Result<Self::Output> {
             Ok(ConflictOutput {
                 from: "rust".to_string(),
             })

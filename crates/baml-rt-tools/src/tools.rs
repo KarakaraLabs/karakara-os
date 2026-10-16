@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -176,7 +177,7 @@ pub fn parse_tool_name_and_class(name: &str) -> Result<(ToolName, String)> {
 ///
 /// # Example
 /// ```rust,no_run
-/// use baml_rt_tools::{BamlTool, DescribeAction, Support};
+/// use baml_rt_tools::{BamlTool, DescribeAction, Support, ToolSessionContext};
 /// use baml_rt_core::Result;
 /// use serde::{Deserialize, Serialize};
 /// use baml_derive::BamlType;
@@ -213,7 +214,11 @@ pub fn parse_tool_name_and_class(name: &str) -> Result<(ToolName, String)> {
 ///         "Gets the current weather for a specific location"
 ///     }
 ///
-///     async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+///     async fn execute(
+///         &self,
+///         _ctx: &ToolSessionContext,
+///         args: Self::Input,
+///     ) -> Result<Self::Output> {
 ///         Ok(WeatherOutput {
 ///             temperature: "22°C".to_string(),
 ///             location: args.location,
@@ -289,19 +294,10 @@ pub trait BamlTool: Send + Sync + 'static {
     }
 
     /// Execute the tool with the given arguments.
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output>;
-
-    /// Execute the tool with the session context resolved at Open.
     ///
-    /// Tools that need invocation scope or resolved configuration can override this method.
-    /// Existing tools keep using [`Self::execute`] through this default implementation.
-    async fn execute_with_context(
-        &self,
-        _ctx: ToolSessionContext,
-        args: Self::Input,
-    ) -> Result<Self::Output> {
-        self.execute(args).await
-    }
+    /// The session context is resolved at Open and is always available. Tools that do not
+    /// need invocation scope should name the parameter `_ctx`.
+    async fn execute(&self, ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output>;
 
     /// Compact a tool result and produce a natural language summary.
     ///
@@ -2298,7 +2294,7 @@ impl<T: BamlTool> ToolHandler for ToolWrapper<T> {
             let execute_ctx = session_ctx.clone();
             Box::pin(async move {
                 let parsed: T::Input = deserialize_tool_input(input)?;
-                let output = tool.execute_with_context(execute_ctx, parsed).await?;
+                let output = tool.execute(&execute_ctx, parsed).await?;
                 serialize_tool_output(output)
             })
         }));
@@ -2418,7 +2414,7 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use baml_rt_tools::{BamlTool, DescribeAction, Support, ToolRegistry};
+    /// use baml_rt_tools::{BamlTool, DescribeAction, Support, ToolRegistry, ToolSessionContext};
     /// use baml_rt_core::Result;
     /// use serde::{Deserialize, Serialize};
     /// use baml_derive::BamlType;
@@ -2446,7 +2442,11 @@ impl ToolRegistry {
     ///     type Input = MyInput;
     ///     type Output = MyOutput;
     ///     fn description(&self) -> &'static str { "My tool" }
-    ///     async fn execute(&self, _args: Self::Input) -> Result<Self::Output> {
+    ///     async fn execute(
+    ///         &self,
+    ///         _ctx: &ToolSessionContext,
+    ///         _args: Self::Input,
+    ///     ) -> Result<Self::Output> {
     ///         Ok(MyOutput {})
     ///     }
     /// }
@@ -3876,5 +3876,34 @@ mod unified_step_executor_authoring_parse_tests {
         let m = parse_unified_step_executors_authoring_json(text);
         let cfg = m.get("PlanBar").expect("PlanBar key");
         assert!(cfg.include_archive_reads);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    //! Test-only construction helpers for tool sessions.
+
+    use baml_rt_core::{
+        ContextId,
+        ids::{AgentId, UuidId},
+    };
+
+    use super::{ToolName, ToolSessionContext};
+    use crate::tool_fsm::ToolSessionId;
+
+    /// Build a minimal [`ToolSessionContext`] for direct `BamlTool::execute` calls in tests.
+    pub fn tool_session_context(tool_name: &ToolName) -> ToolSessionContext {
+        ToolSessionContext {
+            session_id: ToolSessionId::random(),
+            tool_name: tool_name.clone(),
+            context_id: ContextId::new(1, 1),
+            agent_id: AgentId::from_uuid(
+                UuidId::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            ),
+            config: None,
+            config_version: None,
+            task_id: None,
+            execution_classifier: None,
+        }
     }
 }

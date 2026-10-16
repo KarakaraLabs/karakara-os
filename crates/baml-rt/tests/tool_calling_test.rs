@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -20,7 +21,7 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt::{
     interceptor::{InterceptorDecision, LLMCallContext, LLMInterceptor},
-    tools::BamlTool,
+    tools::{BamlTool, ToolSessionContext},
 };
 use baml_rt_tools::bundles::BundleType;
 
@@ -191,7 +192,11 @@ async fn test_llm_tool_calling_js() {
             "Reverses a string"
         }
 
-        async fn execute(&self, args: Self::Input) -> baml_rt::Result<Self::Output> {
+        async fn execute(
+            &self,
+            _ctx: &ToolSessionContext,
+            args: Self::Input,
+        ) -> baml_rt::Result<Self::Output> {
             let reversed: String = args.text.chars().rev().collect();
             Ok(ReverseOutput {
                 reversed,

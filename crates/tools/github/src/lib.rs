@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -16,9 +17,8 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt_core::{BamlRtError, Result};
 use baml_rt_tools::{
-    baml_tool,
-    bundles::Support,
-    tools::{BamlTool, ToolHandler, create_tool_handler},
+    BamlTool, ToolHandler, ToolSessionContext, baml_tool, bundles::Support,
+    tools::create_tool_handler,
 };
 pub use poll::GithubPollState;
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ impl BamlTool for GithubTool {
         "GitHub Issues integration: event source schemas and future read APIs."
     }
 
-    async fn execute(&self, _args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, _args: Self::Input) -> Result<Self::Output> {
         Err(BamlRtError::InvalidArgument(
             "support/github invoke is not implemented; use task-daemon for Issues polling".into(),
         ))

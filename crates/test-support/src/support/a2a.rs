@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,7 +9,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
-use baml_rt::{A2aRequestHandler, Result, tools::BamlTool};
+use baml_rt::{
+    A2aRequestHandler, Result,
+    tools::{BamlTool, ToolSessionContext},
+};
 use baml_rt_core::A2aJsChatHost;
 use baml_rt_tools::{OpaqueJson, bundles::Support};
 use serde::{Deserialize, Serialize};
@@ -68,7 +72,7 @@ impl BamlTool for A2aRelayTool {
         "Relays an A2A request to another in-memory agent."
     }
 
-    async fn execute(&self, args: Self::Input) -> Result<Self::Output> {
+    async fn execute(&self, _ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output> {
         let handle = tokio::runtime::Handle::current();
         let request = args.request.into_inner();
         let responses = task::block_in_place(|| handle.block_on(self.client.send(request)))?;

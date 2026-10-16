@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -13,7 +17,7 @@ use baml_rt_core::{
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_tools::{
-    BamlTool, ToolRegistry, ToolStep,
+    BamlTool, ToolRegistry, ToolSessionContext, ToolStep,
     archive_refs::{ContextRefTables, RefTable},
     bundles::BundleType,
     prompt_projection::{
@@ -64,7 +68,11 @@ impl BamlTool for ContractSpikeTool {
         describe_output(output)
     }
 
-    async fn execute(&self, _args: Self::Input) -> baml_rt_core::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        _args: Self::Input,
+    ) -> baml_rt_core::Result<Self::Output> {
         Err(BamlRtError::ToolClassified(ClassifiedToolError {
             code: "typesafe_provider_unavailable".to_string(),
             disposition: ErrorDisposition::InformAndContinue,
@@ -101,7 +109,11 @@ impl BamlTool for HistoryContractSpikeTool {
         describe_output(output)
     }
 
-    async fn execute(&self, _args: Self::Input) -> baml_rt_core::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        _args: Self::Input,
+    ) -> baml_rt_core::Result<Self::Output> {
         Ok(sample_output())
     }
 }
@@ -514,7 +526,11 @@ impl BamlTool for DeadlineTool {
         "Proves that a one-shot deadline starts during Read"
     }
 
-    async fn execute(&self, args: Self::Input) -> baml_rt_core::Result<Self::Output> {
+    async fn execute(
+        &self,
+        _ctx: &ToolSessionContext,
+        args: Self::Input,
+    ) -> baml_rt_core::Result<Self::Output> {
         let events = Mutex::new(Vec::new());
         run_spike_adapter(
             SpikeCall {
