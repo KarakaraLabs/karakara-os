@@ -12,12 +12,12 @@ use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_derive_core::TsType;
 use baml_rt_core::{
-    BamlRtError, ClassifiedToolError, ErrorDisposition,
+    BamlRtError, ErrorDisposition,
     context::{InvocationScope, RuntimeScope},
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_tools::{
-    BamlTool, ToolRegistry, ToolSessionContext, ToolStep,
+    BamlTool, ToolName, ToolRegistry, ToolSessionContext, ToolStep,
     archive_refs::{ContextRefTables, RefTable},
     bundles::BundleType,
     prompt_projection::{
@@ -25,63 +25,13 @@ use baml_rt_tools::{
         project_prompt_context,
     },
     tool_schema::{ActionIdentity, DescribeAction, json_schema_value},
+    tools::{ToolAccess, test_support::tool_session_context},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use super::*;
-
-struct TypeSafe;
-
-impl BundleType for TypeSafe {
-    const NAME: &'static str = "typesafe";
-
-    fn description() -> &'static str {
-        "TypeSafe tools"
-    }
-}
-
-struct ContractSpikeTool;
-
-#[async_trait]
-impl BamlTool for ContractSpikeTool {
-    type Bundle = TypeSafe;
-    const LOCAL_NAME: &'static str = "system_one";
-    type OpenInput = ();
-    type Input = SystemOneInput;
-    type Output = SystemOneOutput;
-
-    fn description(&self) -> &'static str {
-        "Contract spike for TypeSafe System One"
-    }
-
-    fn describe_invocation(&self, input: &Self::Input) -> String {
-        describe_request(input)
-    }
-
-    fn action_identity(&self, input: &Self::Input) -> Option<ActionIdentity> {
-        Some(request_action_identity(input))
-    }
-
-    fn describe_result(&self, output: &Self::Output) -> String {
-        describe_output(output)
-    }
-
-    async fn execute(
-        &self,
-        _ctx: &ToolSessionContext,
-        _args: Self::Input,
-    ) -> baml_rt_core::Result<Self::Output> {
-        Err(BamlRtError::ToolClassified(ClassifiedToolError {
-            code: "typesafe_provider_unavailable".to_string(),
-            disposition: ErrorDisposition::InformAndContinue,
-            message: "TypeSafe System One is temporarily unavailable".to_string(),
-            hint: Some("Use the agent's fallback policy".to_string()),
-            retry_after_ms: Some(2_500),
-        }))
-    }
-}
 
 struct HistoryContractSpikeTool;
 
@@ -158,14 +108,14 @@ fn sample_input() -> SystemOneInput {
                 }),
             ),
         ]),
-        model: Some("jev-1.13.0".to_string()),
+        model: Some(DEFAULT_MODEL.to_string()),
         timeout_ms: Some(1_000),
     }
 }
 
 fn sample_output() -> SystemOneOutput {
     SystemOneOutput {
-        model: "jev-1.13.0".to_string(),
+        model: DEFAULT_MODEL.to_string(),
         answers: BTreeMap::from([
             (
                 "answers_request".to_string(),
@@ -196,6 +146,96 @@ fn sample_output() -> SystemOneOutput {
             output_tokens: Some(12),
         }),
     }
+}
+
+#[test]
+fn production_bundle_config_and_metadata_match_the_contract() {
+    assert_eq!(TypeSafe::NAME, "typesafe");
+
+    let default = SystemOneConfig::default();
+    assert!(!default.enabled);
+    assert_eq!(default.default_model, DEFAULT_MODEL);
+    assert_eq!(default.allowed_models, vec![DEFAULT_MODEL.to_string()]);
+    assert_eq!(default.timeout_ms, 10_000);
+    assert_eq!(default.max_attempts, 3);
+    assert_eq!(default.limits, SystemOneLimits::default());
+    assert_eq!(default.controls, SystemOneControls::default());
+
+    let metadata = typesafe_system_one_metadata();
+    assert_eq!(metadata.name.to_string(), "typesafe/system_one");
+    assert_eq!(metadata.access, Some(ToolAccess::Read));
+    assert_eq!(metadata.description, SystemOneTool.description());
+    assert_eq!(
+        metadata
+            .config_bundle
+            .as_ref()
+            .expect("config bundle")
+            .as_str(),
+        "typesafe"
+    );
+    let config = metadata.config.as_ref().expect("config metadata");
+    assert_eq!(
+        config.default,
+        serde_json::to_value(SystemOneConfig::default()).expect("serialize default config")
+    );
+    assert_eq!(config.type_name.as_deref(), Some("SystemOneConfig"));
+    assert_eq!(metadata.secret_requests.len(), 1);
+    assert_eq!(metadata.secret_requests[0].name, "TYPESAFE_API_KEY");
+}
+
+#[test]
+fn config_defaults_missing_fields_and_rejects_unknown_fields() {
+    let config: SystemOneConfig = serde_json::from_value(json!({
+        "enabled": true,
+        "limits": {"max_questions": 12},
+        "controls": {"max_concurrent_requests": 4}
+    }))
+    .expect("missing fields must use safe defaults");
+    assert!(config.enabled);
+    assert_eq!(config.default_model, DEFAULT_MODEL);
+    assert_eq!(config.limits.max_questions, 12);
+    assert_eq!(config.limits.max_body_bytes, 262_144);
+    assert_eq!(config.controls.max_concurrent_requests, 4);
+    assert_eq!(config.controls.requests_per_minute, 600);
+    assert!(config.is_valid());
+
+    let mut invalid = config.clone();
+    invalid.max_attempts = 0;
+    assert!(!invalid.is_valid(), "zero attempts must be rejected");
+    invalid = config.clone();
+    invalid.limits.max_choice_options = 256;
+    assert!(
+        !invalid.is_valid(),
+        "limits above provider maxima must be rejected"
+    );
+
+    assert!(
+        serde_json::from_value::<SystemOneConfig>(json!({"future_field": true})).is_err(),
+        "unknown top-level fields must be rejected"
+    );
+    assert!(
+        serde_json::from_value::<SystemOneConfig>(json!({
+            "limits": {"future_limit": 1}
+        }))
+        .is_err(),
+        "unknown nested fields must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn production_tool_fails_closed_with_default_config() {
+    let tool_name = ToolName::parse("typesafe/system_one").expect("static tool name");
+    let ctx = tool_session_context(&tool_name);
+    let err = SystemOneTool
+        .execute(&ctx, sample_input())
+        .await
+        .expect_err("the default config must disable provider calls");
+
+    let BamlRtError::ToolClassified(classified) = err else {
+        panic!("expected a classified disabled error")
+    };
+    assert_eq!(classified.code, "typesafe_disabled");
+    assert_eq!(classified.disposition, ErrorDisposition::InformAndContinue);
 }
 
 #[test]
@@ -298,16 +338,16 @@ fn runtime_deserializes_raw_and_wrapped_opaque_json() {
 }
 
 #[tokio::test]
-async fn imperative_quickjs_path_returns_typed_error_envelope() {
+async fn imperative_quickjs_path_returns_production_disabled_envelope() {
     let manager = Arc::new(RwLock::new(
         test_support::common::setup_baml_runtime_manager_no_llm(),
     ));
     manager
         .write()
         .await
-        .register_tool(ContractSpikeTool)
+        .register_tool(SystemOneTool)
         .await
-        .expect("register contract tool");
+        .expect("register production tool");
     let mut bridge = test_support::common::setup_bridge(manager).await;
     let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
         UuidId::parse_str("00000000-0000-0000-0000-000000000071").unwrap(),
@@ -319,7 +359,7 @@ async fn imperative_quickjs_path_returns_typed_error_envelope() {
             const session = await openToolSession("typesafe/system_one");
             await session.send({input});
             const step = await session.continue();
-            await session.abort("expected contract-spike failure");
+            await session.abort("expected disabled-tool failure");
             return step;
         }})()
         "#
@@ -330,10 +370,10 @@ async fn imperative_quickjs_path_returns_typed_error_envelope() {
         .await
         .expect("QuickJS call must resolve, not reject");
     assert_eq!(envelope["status"], "error");
-    assert_eq!(envelope["error"]["code"], "typesafe_provider_unavailable");
+    assert_eq!(envelope["error"]["code"], "typesafe_disabled");
     assert_eq!(envelope["error"]["disposition"], "inform_and_continue");
     assert_eq!(envelope["error"]["retryable"], false);
-    assert_eq!(envelope["error"]["retry_after_ms"], 2_500);
+    assert!(envelope["error"]["retry_after_ms"].is_null());
     insta::assert_json_snapshot!("imperative_error_envelope", envelope);
 }
 
@@ -341,12 +381,28 @@ async fn imperative_quickjs_path_returns_typed_error_envelope() {
 async fn wrapper_carries_descriptions_into_transcript_and_archive_header() {
     let registry = ToolRegistry::new();
     registry
-        .register(ContractSpikeTool)
-        .expect("register contract tool");
+        .register(SystemOneTool)
+        .expect("register production tool");
     let input = sample_input();
     let output = sample_output();
     let input_json = serde_json::to_value(&input).expect("serialize input");
     let output_json = serde_json::to_value(&output).expect("serialize output");
+
+    let production_tool = SystemOneTool;
+    assert_eq!(
+        production_tool.describe_invocation(&input),
+        describe_request(&input)
+    );
+    let actual_identity = production_tool
+        .action_identity(&input)
+        .expect("production action identity");
+    let expected_identity = request_action_identity(&input);
+    assert_eq!(actual_identity.name, expected_identity.name);
+    assert_eq!(actual_identity.fields, expected_identity.fields);
+    assert_eq!(
+        production_tool.describe_result(&output),
+        describe_output(&output)
+    );
 
     let direct = registry
         .describe_invocation_for(
@@ -441,7 +497,7 @@ async fn wrapper_carries_descriptions_into_transcript_and_archive_header() {
                 }),
             ),
         ]),
-        model: Some("jev-1.13.0".to_string()),
+        model: Some(DEFAULT_MODEL.to_string()),
         timeout_ms: None,
     };
     let archive_input_json = serde_json::to_value(archive_input).expect("serialize archive input");

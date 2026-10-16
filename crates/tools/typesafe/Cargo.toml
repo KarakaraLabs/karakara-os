@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Karakara Labs
+#
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "baml-tools-typesafe"
 version = { workspace = true }
@@ -12,12 +16,14 @@ baml-derive = { path = "../../baml-derive" }
 baml-derive-core = { path = "../../baml-derive-core" }
 baml-rt-core = { path = "../../baml-rt-core" }
 baml-rt-tools = { path = "../../baml-rt-tools" }
+inventory = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 baml-rt = { path = "../../baml-rt" }
 baml-rt-quickjs = { path = "../../baml-rt-quickjs" }
+baml-rt-tools = { path = "../../baml-rt-tools", features = ["test-support"] }
 insta = { workspace = true }
 test-support = { path = "../../test-support" }
 tokio = { workspace = true, features = ["test-util"] }

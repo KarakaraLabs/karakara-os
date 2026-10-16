@@ -2514,6 +2514,7 @@ dependencies = [
  "baml-rt-quickjs",
  "baml-rt-tools",
  "insta",
+ "inventory",
  "serde",
  "serde_json",
  "test-support",

@@ -1,20 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! TypeSafe System One tool contracts.
+//! TypeSafe System One tool contracts and registration.
 //!
-//! The HTTP adapter is added after the contract spike. This module defines the wire DTOs now so
-//! schema generation, TypeScript generation, opaque JSON decoding, and history projection can be
-//! tested against the runtime before the adapter is wired into production.
+//! This crate currently provides the production bundle, configuration, metadata, and wire DTOs.
+//! Provider validation, HTTP execution, credentials, and call controls are added in the next
+//! implementation slices.
 
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_derive_core::{JsonSchemaType, TsType};
-use baml_rt_tools::{ActionIdentity, DescribeAction, OpaqueJson};
+use baml_rt_core::{BamlRtError, ClassifiedToolError, ErrorDisposition, Result as BamlResult};
+use baml_rt_tools::{
+    ActionIdentity, BamlTool, BundleType, DescribeAction, OpaqueJson, ToolSessionContext, baml_tool,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+pub const DEFAULT_MODEL: &str = "jev-1.13.0";
+const SYSTEM_ONE_DESCRIPTION: &str = "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state.";
 
 fn tagged_variant_schema<T: JsonSchemaType>(tag_value: &str) -> Value {
     let mut schema = match T::json_schema_inline() {
@@ -57,6 +65,110 @@ fn tagged_union_ts_decl(type_name: &str, variants: &[(&str, &str)]) -> String {
 
 fn optional_schema(inner: Value) -> Value {
     json!({ "anyOf": [inner, { "type": "null" }] })
+}
+
+/// Operator limits applied to one System One request.
+///
+/// Request counts and byte limits use `u32`; every documented provider and local maximum fits in
+/// that range. Configuration validation rejects zero and provider-incompatible maxima before use.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SystemOneLimits {
+    pub max_body_bytes: u32,
+    pub max_questions: u32,
+    pub max_choice_options: u32,
+    pub max_score_levels: u32,
+}
+
+impl Default for SystemOneLimits {
+    fn default() -> Self {
+        Self {
+            max_body_bytes: 262_144,
+            max_questions: 64,
+            max_choice_options: 255,
+            max_score_levels: 10,
+        }
+    }
+}
+
+/// Process-local load and usage controls for System One.
+///
+/// Concurrency and request counts use `u32`. Token accounting stays `u64` because it accumulates
+/// usage over an hour rather than sizing one request.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SystemOneControls {
+    pub max_concurrent_requests: u32,
+    pub requests_per_minute: u32,
+    pub max_tokens_per_hour: Option<u64>,
+}
+
+impl Default for SystemOneControls {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 16,
+            requests_per_minute: 600,
+            max_tokens_per_hour: None,
+        }
+    }
+}
+
+/// Non-secret configuration shared by the `typesafe` bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SystemOneConfig {
+    pub enabled: bool,
+    pub default_model: String,
+    pub allowed_models: Vec<String>,
+    pub timeout_ms: u64,
+    pub max_attempts: u32,
+    pub limits: SystemOneLimits,
+    pub controls: SystemOneControls,
+}
+
+impl Default for SystemOneConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_model: DEFAULT_MODEL.to_string(),
+            allowed_models: vec![DEFAULT_MODEL.to_string()],
+            timeout_ms: 10_000,
+            max_attempts: 3,
+            limits: SystemOneLimits::default(),
+            controls: SystemOneControls::default(),
+        }
+    }
+}
+
+impl SystemOneConfig {
+    fn is_valid(&self) -> bool {
+        !self.default_model.trim().is_empty()
+            && !self.allowed_models.is_empty()
+            && self
+                .allowed_models
+                .iter()
+                .all(|model| !model.trim().is_empty())
+            && self.allowed_models.contains(&self.default_model)
+            && self.timeout_ms > 0
+            && self.max_attempts > 0
+            && self.limits.max_body_bytes > 0
+            && self.limits.max_questions > 0
+            && (1..=255).contains(&self.limits.max_choice_options)
+            && (2..=10).contains(&self.limits.max_score_levels)
+            && self.controls.max_concurrent_requests > 0
+            && self.controls.requests_per_minute > 0
+    }
+}
+
+/// Bundle marker for TypeSafe-hosted tools.
+pub struct TypeSafe;
+
+impl BundleType for TypeSafe {
+    const NAME: &'static str = "typesafe";
+
+    fn description() -> &'static str {
+        "TypeSafe hosted model tools."
+    }
 }
 
 /// One System One request. Question IDs are the keys in `questions`.
@@ -456,6 +568,109 @@ pub fn describe_output(output: &SystemOneOutput) -> String {
         output.answers.len(),
         output.model
     )
+}
+
+fn classified_error(
+    code: &'static str,
+    disposition: ErrorDisposition,
+    message: &'static str,
+) -> BamlRtError {
+    BamlRtError::ToolClassified(ClassifiedToolError {
+        code: code.to_string(),
+        disposition,
+        message: message.to_string(),
+        hint: None,
+        retry_after_ms: None,
+    })
+}
+
+fn config_for_context(ctx: &ToolSessionContext) -> BamlResult<SystemOneConfig> {
+    let config = match &ctx.config {
+        Some(config) => serde_json::from_value(config.clone()).map_err(|_| {
+            classified_error(
+                "typesafe_disabled",
+                ErrorDisposition::InformAndContinue,
+                "TypeSafe System One configuration is invalid",
+            )
+        })?,
+        None => SystemOneConfig::default(),
+    };
+    if !config.is_valid() {
+        return Err(classified_error(
+            "typesafe_disabled",
+            ErrorDisposition::InformAndContinue,
+            "TypeSafe System One configuration is invalid",
+        ));
+    }
+    Ok(config)
+}
+
+/// Host adapter for `POST /v1/systemone`.
+#[derive(Default)]
+pub struct SystemOneTool;
+
+#[baml_tool(
+    name = "typesafe/system_one",
+    description = "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state.",
+    tags = ["typesafe", "system_one", "read"],
+    access = Read,
+    config = {
+        bundle = "typesafe",
+        schema = SystemOneConfig,
+        default = SystemOneConfig::default(),
+    },
+    secrets = [
+        { name = "TYPESAFE_API_KEY", description = "TypeSafe API key", reason = "Required to authenticate with the TypeSafe System One API" },
+    ],
+)]
+#[async_trait]
+impl BamlTool for SystemOneTool {
+    type Bundle = TypeSafe;
+    const LOCAL_NAME: &'static str = "system_one";
+    type OpenInput = ();
+    type Input = SystemOneInput;
+    type Output = SystemOneOutput;
+
+    fn description(&self) -> &'static str {
+        SYSTEM_ONE_DESCRIPTION
+    }
+
+    fn describe_open(&self) -> String {
+        "using TypeSafe System One for typed state evaluation".to_string()
+    }
+
+    fn describe_invocation(&self, input: &Self::Input) -> String {
+        describe_request(input)
+    }
+
+    fn action_identity(&self, input: &Self::Input) -> Option<ActionIdentity> {
+        Some(request_action_identity(input))
+    }
+
+    fn describe_result(&self, output: &Self::Output) -> String {
+        describe_output(output)
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolSessionContext,
+        _args: Self::Input,
+    ) -> BamlResult<Self::Output> {
+        let config = config_for_context(ctx)?;
+        if !config.enabled {
+            return Err(classified_error(
+                "typesafe_disabled",
+                ErrorDisposition::InformAndContinue,
+                "TypeSafe System One is disabled by operator configuration",
+            ));
+        }
+
+        Err(classified_error(
+            "typesafe_provider_unavailable",
+            ErrorDisposition::InformAndContinue,
+            "TypeSafe System One provider execution is not available yet",
+        ))
+    }
 }
 
 #[cfg(test)]
