@@ -1,0 +1,29 @@
+---
+source: crates/tools/typesafe/src/contract_tests.rs
+expression: transcript
+---
+assistant: #1 typesafe/system_one: 3 questions (answers_request:score, has_baseline:noul, next_agent:choice) model=jev-1.13.0
+
+tool: typesafe/system_one:
+     1	model: jev-1.13.0
+     2	answers:
+     3	  answers_request:
+     4	    type: score
+     5	    score: 0.8
+     6	    probabilities:
+     7	      0: 0.2
+     8	      1: 0.8
+     9	    confidence: 0.6
+    10	  has_baseline:
+    11	    type: noul
+    12	    noul: 0.1
+    13	  next_agent:
+    14	    type: choice
+    15	    choice: grafana-investigator
+    16	    probabilities:
+    17	      grafana-investigator: 0.9
+    18	      none: 0.1
+    19	    confidence: 0.8
+    20	usage:
+    21	  input_tokens: 123
+    22	  output_tokens: 12

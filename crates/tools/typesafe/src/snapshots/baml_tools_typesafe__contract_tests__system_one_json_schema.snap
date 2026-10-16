@@ -1,0 +1,461 @@
+---
+source: crates/tools/typesafe/src/contract_tests.rs
+expression: schema
+---
+{
+  "input": {
+    "type": "object",
+    "properties": {
+      "state": {
+        "x-baml-type": "OpaqueJson",
+        "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+      },
+      "questions": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "object",
+              "title": "ChoiceQuestion",
+              "properties": {
+                "instructions": {
+                  "x-baml-type": "OpaqueJson",
+                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                },
+                "criteria": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "x-baml-type": "OpaqueJson",
+                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                  }
+                },
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                }
+              },
+              "required": [
+                "instructions",
+                "criteria",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "title": "ScoreQuestion",
+              "properties": {
+                "instructions": {
+                  "x-baml-type": "OpaqueJson",
+                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "x-baml-type": "OpaqueJson",
+                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                  }
+                },
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                }
+              },
+              "required": [
+                "instructions",
+                "criteria",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "instructions": {
+                  "x-baml-type": "OpaqueJson",
+                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                },
+                "criteria": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "true": {
+                          "x-baml-type": "OpaqueJson",
+                          "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                        },
+                        "false": {
+                          "x-baml-type": "OpaqueJson",
+                          "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                        }
+                      },
+                      "required": [
+                        "true",
+                        "false"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                }
+              },
+              "required": [
+                "instructions",
+                "type"
+              ]
+            }
+          ]
+        }
+      },
+      "model": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "timeout_ms": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "state",
+      "questions"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "question": {
+    "oneOf": [
+      {
+        "type": "object",
+        "title": "ChoiceQuestion",
+        "properties": {
+          "instructions": {
+            "x-baml-type": "OpaqueJson",
+            "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+          },
+          "criteria": {
+            "type": "object",
+            "additionalProperties": {
+              "x-baml-type": "OpaqueJson",
+              "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+            }
+          },
+          "type": {
+            "type": "string",
+            "const": "choice"
+          }
+        },
+        "required": [
+          "instructions",
+          "criteria",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "title": "ScoreQuestion",
+        "properties": {
+          "instructions": {
+            "x-baml-type": "OpaqueJson",
+            "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "x-baml-type": "OpaqueJson",
+              "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+            }
+          },
+          "type": {
+            "type": "string",
+            "const": "score"
+          }
+        },
+        "required": [
+          "instructions",
+          "criteria",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "instructions": {
+            "x-baml-type": "OpaqueJson",
+            "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+          },
+          "criteria": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "true": {
+                    "x-baml-type": "OpaqueJson",
+                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                  },
+                  "false": {
+                    "x-baml-type": "OpaqueJson",
+                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                  }
+                },
+                "required": [
+                  "true",
+                  "false"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "noul"
+          }
+        },
+        "required": [
+          "instructions",
+          "type"
+        ]
+      }
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": "string"
+      },
+      "answers": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "object",
+              "title": "ChoiceAnswer",
+              "properties": {
+                "choice": {
+                  "type": "string"
+                },
+                "probabilities": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                },
+                "confidence": {
+                  "type": "number"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                }
+              },
+              "required": [
+                "choice",
+                "probabilities",
+                "confidence",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "title": "ScoreAnswer",
+              "properties": {
+                "score": {
+                  "type": "number"
+                },
+                "probabilities": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                },
+                "confidence": {
+                  "type": "number"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                }
+              },
+              "required": [
+                "score",
+                "probabilities",
+                "confidence",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "title": "NoulAnswer",
+              "properties": {
+                "noul": {
+                  "type": "number"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                }
+              },
+              "required": [
+                "noul",
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "usage": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "input_tokens": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "output_tokens": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "model",
+      "answers"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "answer": {
+    "oneOf": [
+      {
+        "type": "object",
+        "title": "ChoiceAnswer",
+        "properties": {
+          "choice": {
+            "type": "string"
+          },
+          "probabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string",
+            "const": "choice"
+          }
+        },
+        "required": [
+          "choice",
+          "probabilities",
+          "confidence",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "title": "ScoreAnswer",
+        "properties": {
+          "score": {
+            "type": "number"
+          },
+          "probabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string",
+            "const": "score"
+          }
+        },
+        "required": [
+          "score",
+          "probabilities",
+          "confidence",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "title": "NoulAnswer",
+        "properties": {
+          "noul": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string",
+            "const": "noul"
+          }
+        },
+        "required": [
+          "noul",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "baml-tools-typesafe"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+publish = false
+description = "TypeSafe System One read tool for BAML runtime"
+
+[dependencies]
+async-trait = { workspace = true }
+baml-derive = { path = "../../baml-derive" }
+baml-derive-core = { path = "../../baml-derive-core" }
+baml-rt-core = { path = "../../baml-rt-core" }
+baml-rt-tools = { path = "../../baml-rt-tools" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+baml-rt = { path = "../../baml-rt" }
+baml-rt-quickjs = { path = "../../baml-rt-quickjs" }
+insta = { workspace = true }
+test-support = { path = "../../test-support" }
+tokio = { workspace = true, features = ["test-util"] }

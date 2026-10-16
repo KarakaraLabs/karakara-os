@@ -39,6 +39,7 @@ members = [
   "crates/tools/github",
   "crates/tools/slack",
   "crates/tools/slack-notify",
+  "crates/tools/typesafe",
   "crates/tools/grafana-alerts",
   "crates/tools/notion",
   "crates/tools/system",

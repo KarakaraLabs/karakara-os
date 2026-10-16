@@ -1,0 +1,5 @@
+---
+source: crates/tools/typesafe/src/contract_tests.rs
+expression: header
+---
+@1 · typesafe/system_one:Send(system_one questions="baseline:noul, route:choice" model="jev-1.13.0") · 22L · 385B

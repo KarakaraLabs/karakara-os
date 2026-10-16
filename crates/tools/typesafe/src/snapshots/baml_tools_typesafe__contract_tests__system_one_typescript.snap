@@ -1,0 +1,33 @@
+---
+source: crates/tools/typesafe/src/contract_tests.rs
+expression: declarations
+---
+export type OpaqueJson = JsonValue;
+export interface ChoiceQuestion {
+  instructions: OpaqueJson;
+  criteria: Record<string, OpaqueJson>;
+}
+export interface ScoreQuestion {
+  instructions: OpaqueJson;
+  criteria: OpaqueJson[];
+}
+export interface NoulCriteria { true: OpaqueJson; false: OpaqueJson; }
+export interface NoulQuestion { instructions: OpaqueJson; criteria?: NoulCriteria | null; }
+export type SystemOneQuestion = ({ type: "choice" } & ChoiceQuestion) | ({ type: "score" } & ScoreQuestion) | ({ type: "noul" } & NoulQuestion);
+export interface SystemOneInput { state: OpaqueJson; questions: Record<string, SystemOneQuestion>; model?: string | null; timeout_ms?: number | null; }
+export interface ChoiceAnswer {
+  choice: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+}
+export interface ScoreAnswer {
+  score: number;
+  probabilities: Record<string, number>;
+  confidence: number;
+}
+export interface NoulAnswer {
+  noul: number;
+}
+export type SystemOneAnswer = ({ type: "choice" } & ChoiceAnswer) | ({ type: "score" } & ScoreAnswer) | ({ type: "noul" } & NoulAnswer);
+export interface SystemOneUsage { input_tokens?: number | null; output_tokens?: number | null; }
+export interface SystemOneOutput { model: string; answers: Record<string, SystemOneAnswer>; usage?: SystemOneUsage | null; }
