@@ -15,6 +15,7 @@ async-trait = { workspace = true }
 baml-derive = { path = "../../baml-derive" }
 baml-derive-core = { path = "../../baml-derive-core" }
 baml-rt-core = { path = "../../baml-rt-core" }
+baml-rt-observability = { path = "../../baml-rt-observability" }
 baml-rt-tools = { path = "../../baml-rt-tools" }
 inventory = { workspace = true }
 serde = { workspace = true }

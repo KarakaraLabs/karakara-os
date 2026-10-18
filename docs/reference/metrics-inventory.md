@@ -19,6 +19,7 @@ Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, 
 | `baml_rt.a2a.stream.chunk_count` | Histogram | Distribution of chunk counts per stream completion (`method`). |
 | `baml_rt.tool.invocation_total` | Counter | **Canonical** host tool completion by `tool`, `result` (QuickJS bridge). |
 | `baml_rt.tool.invocation_duration_ms` | Histogram | Wall time for that invocation path. |
+| `baml_rt.typesafe.provider_invariant_drift_total` | Counter | Tolerated TypeSafe response drift. Labels: `tool`, allowlisted request `model`, and `invariant` (`distribution_sum` or `score_weighted_mean`). |
 | `mcp.session_expired_total` | Counter | MCP HTTP session expiry observed by runtime. Labels: `transport`. |
 | `mcp.registry.entry_recreated_total` | Counter | Lazy registry replacement of dead MCP connection. Labels: `transport`. |
 | `mcp.digest_mismatch_total` | Counter | Approved MCP snapshot mismatch. Labels: `kind` (`identity`, `tools_startup`, `tools_changed`), `transport`. |

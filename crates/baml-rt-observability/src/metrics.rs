@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -25,6 +26,7 @@ static A2A_STREAM_CHUNK_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static A2A_STREAM_CHUNK_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static TOOL_INVOCATION_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static TOOL_INVOCATION_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static TYPESAFE_PROVIDER_INVARIANT_DRIFT_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static PROVENANCE_WRITE_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static PROVENANCE_WRITE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static A2A_WORKER_HANDLE_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
@@ -285,6 +287,23 @@ pub fn record_tool_invocation(tool_name: &str, result: &str, duration: Duration)
     ];
     tool_invocation_counter().add(1, attributes);
     tool_invocation_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Record a tolerated TypeSafe response invariant drift using the allowlisted request model.
+pub fn record_typesafe_provider_invariant_drift(requested_model: &str, invariant: &'static str) {
+    let counter = TYPESAFE_PROVIDER_INVARIANT_DRIFT_COUNTER.get_or_init(|| {
+        global::meter(METER_NAME)
+            .u64_counter("baml_rt.typesafe.provider_invariant_drift_total")
+            .init()
+    });
+    counter.add(
+        1,
+        &[
+            KeyValue::new("tool", "typesafe/system_one"),
+            KeyValue::new("model", requested_model.to_string()),
+            KeyValue::new("invariant", invariant),
+        ],
+    );
 }
 
 fn provenance_write_counter() -> &'static Counter<u64> {

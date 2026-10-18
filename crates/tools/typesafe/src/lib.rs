@@ -5,21 +5,30 @@
 
 //! TypeSafe System One tool contracts and registration.
 //!
-//! This crate currently provides the production bundle, configuration, metadata, and wire DTOs.
-//! Provider validation, HTTP execution, credentials, and call controls are added in the next
-//! implementation slices.
+//! This crate provides the production bundle, configuration, metadata, wire DTOs, and local
+//! request and provider-response validation. HTTP execution, credentials, and call controls remain
+//! to be implemented.
 
 use std::collections::BTreeMap;
+
+mod error;
+pub(crate) mod validation;
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_derive_core::{JsonSchemaType, TsType};
-use baml_rt_core::{BamlRtError, ClassifiedToolError, ErrorDisposition, Result as BamlResult};
+use baml_rt_core::{BamlRtError, ClassifiedToolError, Result as BamlResult};
 use baml_rt_tools::{
     ActionIdentity, BamlTool, BundleType, DescribeAction, OpaqueJson, ToolSessionContext, baml_tool,
 };
-use serde::{Deserialize, Serialize};
+pub use error::SystemOneError;
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::{Value, json};
+use validation::{
+    INPUT_EXPECTED_REQUEST, classify_input_deserialization_error, deserialize_input_model,
+    deserialize_input_questions, deserialize_input_state, deserialize_input_timeout,
+    validate_system_one_request,
+};
 
 pub const DEFAULT_MODEL: &str = "jev-1.13.0";
 const SYSTEM_ONE_DESCRIPTION: &str = "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state.";
@@ -172,15 +181,49 @@ impl BundleType for TypeSafe {
 }
 
 /// One System One request. Question IDs are the keys in `questions`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SystemOneInput {
     pub state: OpaqueJson,
     pub questions: BTreeMap<String, SystemOneQuestion>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemOneInputWire {
+    #[serde(deserialize_with = "deserialize_input_state")]
+    state: OpaqueJson,
+    #[serde(deserialize_with = "deserialize_input_questions")]
+    questions: BTreeMap<String, SystemOneQuestion>,
+    #[serde(default, deserialize_with = "deserialize_input_model")]
+    model: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_input_timeout")]
+    timeout_ms: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for SystemOneInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        SystemOneInputWire::deserialize(deserializer)
+            .map(|wire| Self {
+                state: wire.state,
+                questions: wire.questions,
+                model: wire.model,
+                timeout_ms: wire.timeout_ms,
+            })
+            .map_err(|error| {
+                let message = match classify_input_deserialization_error(&error.to_string()) {
+                    Some(message) => message,
+                    None => INPUT_EXPECTED_REQUEST,
+                };
+                de::Error::custom(message)
+            })
+    }
 }
 
 impl DescribeAction for SystemOneInput {
@@ -523,15 +566,27 @@ impl JsonSchemaType for SystemOneUsage {
     }
 }
 
+fn single_line_summary_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
+}
+
 /// Safe request summary used by transcript and archive projections.
 pub fn describe_request(input: &SystemOneInput) -> String {
     let questions = input
         .questions
         .iter()
-        .map(|(id, question)| format!("{id}:{}", question.kind()))
+        .map(|(id, question)| format!("{}:{}", single_line_summary_value(id), question.kind()))
         .collect::<Vec<_>>()
         .join(", ");
-    let model = input.model.as_deref().unwrap_or("default");
+    let model = single_line_summary_value(input.model.as_deref().unwrap_or("default"));
     format!(
         "typesafe/system_one: {} questions ({questions}) model={model}",
         input.questions.len()
@@ -543,14 +598,19 @@ pub fn request_action_identity(input: &SystemOneInput) -> ActionIdentity {
     let questions = input
         .questions
         .iter()
-        .map(|(id, question)| format!("{id}:{}", question.kind()))
+        .map(|(id, question)| format!("{}:{}", single_line_summary_value(id), question.kind()))
         .collect::<Vec<_>>()
         .join(", ");
     ActionIdentity::new(
         Some("system_one"),
         vec![
             ("questions", json!(questions)),
-            ("model", json!(input.model.as_deref().unwrap_or("default"))),
+            (
+                "model",
+                json!(single_line_summary_value(
+                    input.model.as_deref().unwrap_or("default")
+                )),
+            ),
         ],
     )
 }
@@ -560,47 +620,27 @@ pub fn describe_output(output: &SystemOneOutput) -> String {
     let answers = output
         .answers
         .iter()
-        .map(|(id, answer)| format!("{id}:{}", answer.kind()))
+        .map(|(id, answer)| format!("{}:{}", single_line_summary_value(id), answer.kind()))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
         "typesafe/system_one: {} answers ({answers}) model={}",
         output.answers.len(),
-        output.model
+        single_line_summary_value(&output.model)
     )
-}
-
-fn classified_error(
-    code: &'static str,
-    disposition: ErrorDisposition,
-    message: &'static str,
-) -> BamlRtError {
-    BamlRtError::ToolClassified(ClassifiedToolError {
-        code: code.to_string(),
-        disposition,
-        message: message.to_string(),
-        hint: None,
-        retry_after_ms: None,
-    })
 }
 
 fn config_for_context(ctx: &ToolSessionContext) -> BamlResult<SystemOneConfig> {
     let config = match &ctx.config {
         Some(config) => serde_json::from_value(config.clone()).map_err(|_| {
-            classified_error(
-                "typesafe_disabled",
-                ErrorDisposition::InformAndContinue,
-                "TypeSafe System One configuration is invalid",
-            )
+            SystemOneError::disabled("TypeSafe System One configuration is invalid")
         })?,
         None => SystemOneConfig::default(),
     };
     if !config.is_valid() {
-        return Err(classified_error(
-            "typesafe_disabled",
-            ErrorDisposition::InformAndContinue,
-            "TypeSafe System One configuration is invalid",
-        ));
+        return Err(
+            SystemOneError::disabled("TypeSafe System One configuration is invalid").into(),
+        );
     }
     Ok(config)
 }
@@ -654,24 +694,39 @@ impl BamlTool for SystemOneTool {
     async fn execute(
         &self,
         ctx: &ToolSessionContext,
-        _args: Self::Input,
+        args: Self::Input,
     ) -> BamlResult<Self::Output> {
         let config = config_for_context(ctx)?;
         if !config.enabled {
-            return Err(classified_error(
-                "typesafe_disabled",
-                ErrorDisposition::InformAndContinue,
+            return Err(SystemOneError::disabled(
                 "TypeSafe System One is disabled by operator configuration",
-            ));
+            )
+            .into());
         }
+        let _validated = validate_system_one_request(&config, &args)?;
 
-        Err(classified_error(
-            "typesafe_provider_unavailable",
-            ErrorDisposition::InformAndContinue,
+        Err(SystemOneError::provider_unavailable(
             "TypeSafe System One provider execution is not available yet",
-        ))
+        )
+        .into())
+    }
+
+    fn classify_execution_error(err: &BamlRtError) -> ClassifiedToolError {
+        let BamlRtError::Json(source) = err else {
+            return ClassifiedToolError::from_baml_error(err);
+        };
+        let raw = source.to_string();
+        match classify_input_deserialization_error(&raw) {
+            Some(message) => SystemOneError::invalid_argument(message).into_classified(),
+            None => SystemOneError::provider_contract(
+                "TypeSafe System One encountered invalid JSON outside tool input",
+            )
+            .into_classified(),
+        }
     }
 }
 
 #[cfg(test)]
 mod contract_tests;
+#[cfg(test)]
+mod validation_tests;

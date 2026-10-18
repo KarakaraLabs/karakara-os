@@ -378,6 +378,52 @@ async fn imperative_quickjs_path_returns_production_disabled_envelope() {
 }
 
 #[tokio::test]
+async fn malformed_input_envelope_does_not_echo_the_bad_value() {
+    let manager = Arc::new(RwLock::new(
+        test_support::common::setup_baml_runtime_manager_no_llm(),
+    ));
+    manager
+        .write()
+        .await
+        .register_tool(SystemOneTool)
+        .await
+        .expect("register production tool");
+    let mut bridge = test_support::common::setup_bridge(manager).await;
+    let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap(),
+    ));
+    let script = r#"
+        (async () => {
+            const session = await openToolSession("typesafe/system_one");
+            await session.send({
+                state: "state",
+                questions: {
+                    severity: {
+                        type: "score",
+                        instructions: "score it",
+                        criteria: "MALFORMED_CRITERIA_SENTINEL"
+                    }
+                }
+            });
+            const step = await session.continue();
+            await session.abort("expected malformed-input failure");
+            return step;
+        })()
+    "#;
+
+    let envelope = bridge
+        .eval_scoped(&scope, script)
+        .await
+        .expect("QuickJS call must resolve, not reject");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_argument");
+    assert_eq!(envelope["error"]["disposition"], "llm_correctable");
+    let rendered = serde_json::to_string(&envelope).expect("serialize envelope");
+    assert!(rendered.contains("questions.*.criteria"));
+    assert!(!rendered.contains("MALFORMED_CRITERIA_SENTINEL"));
+}
+
+#[tokio::test]
 async fn wrapper_carries_descriptions_into_transcript_and_archive_header() {
     let registry = ToolRegistry::new();
     registry
