@@ -17,9 +17,11 @@ use baml_rt_core::{
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_tools::{
-    BamlTool, ToolName, ToolRegistry, ToolSessionContext, ToolStep,
+    BamlTool, BundleName, ToolName, ToolRegistry, ToolSecretResolver, ToolSecretValue,
+    ToolSessionContext, ToolStep,
     archive_refs::{ContextRefTables, RefTable},
     bundles::BundleType,
+    config_resolver::ConfigResolver,
     prompt_projection::{
         PromptProjectionContent, PromptProjectionItem, format_conversation_history_transcript,
         project_prompt_context,
@@ -32,6 +34,32 @@ use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use super::*;
+
+static TYPESAFE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+struct StaticConfigResolver(Value);
+
+#[async_trait]
+impl ConfigResolver for StaticConfigResolver {
+    async fn get_config(&self, _bundle_name: &BundleName) -> baml_rt_core::Result<Option<Value>> {
+        Ok(Some(self.0.clone()))
+    }
+
+    async fn get_config_with_version(
+        &self,
+        _bundle_name: &BundleName,
+    ) -> baml_rt_core::Result<Option<(Value, u64)>> {
+        Ok(Some((self.0.clone(), 7)))
+    }
+}
+
+struct MemoryToolSecretResolver;
+
+impl ToolSecretResolver for MemoryToolSecretResolver {
+    fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue> {
+        (name == TYPESAFE_API_KEY).then(|| ToolSecretValue::new("test-typesafe-key"))
+    }
+}
 
 struct HistoryContractSpikeTool;
 
@@ -179,6 +207,10 @@ fn production_bundle_config_and_metadata_match_the_contract() {
         serde_json::to_value(SystemOneConfig::default()).expect("serialize default config")
     );
     assert_eq!(config.type_name.as_deref(), Some("SystemOneConfig"));
+    assert!(
+        config.validator.is_some(),
+        "typed config validator must be registered"
+    );
     assert_eq!(metadata.secret_requests.len(), 1);
     assert_eq!(metadata.secret_requests[0].name, "TYPESAFE_API_KEY");
 }
@@ -197,17 +229,14 @@ fn config_defaults_missing_fields_and_rejects_unknown_fields() {
     assert_eq!(config.limits.max_body_bytes, 262_144);
     assert_eq!(config.controls.max_concurrent_requests, 4);
     assert_eq!(config.controls.requests_per_minute, 600);
-    assert!(config.is_valid());
+    assert!(config.validate().is_ok());
 
     let mut invalid = config.clone();
     invalid.max_attempts = 0;
-    assert!(!invalid.is_valid(), "zero attempts must be rejected");
+    assert_eq!(invalid.validate(), Err("max_attempts"));
     invalid = config.clone();
     invalid.limits.max_choice_options = 256;
-    assert!(
-        !invalid.is_valid(),
-        "limits above provider maxima must be rejected"
-    );
+    assert_eq!(invalid.validate(), Err("limits.max_choice_options"));
 
     assert!(
         serde_json::from_value::<SystemOneConfig>(json!({"future_field": true})).is_err(),
@@ -219,6 +248,48 @@ fn config_defaults_missing_fields_and_rejects_unknown_fields() {
         }))
         .is_err(),
         "unknown nested fields must be rejected"
+    );
+}
+
+#[test]
+fn typed_config_validator_normalizes_and_caches_valid_versions() {
+    let raw = json!({
+        "enabled": true,
+        "default_model": DEFAULT_MODEL,
+        "allowed_models": [DEFAULT_MODEL],
+        "timeout_ms": 5000,
+        "max_attempts": 2,
+        "limits": {
+            "max_body_bytes": 4096,
+            "max_questions": 8,
+            "max_choice_options": 32,
+            "max_score_levels": 5
+        },
+        "controls": {
+            "max_concurrent_requests": 2,
+            "requests_per_minute": 30,
+            "max_tokens_per_hour": null
+        }
+    });
+
+    let normalized = validate_system_one_config(raw.clone()).expect("valid config");
+    assert_eq!(normalized, raw);
+    let first = cached_config(raw.clone()).expect("first cache lookup");
+    let second = cached_config(raw).expect("second cache lookup");
+    assert!(Arc::ptr_eq(&first, &second));
+
+    let mut invalid = normalized;
+    invalid["default_model"] = json!("jev-not-allowed");
+    assert_eq!(
+        validate_system_one_config(invalid),
+        Err("invalid configuration field: default_model".to_string())
+    );
+
+    let malformed = json!({ "future_field": true });
+    let error = validate_system_one_config(malformed).expect_err("typed parse must fail");
+    assert!(
+        error.contains("future_field"),
+        "the PUT error must name the failing field: {error}"
     );
 }
 
@@ -236,6 +307,177 @@ async fn production_tool_fails_closed_with_default_config() {
     };
     assert_eq!(classified.code, "typesafe_disabled");
     assert_eq!(classified.disposition, ErrorDisposition::InformAndContinue);
+}
+
+#[tokio::test]
+async fn production_tool_uses_scoped_runner_secret_and_maps_unauthorized() {
+    use axum::{Router, http::StatusCode, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let seen_authorization = Arc::new(Mutex::new(None));
+    let seen_authorization_for_handler = Arc::clone(&seen_authorization);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move |headers: axum::http::HeaderMap| {
+            let seen_authorization = Arc::clone(&seen_authorization_for_handler);
+            async move {
+                *seen_authorization.lock().expect("authorization lock") = headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                StatusCode::UNAUTHORIZED
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 1_000,
+        ..SystemOneConfig::default()
+    };
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+    registry.set_secret_resolver(Some(Arc::new(MemoryToolSecretResolver)));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(sample_input()).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read error envelope");
+    let ToolStep::Error { error } = step else {
+        panic!("expected unauthorized tool error")
+    };
+    assert_eq!(
+        error.classified.code, "typesafe_unauthorized",
+        "{}",
+        error.classified.message
+    );
+    assert_eq!(
+        error.classified.disposition,
+        ErrorDisposition::InformAndContinue
+    );
+    assert_eq!(
+        seen_authorization
+            .lock()
+            .expect("authorization lock")
+            .as_deref(),
+        Some("Bearer test-typesafe-key")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn production_tool_reports_missing_runner_credential_before_network_io() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{Router, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let requests_for_handler = Arc::clone(&requests);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move || {
+            let requests = Arc::clone(&requests_for_handler);
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                axum::http::StatusCode::OK
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(sample_input()).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read error envelope");
+    let ToolStep::Error { error } = step else {
+        panic!("expected missing credential tool error")
+    };
+    assert_eq!(error.classified.code, "typesafe_missing_credential");
+    assert_eq!(
+        error.classified.disposition,
+        ErrorDisposition::InformAndContinue
+    );
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        0,
+        "a missing credential must fail before any network request"
+    );
+    server.abort();
 }
 
 #[test]

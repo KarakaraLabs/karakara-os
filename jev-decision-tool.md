@@ -30,7 +30,7 @@ Jev answers are snap judgments over the state they are given. They do not replac
   - Root `Cargo.toml`: add `"crates/tools/typesafe"` to `workspace.members`.
   Add `typesafe` to `http-tools` in every crate that defines that aggregate feature. Builds without the feature do not contain the tool.
 
-**Core changes:** `BamlTool::execute` is now the single, mandatory execution method with signature `async fn execute(&self, ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output>`. `ToolWrapper::open_session` already holds the Open-time `ToolSessionContext` and calls `tool.execute(&ctx, args)`. Context-free tools ignore the context by naming the parameter `_ctx`. This lets the Jev tool stay a plain `#[baml_tool] impl BamlTool` (no `build_with`, no custom `ToolHandler` wrapper) while still receiving `ctx` (`config`, `config_version`, `context_id`, `task_id`), and future HTTP tools get config access for free. There is no context-free compatibility method and no `Option<ToolSessionContext>`; tools that need scope read the fields they need directly. No changes to `SystemBundle`, `ToolSessionContext`, `ToolRegistry`, or the session FSM, and no builder *logic* changes (the builder only gains the feature link described under Cargo feature). Configuration is bundle-wide and resolved by bundle name; it is not scoped by `agent_id`, `task_id`, or `context_id`, and the tool does not identify or distinguish calling agents.
+**Core changes:** `BamlTool::execute` is now the single, mandatory execution method with signature `async fn execute(&self, ctx: &ToolSessionContext, args: Self::Input) -> Result<Self::Output>`. `ToolWrapper::open_session` already holds the Open-time `ToolSessionContext` and calls `tool.execute(&ctx, args)`. Context-free tools ignore the context by naming the parameter `_ctx`. `ToolSessionContext` also carries a host-owned `ToolSecrets` accessor restricted to the secret names declared in that tool's metadata. `ToolRegistry` builds the scope from its shared `ToolSecretResolver`; tools never construct a concrete fnox resolver. There is no context-free compatibility method and no `Option<ToolSessionContext>`. No changes to `SystemBundle` or the session FSM are needed. Configuration is bundle-wide and resolved by bundle name; it is not scoped by `agent_id`, `task_id`, or `context_id`, and the tool does not identify or distinguish calling agents.
 
 ## Existing Agentium rules to preserve
 
@@ -49,12 +49,12 @@ Jev answers are snap judgments over the state they are given. They do not replac
 
 | Need | Mechanism |
 | --- | --- |
-| Metadata, codegen, config schema | `#[baml_tool(name = "typesafe/system_one", access = Read, config = { bundle = "typesafe", schema = SystemOneConfig, default = ... }, secrets = [...])]` with a plain `#[baml_tool] impl BamlTool`. No `build_with`. The question and answer DTOs stay on the JSON Schema codegen path because their hand-written schemas carry tagged-union discriminators; setting `baml_types` would make the builder skip that schema conversion. |
-| Executor with access to resolved config and scope | `BamlTool::execute(&self, ctx, args)` (mandatory, see Core changes) so the tool receives `ToolSessionContext` (`config`, `config_version`, `context_id`, `task_id`). `ToolWrapper::open_session` captures the Open-time `ctx` and calls `execute`. |
+| Metadata, codegen, config schema | `#[baml_tool(name = "typesafe/system_one", access = Read, config = { bundle = "typesafe", schema = SystemOneConfig, default = ..., validator = validate_system_one_config }, secrets = [...])]` with a plain `#[baml_tool] impl BamlTool`. The config API runs the typed parser and semantic validator before storing a canonical value. The question and answer DTOs stay on the JSON Schema codegen path because their hand-written schemas carry tagged-union discriminators; setting `baml_types` would make the builder skip that schema conversion. |
+| Executor with access to resolved config and scope | `BamlTool::execute(&self, ctx, args)` receives `ToolSessionContext` (`config`, `config_version`, scoped secrets, `context_id`, `task_id`). Parsed System One config is cached process-wide by canonical value, so each runner parses a new stored version once rather than once per invocation. |
 | Control over history and archive text | `ToolWrapper<T: BamlTool>` already turns `BamlTool::describe_invocation`, `action_identity`, and `describe_result` into the three `ToolHandler` hooks (`describe_invocation`, `describe_archive_action`, `describe_result_value`) and already parses both payload shapes (`{"step":{"op":…}}` and `{"op":…}`). The Jev tool overrides those three `BamlTool` methods; no custom `ToolHandler` wrapper or shared extractor is needed (see History and projection). |
 | One-shot lifecycle | `ToolCapability::OneShot` + `SessionPolicy::Strict` (defaults). |
 | Typed failures | A typed `SystemOneError` enum converted into `BamlRtError::ToolClassified(ClassifiedToolError)` inside `execute`. `classify_for_session` passes `ToolClassified` through unchanged. One `classify_execution_error` override is still required: malformed input that fails `ToolWrapper` deserialization before `execute` runs (see Failure contract). |
-| API key | `TYPESAFE_API_KEY` resolved per call via `FnoxFileSecretResolver::resolve_or_env`, declared with `secrets = [...]` (see Credentials). |
+| API key | `TYPESAFE_API_KEY` declared with `secrets = [...]` and resolved per call through the runner-injected, metadata-scoped `ToolSecrets` accessor (see Credentials). |
 | Call controls | A crate-owned, process-wide limiter (see Call controls). |
 | Arbitrary JSON fields | `OpaqueJson` for state, instructions, and criteria entries. |
 | Tagged unions | `#[serde(tag = "type")]` with explicit `TsType`/`JsonSchemaType`, following `CallbackToolInput` in `crates/tools/system/src/tools.rs`. |
@@ -112,12 +112,12 @@ Question IDs are not sent to the model. Author docs and the helper must say that
 
 ### Request validation (before network I/O)
 
-- Nonempty state and question set; bounded nesting depth for state, instructions, and criteria.
-- Question count within the configured limit; question IDs unique, nonempty, bounded length.
+- Nonempty state and question set; bounded nesting depth for state, instructions, and criteria. The criteria object or array counts as one of the 64 levels.
+- Question count within the configured limit; question IDs nonempty, bounded in length, free of control characters, and without leading or trailing whitespace. The guest bridge parses Send payloads into `serde_json::Value` before tool deserialization, so duplicate raw JSON object keys have already collapsed and cannot be detected by this adapter. This applies to question IDs and Choice option keys; ordinary map semantics still guarantee one value per key after canonicalization.
 - `model`, when supplied, is in `allowed_models`; otherwise `invalid_argument` (no silent fallback, so a typo is visible). The configured default applies only when `model` is omitted.
 - `timeout_ms`, when supplied, is positive and at most the configured `timeout_ms` ceiling; otherwise `invalid_argument` (rejected, not silently capped — matching how a disallowed model is handled).
 - **Request size:** after the checks above, the adapter serializes the outbound `POST /v1/systemone` body once and rejects it with `invalid_argument` if it exceeds `max_body_bytes`. This bounds state, instructions, and criteria together; there is no separate state-size limit. The same serialized bytes are sent on every attempt. The check runs before any call control, so an oversized request never takes a concurrency permit or a rate token.
-- Choice: 1–255 options (provider maximum); option keys unique, nonempty, bounded. Option values may be `null` (the provider's extraction and taxonomy examples rely on this).
+- Choice: 1–255 options (provider maximum); option keys follow the same nonempty, length, control-character, and whitespace rules as question IDs. Option values may be `null` (the provider's extraction and taxonomy examples rely on this).
 - Score: 2–10 levels (provider range).
 - Noul: `criteria` absent, or an object with exactly `true` and `false`.
 - `instructions` must be present and non-empty. This is deliberately stricter than the provider (which accepts `null`): every answer must be reviewable against the exact prompt it answered, and a `null` or empty `instructions` string cannot be traced to an author intent. Reject it as `invalid_argument` rather than sending it. If a use case later genuinely needs provider-`null` instructions, it is a separate proposal.
@@ -171,6 +171,7 @@ Consequences:
 | Provider 429 after retries / deadline | `typesafe_rate_limited` | `InformAndContinue`, with `retry_after_ms` when known |
 | Timeout, transport failure, 5xx after retries | `typesafe_provider_unavailable` | `InformAndContinue` |
 | Malformed or invariant-violating response | `typesafe_provider_contract` | `InformAndContinue` |
+| Provider 4xx client error (400/413/415/422, not retried) | `typesafe_provider_contract` | `InformAndContinue` |
 
 **Malformed input** (a payload that fails `ToolWrapper`'s `deserialize_tool_input` before `execute` runs) is classified correctly as `invalid_argument` / `LlmCorrectable`, but serde's raw message quotes the offending value (for example, `invalid type: string "…", expected a sequence`), which would leak criteria or instructions text into the transcript error line. The tool overrides `classify_execution_error` to rewrite such messages to the field path and expected type only, preserving `invalid_argument`. This is the one `classify_execution_error` override the tool needs.
 
@@ -275,7 +276,7 @@ The agent sends the draft only below its tested `discloses_internal_detail` thre
 ### Credential
 
 - The key is declared as a secret on the tool: `#[baml_tool(secrets = [{ name = "TYPESAFE_API_KEY", description = "TypeSafe API key", reason = "Required to authenticate with the TypeSafe System One API" }], ...)]`.
-- It is resolved on each call inside `execute`, after local validation and call controls and before network I/O, exactly as `support/slack_notify` does: build `FnoxFileSecretResolver::default_path_resolver()` and call `resolve_or_env("TYPESAFE_API_KEY")`. This reads the environment variable unless fnox is in exclusive mode (`BAML_FNOX_CONFIG`). The resolver is rebuilt per call (no caching); revisit that only if the evaluation shows fnox reload overhead matters next to Jev's ~150 ms latency.
+- It is resolved on each call inside `execute`, after local validation and call controls and before network I/O, through `ctx.secrets`. The runner owns one shared resolver and restricts each tool to its declared secret names. A dedicated `resolve_credential` path handles tool credentials: the overlay first (an explicit unlink wins), then fnox, then the process environment only when `BAML_FNOX_CONFIG` is absent. The ordinary `resolve` path stays fnox-only, so LLM keys, MCP secrets, and the secrets-overview `satisfied` flag keep their existing no-env semantics. The TypeSafe crate has no dependency on fnox.
 - Unset or empty fails with `typesafe_missing_credential`; no request is sent. A provider 401/403 fails with `typesafe_unauthorized` and is not retried.
 - The key never appears in session input, config JSON, model context, logs, metrics, archives, or provenance payloads. Errors never echo request headers.
 
@@ -307,7 +308,8 @@ Resolved by `ToolRegistry` at session open and delivered through `ctx.config` wi
 - These are **Agentium limits**, not TypeSafe limits. The live Models page confirms `jev-1.13.0` as the stable version behind `jev-latest`; `jev-preview` points to `jev-1.14.0`. A pinned default keeps evaluations reproducible. Operators may add an alias deliberately.
 - TypeSafe documents no separate question-count limit. Its limits are 64k tokens per request, 32k tokens per question, and 32 MiB for the HTTP body. Agentium keeps the lower 64-question and 256 KiB defaults to bound cost, latency, and retained provenance. Request limits must still leave room for speculative fan-out, many-option Choice, and multi-question scoring. There is no fixed per-task call cap; operational protection comes from Call controls.
 - The 10-second overall deadline matches the SDK's default timeout for one HTTP operation. `max_attempts = 3` matches the SDK default of one initial attempt plus two retries, but the overall deadline may stop later attempts. Per-call deadlines may be lower.
-- The operator surface for `enabled` and limits is the schema-validated `PUT /config/{bundle}` endpoint, not hand-edited store rows. The handler still parses and validates `ctx.config` defensively, because `ToolRegistry` falls back to the metadata default when the config store errors or has no entry and does not schema-validate stored config at session open. With `enabled: false` as the default, a store outage fails closed. A malformed stored config is rejected as `typesafe_disabled`, with a log line naming the bad field (not its value).
+- The operator surface for `enabled` and limits is `PUT /config/{bundle}`. The handler runs JSON Schema validation, deserializes `SystemOneConfig`, applies cross-field and provider-limit checks, and stores the canonical serialized form. Each runner caches the parsed config and reuses it while that value is current. A replica that did not handle the upload, or a runner recovering after restart, parses the stored value once on first use. Corrupt or legacy stored data still fails closed as `typesafe_disabled`, with a log line naming the bad field rather than its value. With `enabled: false` as the default, a store outage also fails closed.
+- The typed validator is opt-in via `validator = ...` on the tool attribute. Bundles that do not declare one keep the previous behaviour of storing the JSON-schema-validated body as submitted. Two generic handler changes ride along: a bundle schema that fails to compile now returns 500 instead of being skipped silently, and a declared validator's canonical output is what gets stored.
 - The config structs use `#[serde(default, deny_unknown_fields)]`. New fields take safe defaults when older stored configs are read, while misspelled or retired fields remain errors. `enabled` therefore still defaults to `false` after an upgrade.
 - Per-request counts, retry attempts, concurrency, and request rate use `u32`; `timeout_ms` and the rolling token count use `u64`. Runtime config validation rejects zero where it has no useful meaning and enforces the provider maxima for Choice and Score.
 - Endpoint: pinned to `https://api.typesafe.ai/v1/systemone`. A `TYPESAFE_API_BASE_URL` environment override exists for local mocks and tests only (same pattern as `SLACK_NOTIFY_API_BASE_URL`). It is operator-controlled, never set from Send input or stored config.
@@ -454,7 +456,7 @@ The optional [`scripts/capture_typesafe_system_one_fixtures.sh`](scripts/capture
 ## Verification and acceptance
 
 - **Build and opt-in:** with the `typesafe` feature, an agent listing `"typesafe/system_one"` registers the tool; an agent without it cannot open a session. Builds without the feature do not contain the tool. Run `just fmt`, `just clippy`, and targeted crate tests (`just test-crate baml-tools-typesafe`).
-- **Contract matrix (`*_matrix` tables / `insta` snapshots):** valid Choice/Score/Noul and mixed batches; string, object, and array state; `null` option values; structured instructions and criteria; empty and duplicate questions; serialized request at and above `max_body_bytes`, including a small state with large criteria; Choice >255 options; Score <2 or >10 levels; malformed Noul criteria; omitted model uses the default; supplied disallowed model fails with `invalid_argument`; `timeout_ms` zero, at the ceiling, and above the ceiling (rejected).
+- **Contract matrix (`*_matrix` tables / `insta` snapshots):** valid Choice/Score/Noul and mixed batches; string, object, and array state; `null` option values; structured instructions and criteria; empty questions; serialized request at and above `max_body_bytes`, including a small state with large criteria; Choice >255 options; Score <2 or >10 levels; malformed Noul criteria; omitted model uses the default; supplied disallowed model fails with `invalid_argument`; `timeout_ms` zero, at the ceiling, and above the ceiling (rejected). Duplicate provider-response keys are rejected from raw response bytes; duplicate input keys are not observable after the guest bridge canonicalizes the Send payload.
 - **Response matrix (from live fixtures where possible):** missing or extra answer IDs; type mismatch; choice not in options; tied top options accepted; choice below max − ε_tie rejected; rounded probabilities and weighted-mean drift accepted with a drift metric; sums outside tolerance rejected; score out of range; non-finite values; unknown additive fields ignored; structured and `null` legend values accepted and not surfaced.
 - **Credential matrix:** unset or empty `TYPESAFE_API_KEY` fails with `typesafe_missing_credential` and sends no request; a set key is used for the request; 401/403 fails with `typesafe_unauthorized` without a retry; no bearer token in logs, history, provenance exports, or error messages.
 - **Failure and HTTP matrix (local mock):** timeout measured from Read (a delay between Send and Read does not consume the deadline; limiter wait and retry backoff do), connection failure, 401/403, 429 with `Retry-After` inside and beyond the deadline, 5xx, invalid JSON, attempt budget, cancellation. Adapter and executor failures reach TypeScript as `status: "error"` with the expected `code`; the helper throws `SystemOneError` and does not retry. Rejected session operations are tested separately: a blocked `send()` rejects the promise, the helper aborts the opened session, and the original error is preserved; a rejected `openToolSession` leaves no session to abort. A live-provider smoke test runs only when `TYPESAFE_API_KEY` is set explicitly.
@@ -501,18 +503,18 @@ Derived from the plan above (no design changes). Phase 1 tasks only; the Deliver
 - [ ] Implement `execute(&self, ctx, args)` (resolve config, validate, control, request, validate response).
 
 ### 5. Validation and failure mapping
-- [ ] Request validation: nonempty state/questions, nesting depth, question count/IDs, model allowlist, `timeout_ms` (positive, ≤ ceiling), request size, Choice 1–255, Score 2–10, Noul `criteria`, non-empty `instructions`, JSON-only values.
-- [ ] Response validation: answer set, choice selection, probability keys, score keys/range, distribution sum, value range, legend keys; ignore unknown additive fields.
-- [ ] Emit `provider_invariant_drift` metric for drift-only checks; never synthesize Noul confidence.
-- [ ] Map `SystemOneError` → `BamlRtError::ToolClassified(ClassifiedToolError)` with `typesafe_*` codes and the dispositions from the table.
-- [ ] Override `classify_execution_error` to rewrite serde deserialization messages to field path + expected type (preserve `invalid_argument`).
+- [x] Request validation: nonempty state/questions, nesting depth, question count/IDs, model allowlist, `timeout_ms` (positive, ≤ ceiling), request size, Choice 1–255, Score 2–10, Noul `criteria`, non-empty `instructions`, JSON-only values.
+- [x] Response validation: answer set, choice selection, probability keys, score keys/range, distribution sum, value range, legend keys; ignore unknown additive fields.
+- [x] Emit `provider_invariant_drift` metric for drift-only checks; never synthesize Noul confidence.
+- [x] Map `SystemOneError` → `BamlRtError::ToolClassified(ClassifiedToolError)` with `typesafe_*` codes and the dispositions from the table.
+- [x] Override `classify_execution_error` to rewrite serde deserialization messages to field path + expected type (preserve `invalid_argument`).
 
 ### 6. Credential and config
-- [ ] Declare `TYPESAFE_API_KEY` via `secrets = [...]`.
-- [ ] Resolve per call as `support/slack_notify` does (`FnoxFileSecretResolver::default_path_resolver()` + `resolve_or_env`); no caching.
-- [ ] `typesafe_missing_credential` on unset/empty; `typesafe_unauthorized` on 401/403 (no retry).
-- [ ] Pin endpoint `https://api.typesafe.ai/v1/systemone` with `TYPESAFE_API_BASE_URL` override for mocks/tests only.
-- [ ] Parse `ctx.config` defensively; `typesafe_disabled` on malformed config (log field name, not value).
+- [x] Declare `TYPESAFE_API_KEY` via `secrets = [...]`.
+- [x] Resolve per call through the runner-injected, metadata-scoped `ToolSecrets`; no TypeSafe-to-fnox dependency.
+- [x] `typesafe_missing_credential` on unset/empty; `typesafe_unauthorized` on 401/403 (no retry).
+- [x] Pin endpoint `https://api.typesafe.ai/v1/systemone` with `TYPESAFE_API_BASE_URL` override for mocks/tests only.
+- [x] Parse and semantically validate config during `PUT`, cache it process-wide on each runner, and fail closed as `typesafe_disabled` for malformed stored data.
 
 ### 7. Call controls
 - [ ] Concurrency semaphore (`max_concurrent_requests`): wait to deadline, then `typesafe_capacity_exceeded`.

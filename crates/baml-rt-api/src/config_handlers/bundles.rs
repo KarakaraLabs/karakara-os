@@ -252,16 +252,22 @@ pub async fn put_config(
                 )
             })?;
 
-        if let Ok(validator) = jsonschema::JSONSchema::compile(&config_meta.schema)
-            && let Err(err_iter) = validator.validate(&body)
-        {
+        let schema_validator = jsonschema::JSONSchema::compile(&config_meta.schema).map_err(|error| {
+            tracing::error!(bundle = %bundle_name, error = %error, "bundle config schema failed to compile");
+            problem(500, "Internal Error", "Bundle config schema is invalid")
+        })?;
+        if let Err(err_iter) = schema_validator.validate(&body) {
             let msg: String = err_iter
                 .map(|e| format!("{}: {}", e.instance_path, e))
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(problem(400, "Invalid config", msg));
         }
-        body
+        match config_meta.validator {
+            Some(validate) => validate(body)
+                .map_err(|message| problem(400, "Invalid config", message))?,
+            None => body,
+        }
     };
 
     if let Some(if_match) = headers.get("if-match").and_then(|v| v.to_str().ok()) {

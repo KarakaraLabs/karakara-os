@@ -67,8 +67,7 @@ pub(crate) struct ValidatedSystemOneRequest {
 }
 
 impl ValidatedSystemOneRequest {
-    // The HTTP transport will send these exact bytes once that implementation slice lands.
-    #[allow(dead_code)]
+    /// Exact bytes sent by the HTTP transport.
     pub(crate) fn body(&self) -> &[u8] {
         &self.body
     }
@@ -77,17 +76,13 @@ impl ValidatedSystemOneRequest {
         &self.model
     }
 
-    // The HTTP transport will use this deadline once that implementation slice lands.
-    #[allow(dead_code)]
+    /// Per-call HTTP deadline selected during request validation.
     pub(crate) fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
 }
 
 /// A provider invariant that drifted within the accepted response envelope.
-///
-/// The pending HTTP transport will return these observations from response validation.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderInvariantDrift {
     pub(crate) question_id: String,
@@ -95,12 +90,11 @@ pub(crate) struct ProviderInvariantDrift {
 }
 
 /// Validated provider output plus non-fatal drift observations.
-///
-/// The pending HTTP transport will consume this result after each provider response.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct ValidatedSystemOneResponse {
     pub(crate) output: SystemOneOutput,
+    /// Retained for contract tests; production records each drift before returning.
+    #[allow(dead_code)]
     pub(crate) drifts: Vec<ProviderInvariantDrift>,
 }
 
@@ -509,9 +503,6 @@ struct ProviderUsage {
 }
 
 /// Parse and validate a raw provider response before agent code can branch on it.
-///
-/// The HTTP transport will call this function once that implementation slice lands.
-#[allow(dead_code)]
 pub(crate) fn validate_system_one_response(
     input: &SystemOneInput,
     request: &ValidatedSystemOneRequest,

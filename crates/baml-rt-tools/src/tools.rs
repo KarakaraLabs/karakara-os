@@ -417,6 +417,85 @@ impl SecretRequest {
     }
 }
 
+/// Opaque secret value returned to a tool. Debug output never exposes the value.
+#[derive(Clone)]
+pub struct ToolSecretValue(String);
+
+impl ToolSecretValue {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for ToolSecretValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ToolSecretValue(***)")
+    }
+}
+
+/// Runner-owned secret backend used by tool sessions.
+pub trait ToolSecretResolver: Send + Sync {
+    fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue>;
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ToolSecretAccessError {
+    #[error("tool did not declare secret '{0}'")]
+    Undeclared(String),
+}
+
+/// Secret accessor restricted to the requests declared by one tool's metadata.
+#[derive(Clone)]
+pub struct ToolSecrets {
+    resolver: Option<Arc<dyn ToolSecretResolver>>,
+    allowed: Arc<HashSet<String>>,
+}
+
+impl Default for ToolSecrets {
+    fn default() -> Self {
+        Self {
+            resolver: None,
+            allowed: Arc::new(HashSet::new()),
+        }
+    }
+}
+
+impl ToolSecrets {
+    fn scoped(resolver: Option<Arc<dyn ToolSecretResolver>>, requests: &[SecretRequest]) -> Self {
+        Self {
+            resolver,
+            allowed: Arc::new(
+                requests
+                    .iter()
+                    .map(|request| request.name.clone())
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn resolve(
+        &self,
+        name: &str,
+    ) -> std::result::Result<Option<ToolSecretValue>, ToolSecretAccessError> {
+        if !self.allowed.contains(name) {
+            return Err(ToolSecretAccessError::Undeclared(name.to_string()));
+        }
+        Ok(self
+            .resolver
+            .as_ref()
+            .and_then(|resolver| resolver.resolve_tool_secret(name))
+            .filter(|value| !value.as_str().trim().is_empty()))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTypeSpec {
     pub name: String,
@@ -429,6 +508,17 @@ pub struct ToolTypeSpec {
 /// Every config bundle **must** specify a default (required field); use
 /// [`ToolConfigMetadata::default_from_schema`] when building from a schema that has
 /// `properties.<key>.default`, or pass an explicit value (e.g. `json!({})`).
+pub type ToolConfigValidator = fn(Value) -> std::result::Result<Value, String>;
+
+/// Deserialize and serialize a typed config value so the config API stores its canonical form.
+pub fn normalize_tool_config<T>(value: Value) -> std::result::Result<Value, String>
+where
+    T: serde::de::DeserializeOwned + Serialize,
+{
+    let config: T = serde_json::from_value(value).map_err(|error| error.to_string())?;
+    serde_json::to_value(config).map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfigMetadata {
     /// JSON Schema for the config.
@@ -437,6 +527,10 @@ pub struct ToolConfigMetadata {
     pub default: Value,
     /// Type name for TS/BAML generation.
     pub type_name: Option<String>,
+    /// Host-only typed parser and semantic validator. It is intentionally absent from catalog
+    /// snapshots because function pointers are process-local.
+    #[serde(skip)]
+    pub validator: Option<ToolConfigValidator>,
 }
 
 impl ToolConfigMetadata {
@@ -447,7 +541,13 @@ impl ToolConfigMetadata {
             schema,
             default,
             type_name,
+            validator: None,
         }
+    }
+
+    pub fn with_validator(mut self, validator: ToolConfigValidator) -> Self {
+        self.validator = Some(validator);
+        self
     }
 
     /// Derive a default config object from JSON Schema when `properties` entries have a `default` key.
@@ -1514,6 +1614,8 @@ pub struct ToolSessionContext {
     pub config: Option<Value>,
     /// Config version when config was resolved; used for provenance linkage.
     pub config_version: Option<u64>,
+    /// Resolver scoped to the secret names declared by this tool's metadata.
+    pub secrets: ToolSecrets,
     /// Invocation scope task_id when available.
     pub task_id: Option<TaskId>,
     /// Optional per-tool classifier for execution errors (set when opening via [`ToolWrapper`]).
@@ -1895,6 +1997,7 @@ struct ToolRegistryInner {
     bundles: HashMap<BundleName, ToolBundleMetadata>,
     allowlist: Option<HashSet<ToolName>>,
     config_resolver: Option<Arc<dyn ConfigResolver>>,
+    secret_resolver: Option<Arc<dyn ToolSecretResolver>>,
 }
 
 /// Extract the tool name from a BAML-parsed result payload.
@@ -2374,6 +2477,7 @@ impl ToolRegistry {
                 bundles: HashMap::new(),
                 allowlist: None,
                 config_resolver: None,
+                secret_resolver: None,
             }),
             sessions: DashMap::new(),
             session_config_version: DashMap::new(),
@@ -2405,6 +2509,12 @@ impl ToolRegistry {
     pub fn set_config_resolver(&self, resolver: Option<Arc<dyn ConfigResolver>>) {
         let mut inner = self.inner.lock().unwrap();
         inner.config_resolver = resolver;
+    }
+
+    /// Set the shared secret backend used to build metadata-scoped session accessors.
+    pub fn set_secret_resolver(&self, resolver: Option<Arc<dyn ToolSecretResolver>>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.secret_resolver = resolver;
     }
 
     /// Register a tool that implements the BamlTool trait
@@ -2789,7 +2899,7 @@ impl ToolRegistry {
         let session_id = ToolSessionId::random();
 
         let result = async {
-            let (metadata, handler) = {
+            let (metadata, handler, secret_resolver) = {
                 let inner = self.inner.lock().unwrap();
                 let (metadata, handler) = inner.tools.get(&parsed).ok_or_else(|| {
                     BamlRtError::FunctionNotFound(format!("Tool '{}' not found", parsed))
@@ -2803,7 +2913,11 @@ impl ToolRegistry {
                         parsed
                     )));
                 }
-                (metadata.clone(), handler.clone())
+                (
+                    metadata.clone(),
+                    handler.clone(),
+                    inner.secret_resolver.clone(),
+                )
             };
 
             let (config, config_version) = {
@@ -2834,6 +2948,7 @@ impl ToolRegistry {
                 agent_id: agent_id.clone(),
                 config,
                 config_version,
+                secrets: ToolSecrets::scoped(secret_resolver, &metadata.secret_requests),
                 task_id: task_id.cloned(),
                 execution_classifier: Some(execution_classifier),
             };
@@ -3559,6 +3674,7 @@ mod tool_config_metadata_tests {
             schema: schema.clone(),
             default: json!({ "k": "explicit" }),
             type_name: None,
+            validator: None,
         };
         assert_eq!(meta.default, json!({ "k": "explicit" }));
     }
@@ -3573,6 +3689,7 @@ mod tool_config_metadata_tests {
             schema: schema.clone(),
             default: default.clone(),
             type_name: None,
+            validator: None,
         };
         assert_eq!(meta.default, json!({ "k": "from_schema" }));
     }
@@ -3879,6 +3996,48 @@ mod unified_step_executor_authoring_parse_tests {
     }
 }
 
+#[cfg(test)]
+mod tool_secret_tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use super::{
+        SecretRequest, ToolSecretAccessError, ToolSecretResolver, ToolSecretValue, ToolSecrets,
+    };
+
+    struct MemoryResolver(HashMap<String, String>);
+
+    impl ToolSecretResolver for MemoryResolver {
+        fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue> {
+            self.0.get(name).cloned().map(ToolSecretValue::new)
+        }
+    }
+
+    #[test]
+    fn tool_secret_scope_enforces_metadata_declarations() {
+        let resolver = Arc::new(MemoryResolver(HashMap::from([
+            ("DECLARED_KEY".to_string(), "declared-value".to_string()),
+            ("OTHER_KEY".to_string(), "other-value".to_string()),
+        ])));
+        let scope = ToolSecrets::scoped(
+            Some(resolver),
+            &[SecretRequest::api_key("DECLARED_KEY", "test", "test")],
+        );
+
+        assert_eq!(
+            scope
+                .resolve("DECLARED_KEY")
+                .expect("declared access")
+                .expect("resolved secret")
+                .as_str(),
+            "declared-value"
+        );
+        assert!(matches!(
+            scope.resolve("OTHER_KEY"),
+            Err(ToolSecretAccessError::Undeclared(name)) if name == "OTHER_KEY"
+        ));
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     //! Test-only construction helpers for tool sessions.
@@ -3902,6 +4061,7 @@ pub mod test_support {
             ),
             config: None,
             config_version: None,
+            secrets: super::ToolSecrets::default(),
             task_id: None,
             execution_classifier: None,
         }

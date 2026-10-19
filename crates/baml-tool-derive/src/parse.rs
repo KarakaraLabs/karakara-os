@@ -29,6 +29,7 @@ pub(crate) struct ConfigDef {
     pub bundle: LitStr,
     pub schema: Type,
     pub default: Expr,
+    pub validator: Option<Path>,
 }
 
 /// Parsed attributes from `#[baml_tool(...)]`.
@@ -90,6 +91,7 @@ enum ConfigEntry {
     Bundle(LitStr),
     Schema(Type),
     Default(Expr),
+    Validator(Path),
 }
 
 /// Parse the entire `(...)` contents of `#[baml_tool(...)]`.
@@ -314,12 +316,14 @@ impl Parse for AttrEntry {
                 let mut bundle: Option<LitStr> = None;
                 let mut schema: Option<Type> = None;
                 let mut default: Option<Expr> = None;
+                let mut validator: Option<Path> = None;
 
                 for entry in entries {
                     match entry {
                         ConfigEntry::Bundle(v) => bundle = Some(v),
                         ConfigEntry::Schema(v) => schema = Some(v),
                         ConfigEntry::Default(v) => default = Some(v),
+                        ConfigEntry::Validator(v) => validator = Some(v),
                     }
                 }
 
@@ -337,6 +341,7 @@ impl Parse for AttrEntry {
                     bundle,
                     schema,
                     default,
+                    validator,
                 })))
             }
             "baml_types" => {
@@ -380,10 +385,11 @@ impl Parse for ConfigEntry {
             "bundle" => Ok(ConfigEntry::Bundle(input.parse()?)),
             "schema" => Ok(ConfigEntry::Schema(input.parse()?)),
             "default" => Ok(ConfigEntry::Default(input.parse()?)),
+            "validator" => Ok(ConfigEntry::Validator(input.parse()?)),
             other => Err(syn::Error::new(
                 key.span(),
                 format!(
-                    "baml_tool: unknown config attribute `{other}`; expected bundle, schema, or default"
+                    "baml_tool: unknown config attribute `{other}`; expected bundle, schema, default, or validator"
                 ),
             )),
         }

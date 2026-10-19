@@ -167,7 +167,19 @@ pub fn placeholder_to_key(placeholder: &str) -> &str {
 /// Resolves secret placeholders (e.g. `env.OPENROUTER_API_KEY` or vault keys) to actual values.
 pub trait SecretResolver: Send + Sync {
     /// Resolve a placeholder to the secret value. Returns None if not found or not applicable.
+    ///
+    /// This is the store-only lookup. It never falls back to the process
+    /// environment; see [`SecretResolver::resolve_credential`] for the
+    /// environment-aware path used by tool credentials.
     fn resolve(&self, placeholder: &str) -> Option<SecretValue>;
+
+    /// Resolve a tool credential by request name, applying the backend's
+    /// environment fallback policy. The default is store-only (`resolve`);
+    /// backends that allow environment fallback override it, and the overlay
+    /// overrides it so an explicit unlink blocks fallback.
+    fn resolve_credential(&self, name: &str) -> Option<SecretValue> {
+        self.resolve(name)
+    }
 
     /// Look up the value for this store key in the backend. Always a direct store lookup; no overlay or request-name indirection.
     fn resolve_from_store(&self, key: &StoreKey) -> Option<SecretValue> {
@@ -347,8 +359,8 @@ impl FnoxFileSecretResolver {
 
     /// Resolve a credential by name from fnox, falling back to the process environment
     /// only when fnox is not the exclusive source (`BAML_FNOX_CONFIG` not set).
-    /// Tries both `env.{name}` and `{name}` as fnox keys for compatibility with
-    /// BAML placeholder conventions.
+    /// A leading `env.` or `vault:` prefix is normalized to the bare store key before
+    /// the fnox cache lookup, matching BAML placeholder conventions.
     pub fn resolve_or_env(&self, name: &str) -> Option<String> {
         self.resolve_or_env_with(name, self.is_exclusive(), |n| std::env::var(n).ok())
     }
@@ -361,28 +373,36 @@ impl FnoxFileSecretResolver {
         exclusive: bool,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> Option<String> {
-        let env_prefixed = format!("env.{name}");
-        for key in [env_prefixed.as_str(), name] {
-            if let Some(v) = self.resolve(key) {
-                let t = v.as_str().trim();
-                if !t.is_empty() {
-                    return Some(t.to_string());
-                }
+        self.resolve_with_env_lookup(name, exclusive, env_lookup)
+            .map(SecretValue::into_string)
+    }
+
+    fn resolve_with_env_lookup(
+        &self,
+        placeholder: &str,
+        exclusive: bool,
+        env_lookup: impl Fn(&str) -> Option<String>,
+    ) -> Option<SecretValue> {
+        let key = placeholder_to_key(placeholder);
+        self.cache.get(key).cloned().or_else(|| {
+            if exclusive {
+                return None;
             }
-        }
-        if !exclusive && let Some(k) = env_lookup(name) {
-            let t = k.trim();
-            if !t.is_empty() {
-                return Some(t.to_string());
-            }
-        }
-        None
+            env_lookup(key)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(SecretValue::new)
+        })
     }
 }
 
 impl SecretResolver for FnoxFileSecretResolver {
     fn resolve(&self, placeholder: &str) -> Option<SecretValue> {
         self.cache.get(placeholder_to_key(placeholder)).cloned()
+    }
+
+    fn resolve_credential(&self, name: &str) -> Option<SecretValue> {
+        self.resolve_with_env_lookup(name, self.is_exclusive(), |key| std::env::var(key).ok())
     }
 
     fn resolve_from_store(&self, key: &StoreKey) -> Option<SecretValue> {
@@ -430,6 +450,25 @@ impl SecretResolver for OverlaySecretResolver {
             Some(Some(v)) => Some(v),
             Some(None) => None,
             None => self.backend.resolve(placeholder),
+        }
+    }
+
+    fn resolve_credential(&self, name: &str) -> Option<SecretValue> {
+        let request = placeholder_to_key(name);
+        let overlay_result = {
+            let guard = match self.overlay.read() {
+                Ok(g) => g,
+                Err(e) => {
+                    tracing::error!(error = %e, "overlay RwLock poisoned; falling back to backend");
+                    return self.backend.resolve_credential(name);
+                }
+            };
+            guard.get(request).cloned()
+        };
+        match overlay_result {
+            Some(Some(v)) => Some(v),
+            Some(None) => None,
+            None => self.backend.resolve_credential(name),
         }
     }
 
@@ -599,6 +638,107 @@ mod tests {
         assert!(
             result.is_none(),
             "whitespace-only env value should be skipped"
+        );
+    }
+
+    // ── resolve vs resolve_credential ─────────────────────────────────────
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TestEnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl TestEnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: callers hold ENV_LOCK, so no other test in this binary
+            // mutates environment variables concurrently.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: callers hold ENV_LOCK.
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for TestEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => {
+                    // SAFETY: callers hold ENV_LOCK.
+                    unsafe { std::env::set_var(self.key, value) }
+                }
+                None => {
+                    // SAFETY: callers hold ENV_LOCK.
+                    unsafe { std::env::remove_var(self.key) }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_is_store_only_and_never_reads_env() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _fnox_config = TestEnvGuard::remove("BAML_FNOX_CONFIG");
+        let _key = TestEnvGuard::set("STORE_ONLY_KEY", "env-value");
+        let resolver = FnoxFileSecretResolver::from_path(None::<&Path>);
+        assert!(
+            resolver.resolve("STORE_ONLY_KEY").is_none(),
+            "resolve must stay fnox-only and never fall back to env"
+        );
+    }
+
+    #[test]
+    fn resolve_credential_falls_back_to_env_when_allowed() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _fnox_config = TestEnvGuard::remove("BAML_FNOX_CONFIG");
+        let _key = TestEnvGuard::set("CRED_KEY", "env-value");
+        let resolver = FnoxFileSecretResolver::from_path(None::<&Path>);
+        assert_eq!(
+            resolver
+                .resolve_credential("CRED_KEY")
+                .map(SecretValue::into_string),
+            Some("env-value".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_credential_blocks_env_when_exclusive() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _fnox_config = TestEnvGuard::set("BAML_FNOX_CONFIG", "/nonexistent/fnox.toml");
+        let _key = TestEnvGuard::set("CRED_KEY", "env-value");
+        let resolver = FnoxFileSecretResolver::from_path(None::<&Path>);
+        assert!(
+            resolver.resolve_credential("CRED_KEY").is_none(),
+            "exclusive mode must block env fallback for credentials"
+        );
+    }
+
+    #[test]
+    fn overlay_unlink_blocks_credential_env_fallback() {
+        struct EnvBackend;
+
+        impl SecretResolver for EnvBackend {
+            fn resolve(&self, _placeholder: &str) -> Option<SecretValue> {
+                None
+            }
+
+            fn resolve_credential(&self, _name: &str) -> Option<SecretValue> {
+                Some(SecretValue::new("env-value"))
+            }
+        }
+
+        let overlay = OverlaySecretResolver::new(Arc::new(EnvBackend));
+        overlay.remove(&SecretRequestName::new("CRED_KEY"));
+        assert!(
+            overlay.resolve_credential("CRED_KEY").is_none(),
+            "an explicit unlink must override the backend env fallback"
         );
     }
 

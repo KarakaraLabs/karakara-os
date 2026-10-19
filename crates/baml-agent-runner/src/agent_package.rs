@@ -361,6 +361,14 @@ impl AgentPackage {
             .runtime_manager
             .tool_registry()
             .set_config_resolver(Some(provenance_config.config_service()));
+        registered
+            .runtime_manager
+            .tool_registry()
+            .set_secret_resolver(Some(Arc::new(
+                baml_rt_llm_config::SecretResolverToToolAdapter::new(
+                    provenance_config.llm_secret_resolver(),
+                ),
+            )));
         let mut runtime_manager = registered.runtime_manager;
         runtime_manager.set_llm_secret_resolver(Arc::new(SecretResolverToLlmAdapter::new(
             provenance_config.llm_secret_resolver(),

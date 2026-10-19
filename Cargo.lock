@@ -2507,6 +2507,7 @@ name = "baml-tools-typesafe"
 version = "0.2.2"
 dependencies = [
  "async-trait",
+ "axum 0.8.8",
  "baml-derive 0.2.2",
  "baml-derive-core",
  "baml-rt",
@@ -2516,10 +2517,12 @@ dependencies = [
  "baml-rt-tools",
  "insta",
  "inventory",
+ "reqwest 0.12.26",
  "serde",
  "serde_json",
  "test-support",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

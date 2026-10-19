@@ -18,10 +18,13 @@ baml-rt-core = { path = "../../baml-rt-core" }
 baml-rt-observability = { path = "../../baml-rt-observability" }
 baml-rt-tools = { path = "../../baml-rt-tools" }
 inventory = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+axum = { workspace = true }
 baml-rt = { path = "../../baml-rt" }
 baml-rt-quickjs = { path = "../../baml-rt-quickjs" }
 baml-rt-tools = { path = "../../baml-rt-tools", features = ["test-support"] }

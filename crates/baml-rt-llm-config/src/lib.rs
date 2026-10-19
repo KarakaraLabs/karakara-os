@@ -19,6 +19,7 @@ mod resolver;
 mod secret_resolver;
 mod store_loader;
 mod test_model;
+mod tool_resolver_adapter;
 
 pub use client_snippet::{CLIENT_DEFAULT_FALLBACK_BAML, client_default_baml_snippet};
 pub use compaction_policy::{
@@ -49,3 +50,4 @@ pub use secret_resolver::{
 };
 pub use store_loader::load_stored_config;
 pub use test_model::{FALLBACK_TEST_MODEL, test_model_default, with_eval_model_override};
+pub use tool_resolver_adapter::SecretResolverToToolAdapter;

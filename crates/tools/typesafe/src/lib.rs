@@ -5,11 +5,15 @@
 
 //! TypeSafe System One tool contracts and registration.
 //!
-//! This crate provides the production bundle, configuration, metadata, wire DTOs, and local
-//! request and provider-response validation. HTTP execution, credentials, and call controls remain
-//! to be implemented.
+//! This crate provides the production bundle, configuration, metadata, wire DTOs, provider HTTP
+//! execution, credential handling, and request and response validation. Process-wide call controls
+//! remain to be implemented.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
 
 mod error;
 pub(crate) mod validation;
@@ -27,10 +31,13 @@ use serde_json::{Value, json};
 use validation::{
     INPUT_EXPECTED_REQUEST, classify_input_deserialization_error, deserialize_input_model,
     deserialize_input_questions, deserialize_input_state, deserialize_input_timeout,
-    validate_system_one_request,
+    validate_system_one_request, validate_system_one_response,
 };
 
 pub const DEFAULT_MODEL: &str = "jev-1.13.0";
+const TYPESAFE_API_KEY: &str = "TYPESAFE_API_KEY";
+const TYPESAFE_API_BASE_URL: &str = "TYPESAFE_API_BASE_URL";
+const DEFAULT_TYPESAFE_API_BASE_URL: &str = "https://api.typesafe.ai";
 const SYSTEM_ONE_DESCRIPTION: &str = "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state.";
 
 fn tagged_variant_schema<T: JsonSchemaType>(tag_value: &str) -> Value {
@@ -150,22 +157,49 @@ impl Default for SystemOneConfig {
 }
 
 impl SystemOneConfig {
-    fn is_valid(&self) -> bool {
-        !self.default_model.trim().is_empty()
-            && !self.allowed_models.is_empty()
-            && self
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.default_model.trim().is_empty() {
+            return Err("default_model");
+        }
+        if self.allowed_models.is_empty()
+            || self
                 .allowed_models
                 .iter()
-                .all(|model| !model.trim().is_empty())
-            && self.allowed_models.contains(&self.default_model)
-            && self.timeout_ms > 0
-            && self.max_attempts > 0
-            && self.limits.max_body_bytes > 0
-            && self.limits.max_questions > 0
-            && (1..=255).contains(&self.limits.max_choice_options)
-            && (2..=10).contains(&self.limits.max_score_levels)
-            && self.controls.max_concurrent_requests > 0
-            && self.controls.requests_per_minute > 0
+                .any(|model| model.trim().is_empty())
+        {
+            return Err("allowed_models");
+        }
+        if !self.allowed_models.contains(&self.default_model) {
+            return Err("default_model");
+        }
+        if self.timeout_ms == 0 {
+            return Err("timeout_ms");
+        }
+        if self.max_attempts == 0 {
+            return Err("max_attempts");
+        }
+        if self.limits.max_body_bytes == 0 {
+            return Err("limits.max_body_bytes");
+        }
+        if self.limits.max_questions == 0 {
+            return Err("limits.max_questions");
+        }
+        if !(1..=255).contains(&self.limits.max_choice_options) {
+            return Err("limits.max_choice_options");
+        }
+        if !(2..=10).contains(&self.limits.max_score_levels) {
+            return Err("limits.max_score_levels");
+        }
+        if self.controls.max_concurrent_requests == 0 {
+            return Err("controls.max_concurrent_requests");
+        }
+        if self.controls.requests_per_minute == 0 {
+            return Err("controls.requests_per_minute");
+        }
+        if self.controls.max_tokens_per_hour == Some(0) {
+            return Err("controls.max_tokens_per_hour");
+        }
+        Ok(())
     }
 }
 
@@ -630,19 +664,135 @@ pub fn describe_output(output: &SystemOneOutput) -> String {
     )
 }
 
-fn config_for_context(ctx: &ToolSessionContext) -> BamlResult<SystemOneConfig> {
-    let config = match &ctx.config {
-        Some(config) => serde_json::from_value(config.clone()).map_err(|_| {
-            SystemOneError::disabled("TypeSafe System One configuration is invalid")
-        })?,
-        None => SystemOneConfig::default(),
-    };
-    if !config.is_valid() {
-        return Err(
-            SystemOneError::disabled("TypeSafe System One configuration is invalid").into(),
-        );
+#[derive(Debug)]
+enum ConfigError {
+    /// Deserialization failed; the message carries serde's field path. It is
+    /// surfaced to the operator on PUT but sanitized at runtime.
+    Shape(String),
+    /// Semantic validation failed; names the offending field, never a value.
+    Field(&'static str),
+}
+
+fn parse_config(raw: Value) -> Result<Arc<SystemOneConfig>, ConfigError> {
+    let config: SystemOneConfig =
+        serde_json::from_value(raw).map_err(|error| ConfigError::Shape(error.to_string()))?;
+    config.validate().map_err(ConfigError::Field)?;
+    Ok(Arc::new(config))
+}
+
+/// One-slot cache keyed by the canonical stored value. It reuses the parsed
+/// config only while that value is current; a new value replaces the old one.
+type CachedConfig = Option<(String, Arc<SystemOneConfig>)>;
+static CONFIG_CACHE: OnceLock<Mutex<CachedConfig>> = OnceLock::new();
+
+fn cached_config(raw: Value) -> Result<Arc<SystemOneConfig>, ConfigError> {
+    let key = serde_json::to_string(&raw).map_err(|error| ConfigError::Shape(error.to_string()))?;
+    if let Some(cache) = CONFIG_CACHE.get()
+        && let Ok(slot) = cache.lock()
+        && let Some((cached_key, config)) = slot.as_ref()
+        && cached_key == &key
+    {
+        return Ok(config.clone());
+    }
+
+    let config = parse_config(raw)?;
+    if let Ok(mut slot) = CONFIG_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = Some((key, config.clone()));
     }
     Ok(config)
+}
+
+/// Typed parser and semantic validator used by `PUT /config/typesafe`.
+///
+/// Errors surface serde's message or the offending field name so the operator
+/// sees a useful diagnosis. This path does not cache; the runtime path does.
+pub fn validate_system_one_config(value: Value) -> Result<Value, String> {
+    let config = parse_config(value).map_err(|error| match error {
+        ConfigError::Shape(message) => message,
+        ConfigError::Field(field) => format!("invalid configuration field: {field}"),
+    })?;
+    serde_json::to_value(config.as_ref()).map_err(|error| error.to_string())
+}
+
+fn config_for_context(ctx: &ToolSessionContext) -> BamlResult<Arc<SystemOneConfig>> {
+    let raw = match &ctx.config {
+        Some(config) => config.clone(),
+        None => serde_json::to_value(SystemOneConfig::default()).map_err(|_| {
+            SystemOneError::disabled("TypeSafe System One configuration is invalid")
+        })?,
+    };
+    cached_config(raw).map_err(|error| {
+        let field = match error {
+            ConfigError::Field(field) => field,
+            ConfigError::Shape(_) => "shape",
+        };
+        tracing::warn!(
+            config_version = ctx.config_version,
+            field,
+            "TypeSafe System One configuration is invalid"
+        );
+        SystemOneError::disabled("TypeSafe System One configuration is invalid").into()
+    })
+}
+
+fn system_one_endpoint() -> Result<String, SystemOneError> {
+    let base_url = std::env::var(TYPESAFE_API_BASE_URL)
+        .unwrap_or_else(|_| DEFAULT_TYPESAFE_API_BASE_URL.to_string());
+    let base_url = base_url.trim().trim_end_matches('/');
+    if base_url.is_empty() || reqwest::Url::parse(base_url).is_err() {
+        return Err(SystemOneError::disabled(
+            "TypeSafe System One endpoint configuration is invalid",
+        ));
+    }
+    Ok(format!("{base_url}/v1/systemone"))
+}
+
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+async fn call_system_one(
+    input: &SystemOneInput,
+    request: &validation::ValidatedSystemOneRequest,
+    api_key: &str,
+) -> Result<SystemOneOutput, SystemOneError> {
+    let response = http_client()
+        .post(system_one_endpoint()?)
+        .bearer_auth(api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .timeout(Duration::from_millis(request.timeout_ms()))
+        .body(request.body().to_vec())
+        .send()
+        .await
+        .map_err(|_| SystemOneError::provider_unavailable("TypeSafe System One is unavailable"))?;
+
+    let status = response.status();
+    if matches!(status.as_u16(), 401 | 403) {
+        return Err(SystemOneError::Unauthorized);
+    }
+    if status.as_u16() == 429 {
+        return Err(SystemOneError::ProviderRateLimited {
+            retry_after_ms: None,
+        });
+    }
+    if status.is_server_error() {
+        return Err(SystemOneError::provider_unavailable(
+            "TypeSafe System One is unavailable",
+        ));
+    }
+    if !status.is_success() {
+        return Err(SystemOneError::provider_contract(format!(
+            "TypeSafe rejected the System One request with status {}",
+            status.as_u16()
+        )));
+    }
+
+    let body = response.bytes().await.map_err(|_| {
+        SystemOneError::provider_unavailable("TypeSafe System One response could not be read")
+    })?;
+    let validated = validate_system_one_response(input, request, &body)?;
+    Ok(validated.output)
 }
 
 /// Host adapter for `POST /v1/systemone`.
@@ -658,6 +808,7 @@ pub struct SystemOneTool;
         bundle = "typesafe",
         schema = SystemOneConfig,
         default = SystemOneConfig::default(),
+        validator = validate_system_one_config,
     },
     secrets = [
         { name = "TYPESAFE_API_KEY", description = "TypeSafe API key", reason = "Required to authenticate with the TypeSafe System One API" },
@@ -703,12 +854,19 @@ impl BamlTool for SystemOneTool {
             )
             .into());
         }
-        let _validated = validate_system_one_request(&config, &args)?;
+        let validated = validate_system_one_request(&config, &args)?;
+        let api_key = ctx
+            .secrets
+            .resolve(TYPESAFE_API_KEY)
+            .map_err(|error| {
+                tracing::error!(error = %error, "TypeSafe tool secret scope is invalid");
+                SystemOneError::MissingCredential
+            })?
+            .ok_or(SystemOneError::MissingCredential)?;
 
-        Err(SystemOneError::provider_unavailable(
-            "TypeSafe System One provider execution is not available yet",
-        )
-        .into())
+        call_system_one(&args, &validated, api_key.as_str())
+            .await
+            .map_err(Into::into)
     }
 
     fn classify_execution_error(err: &BamlRtError) -> ClassifiedToolError {

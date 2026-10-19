@@ -150,6 +150,7 @@ fn session_context(name: &ToolName) -> ToolSessionContext {
         ),
         config: None,
         config_version: None,
+        secrets: baml_rt_tools::ToolSecrets::default(),
         task_id: None,
         execution_classifier: None,
     }

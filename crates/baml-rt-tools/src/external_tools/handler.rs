@@ -658,6 +658,7 @@ mod tests {
             agent_id: AgentId::from_uuid(UuidId::new(uuid::Uuid::new_v4())),
             config: None,
             config_version: None,
+            secrets: crate::ToolSecrets::default(),
             task_id: None,
             execution_classifier: None,
         }

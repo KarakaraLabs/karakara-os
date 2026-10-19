@@ -123,12 +123,13 @@ pub use tools::{
     BamlTool, BundleName, FunctionPlanBinding, FunctionRole, LocalToolName, SecretRequest,
     SecretType, SessionPlanFunctionsMap, SessionPlanTypeName, SessionPolicy, SessionTypeNames,
     ToolAccess, ToolBackend, ToolBundle, ToolBundleMetadata, ToolCapability, ToolConfigMetadata,
-    ToolDiscoveryRecord, ToolExecutor, ToolFunctionMetadataExport, ToolHandler,
-    ToolMetadataBuilder, ToolName, ToolOrigin, ToolRegistry, ToolSessionAdvance,
-    ToolSessionContext, ToolSessionHandle, ToolSlug, ToolTypeSpec, TypeBasedMetadataBuilder,
+    ToolConfigValidator, ToolDiscoveryRecord, ToolExecutor, ToolFunctionMetadataExport,
+    ToolHandler, ToolMetadataBuilder, ToolName, ToolOrigin, ToolRegistry, ToolSecretAccessError,
+    ToolSecretResolver, ToolSecretValue, ToolSecrets, ToolSessionAdvance, ToolSessionContext,
+    ToolSessionHandle, ToolSlug, ToolTypeSpec, TypeBasedMetadataBuilder,
     UnifiedStepExecutorFunctionsMap, UnifiedStepExecutorRootConfig, capability_invocation_mode,
     create_multi_send_session_tool_from_async, create_one_shot_tool_from_async,
-    create_one_shot_tool_from_async_with_context, parse_tool_name_and_class,
+    create_one_shot_tool_from_async_with_context, normalize_tool_config, parse_tool_name_and_class,
     parse_unified_step_executors_authoring_json, project_archive_action_identity_from_parts,
 };
 pub use webhook_intake::{

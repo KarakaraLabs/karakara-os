@@ -109,6 +109,10 @@ fn config_tokens(config: &Option<crate::parse::ConfigDef>) -> TokenStream {
     let bundle = &config.bundle;
     let schema_ty = &config.schema;
     let default_expr = &config.default;
+    let validator = config.validator.as_ref().map_or_else(
+        || quote! {},
+        |validator| quote! { .with_validator(#validator) },
+    );
     quote! {
         .with_config_bundle(
             ::baml_rt_tools::BundleName::new(#bundle)
@@ -119,7 +123,7 @@ fn config_tokens(config: &Option<crate::parse::ConfigDef>) -> TokenStream {
             ::serde_json::to_value(#default_expr)
                 .expect("baml_tool: failed to serialize config default"),
             ::core::option::Option::Some(::baml_rt_tools::ts_name::<#schema_ty>()),
-        ))
+        ) #validator)
     }
 }
 
