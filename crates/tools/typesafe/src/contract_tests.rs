@@ -228,7 +228,6 @@ fn config_defaults_missing_fields_and_rejects_unknown_fields() {
     assert_eq!(config.limits.max_questions, 12);
     assert_eq!(config.limits.max_body_bytes, 262_144);
     assert_eq!(config.controls.max_concurrent_requests, 4);
-    assert_eq!(config.controls.requests_per_minute, 600);
     assert!(config.validate().is_ok());
 
     let mut invalid = config.clone();
@@ -267,7 +266,6 @@ fn typed_config_validator_normalizes_and_caches_valid_versions() {
         },
         "controls": {
             "max_concurrent_requests": 2,
-            "requests_per_minute": 30,
             "max_tokens_per_hour": null
         }
     });
@@ -478,6 +476,58 @@ async fn production_tool_reports_missing_runner_credential_before_network_io() {
         "a missing credential must fail before any network request"
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn oversized_request_fails_validation_before_call_controls() {
+    let config = SystemOneConfig {
+        enabled: true,
+        limits: SystemOneLimits {
+            max_body_bytes: 10,
+            ..SystemOneLimits::default()
+        },
+        ..SystemOneConfig::default()
+    };
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(sample_input()).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read error envelope");
+    let ToolStep::Error { error } = step else {
+        panic!("expected invalid argument tool error")
+    };
+    assert_eq!(
+        error.classified.code, "invalid_argument",
+        "validation must run before call controls, credential resolution, and network I/O"
+    );
+    assert_eq!(
+        error.classified.disposition,
+        ErrorDisposition::LlmCorrectable
+    );
 }
 
 #[test]

@@ -6,8 +6,7 @@
 //! TypeSafe System One tool contracts and registration.
 //!
 //! This crate provides the production bundle, configuration, metadata, wire DTOs, provider HTTP
-//! execution, credential handling, and request and response validation. Process-wide call controls
-//! remain to be implemented.
+//! execution, credential handling, call controls, and request and response validation.
 
 use std::{
     collections::BTreeMap,
@@ -15,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+mod call_controls;
 mod error;
 pub(crate) mod validation;
 
@@ -109,13 +109,12 @@ impl Default for SystemOneLimits {
 
 /// Process-local load and usage controls for System One.
 ///
-/// Concurrency and request counts use `u32`. Token accounting stays `u64` because it accumulates
+/// Concurrency uses `u32`. Token accounting stays `u64` because it accumulates
 /// usage over an hour rather than sizing one request.
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct SystemOneControls {
     pub max_concurrent_requests: u32,
-    pub requests_per_minute: u32,
     pub max_tokens_per_hour: Option<u64>,
 }
 
@@ -123,7 +122,6 @@ impl Default for SystemOneControls {
     fn default() -> Self {
         Self {
             max_concurrent_requests: 16,
-            requests_per_minute: 600,
             max_tokens_per_hour: None,
         }
     }
@@ -192,9 +190,6 @@ impl SystemOneConfig {
         }
         if self.controls.max_concurrent_requests == 0 {
             return Err("controls.max_concurrent_requests");
-        }
-        if self.controls.requests_per_minute == 0 {
-            return Err("controls.requests_per_minute");
         }
         if self.controls.max_tokens_per_hour == Some(0) {
             return Err("controls.max_tokens_per_hour");
@@ -756,12 +751,13 @@ async fn call_system_one(
     input: &SystemOneInput,
     request: &validation::ValidatedSystemOneRequest,
     api_key: &str,
+    timeout: Duration,
 ) -> Result<SystemOneOutput, SystemOneError> {
     let response = http_client()
         .post(system_one_endpoint()?)
         .bearer_auth(api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .timeout(Duration::from_millis(request.timeout_ms()))
+        .timeout(timeout)
         .body(request.body().to_vec())
         .send()
         .await
@@ -854,7 +850,17 @@ impl BamlTool for SystemOneTool {
             )
             .into());
         }
+        let timeout_ms = args.timeout_ms.unwrap_or(config.timeout_ms);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+
         let validated = validate_system_one_request(&config, &args)?;
+
+        let controls = call_controls::CallControls::instance();
+        let _concurrency = controls
+            .acquire_concurrency(config.controls.max_concurrent_requests, deadline)
+            .await?;
+        controls.check_quota(config.controls.max_tokens_per_hour)?;
+
         let api_key = ctx
             .secrets
             .resolve(TYPESAFE_API_KEY)
@@ -864,9 +870,29 @@ impl BamlTool for SystemOneTool {
             })?
             .ok_or(SystemOneError::MissingCredential)?;
 
-        call_system_one(&args, &validated, api_key.as_str())
-            .await
-            .map_err(Into::into)
+        let now = tokio::time::Instant::now();
+        let remaining = if now >= deadline {
+            Duration::ZERO
+        } else {
+            deadline - now
+        };
+        if remaining.is_zero() {
+            return Err(SystemOneError::provider_unavailable(
+                "TypeSafe System One call deadline was exceeded before the request started",
+            )
+            .into());
+        }
+        let output = call_system_one(&args, &validated, api_key.as_str(), remaining).await?;
+        if config.controls.max_tokens_per_hour.is_some()
+            && let Some(usage) = output.usage.as_ref()
+        {
+            let tokens = usage
+                .input_tokens
+                .unwrap_or(0)
+                .saturating_add(usage.output_tokens.unwrap_or(0));
+            controls.record_usage(tokens);
+        }
+        Ok(output)
     }
 
     fn classify_execution_error(err: &BamlRtError) -> ClassifiedToolError {

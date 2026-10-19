@@ -15,7 +15,6 @@ pub enum SystemOneError {
     MissingCredential,
     Unauthorized,
     CapacityExceeded,
-    LocalRateLimited,
     QuotaExceeded,
     ProviderRateLimited { retry_after_ms: Option<u64> },
     ProviderUnavailable { message: String },
@@ -54,7 +53,6 @@ impl SystemOneError {
             Self::MissingCredential => "typesafe_missing_credential",
             Self::Unauthorized => "typesafe_unauthorized",
             Self::CapacityExceeded => "typesafe_capacity_exceeded",
-            Self::LocalRateLimited => "typesafe_rate_limited_local",
             Self::QuotaExceeded => "typesafe_quota_exceeded",
             Self::ProviderRateLimited { .. } => "typesafe_rate_limited",
             Self::ProviderUnavailable { .. } => "typesafe_provider_unavailable",
@@ -69,7 +67,6 @@ impl SystemOneError {
             | Self::MissingCredential
             | Self::Unauthorized
             | Self::CapacityExceeded
-            | Self::LocalRateLimited
             | Self::QuotaExceeded
             | Self::ProviderRateLimited { .. }
             | Self::ProviderUnavailable { .. }
@@ -106,9 +103,6 @@ impl fmt::Display for SystemOneError {
             Self::Unauthorized => f.write_str("TypeSafe rejected the configured API credential"),
             Self::CapacityExceeded => {
                 f.write_str("TypeSafe System One local concurrency capacity was not available")
-            }
-            Self::LocalRateLimited => {
-                f.write_str("TypeSafe System One local request-rate limit was reached")
             }
             Self::QuotaExceeded => {
                 f.write_str("TypeSafe System One local token budget was exhausted")

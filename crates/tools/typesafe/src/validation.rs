@@ -63,7 +63,6 @@ const INPUT_ERROR_MESSAGES: &[&str] = &[
 pub(crate) struct ValidatedSystemOneRequest {
     body: Vec<u8>,
     model: String,
-    timeout_ms: u64,
 }
 
 impl ValidatedSystemOneRequest {
@@ -74,11 +73,6 @@ impl ValidatedSystemOneRequest {
 
     pub(crate) fn model(&self) -> &str {
         &self.model
-    }
-
-    /// Per-call HTTP deadline selected during request validation.
-    pub(crate) fn timeout_ms(&self) -> u64 {
-        self.timeout_ms
     }
 }
 
@@ -168,7 +162,6 @@ pub(crate) fn validate_system_one_request(
     Ok(ValidatedSystemOneRequest {
         body,
         model: model.to_string(),
-        timeout_ms,
     })
 }
 

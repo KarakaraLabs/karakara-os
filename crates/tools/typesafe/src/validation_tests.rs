@@ -106,7 +106,6 @@ fn request_validation_accepts_supported_shapes_and_resolves_defaults() {
     let validated = validate_system_one_request(&config, &input).expect("valid request");
 
     assert_eq!(validated.model(), crate::DEFAULT_MODEL);
-    assert_eq!(validated.timeout_ms(), config.timeout_ms);
     let body: Value = serde_json::from_slice(validated.body()).expect("provider body");
     assert_eq!(body["model"], crate::DEFAULT_MODEL);
     assert!(body.get("timeout_ms").is_none());
@@ -338,7 +337,6 @@ fn timeout_at_ceiling_and_configured_model_are_accepted() {
 
     let validated = validate_system_one_request(&config, &input).expect("boundary request");
     assert_eq!(validated.model(), "jev-preview");
-    assert_eq!(validated.timeout_ms(), config.timeout_ms);
 }
 
 #[test]
@@ -439,7 +437,6 @@ fn typed_error_mapping_uses_the_frozen_codes_and_nonfatal_dispositions() {
         SystemOneError::MissingCredential,
         SystemOneError::Unauthorized,
         SystemOneError::CapacityExceeded,
-        SystemOneError::LocalRateLimited,
         SystemOneError::QuotaExceeded,
         SystemOneError::ProviderRateLimited {
             retry_after_ms: Some(500),
@@ -466,11 +463,6 @@ fn typed_error_mapping_uses_the_frozen_codes_and_nonfatal_dispositions() {
         ),
         (
             "typesafe_capacity_exceeded",
-            ErrorDisposition::InformAndContinue,
-            None,
-        ),
-        (
-            "typesafe_rate_limited_local",
             ErrorDisposition::InformAndContinue,
             None,
         ),
