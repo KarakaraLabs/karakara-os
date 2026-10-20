@@ -1,8 +1,13 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Table-driven contract evidence for schema support, diagnostics, collisions, and open input.
+//! Central table-driven contract evidence for schema support, diagnostics, collisions, symbol
+//! names, and open-input classification.
+//!
+//! Cycle acceptance/rejection and detailed literal rendering have supplemental coverage in
+//! `tool_schema_graph_cycle_test.rs` and `tool_schema_graph_literal_test.rs`. The rows here are the
+//! authoritative support matrix for JSON Schema forms the graph accepts or rejects.
 
 use std::collections::HashMap;
 
@@ -21,7 +26,10 @@ fn lower(schema: Value) -> Result<ToolSchemaGraph, String> {
 
 enum SupportExpectation {
     Renders(&'static [&'static str]),
-    Rejects(&'static [&'static str]),
+    /// Fails during graph lowering, before any target-language text exists.
+    RejectsLowering(&'static [&'static str]),
+    /// Lowers successfully but the BAML renderer rejects the resulting graph shape.
+    RejectsRendering(&'static [&'static str]),
 }
 
 #[test]
@@ -190,12 +198,96 @@ fn schema_support_and_diagnostic_matrix() {
                 "type": "object",
                 "properties": { "value": { "const": { "nested": true } } }
             }),
-            SupportExpectation::Rejects(&["`const` must be", "/properties/value"]),
+            SupportExpectation::RejectsLowering(&["`const` must be", "/properties/value"]),
+        ),
+        (
+            "escaped local reference tokens",
+            json!({
+                "type": "object",
+                "properties": { "value": { "$ref": "#/$defs/Foo~1Bar~0Baz" } },
+                "required": ["value"],
+                "$defs": {
+                    "Foo/Bar~Baz": {
+                        "type": "object",
+                        "properties": { "ok": { "type": "boolean" } },
+                        "required": ["ok"],
+                        "additionalProperties": false
+                    }
+                }
+            }),
+            SupportExpectation::Renders(&["class Foo_Bar_Baz", "value Foo_Bar_Baz", "ok bool"]),
+        ),
+        (
+            "invalid wire names use aliases",
+            json!({
+                "type": "object",
+                "properties": {
+                    "1st value": { "type": "string" },
+                    "a b": { "type": "string" },
+                    "a?b": { "type": "integer" }
+                },
+                "required": ["1st value", "a b", "a?b"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::Renders(&[
+                "field_1st_value string @alias(\"1st value\")",
+                "a_b string @alias(\"a b\")",
+                "a_b_2 int @alias(\"a?b\")",
+            ]),
+        ),
+        (
+            "float const is retained by the graph but unsupported by BAML",
+            json!({
+                "type": "object",
+                "properties": { "ratio": { "const": 1.5 } },
+                "required": ["ratio"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::RejectsRendering(&[
+                "unsupported float literal `1.5`",
+                "/properties/ratio",
+                "OpaqueJson",
+            ]),
         ),
         (
             "true boolean schema",
             json!(true),
             SupportExpectation::Renders(&["type MatrixRoot = OpaqueJson"]),
+        ),
+        (
+            "false root boolean schema",
+            json!(false),
+            SupportExpectation::RejectsLowering(&["`false` boolean schema", "<root schema>"]),
+        ),
+        (
+            "optional recursive class",
+            json!({
+                "type": "object",
+                "properties": { "node": { "$ref": "#/$defs/Node" } },
+                "$defs": {
+                    "Node": {
+                        "type": "object",
+                        "properties": { "next": { "$ref": "#/$defs/Node" } },
+                        "additionalProperties": false
+                    }
+                }
+            }),
+            SupportExpectation::Renders(&["class Node", "next Node?"]),
+        ),
+        (
+            "unsupported required alias cycle",
+            json!({
+                "type": "object",
+                "properties": { "value": { "$ref": "#/$defs/A" } },
+                "$defs": {
+                    "A": { "oneOf": [{ "$ref": "#/$defs/B" }, { "type": "string" }] },
+                    "B": { "oneOf": [{ "$ref": "#/$defs/A" }, { "type": "string" }] }
+                }
+            }),
+            SupportExpectation::RejectsRendering(&[
+                "unsupported recursive type aliases",
+                "dependency cycle A -> B -> A",
+            ]),
         ),
         (
             "empty root schema",
@@ -208,7 +300,7 @@ fn schema_support_and_diagnostic_matrix() {
                 "type": "object",
                 "properties": { "value": false }
             }),
-            SupportExpectation::Rejects(&["`false` boolean schema", "/properties/value"]),
+            SupportExpectation::RejectsLowering(&["`false` boolean schema", "/properties/value"]),
         ),
         (
             "allOf",
@@ -216,7 +308,7 @@ fn schema_support_and_diagnostic_matrix() {
                 "type": "object",
                 "properties": { "value": { "allOf": [{ "type": "string" }] } }
             }),
-            SupportExpectation::Rejects(&[
+            SupportExpectation::RejectsLowering(&[
                 "missing a supported type discriminator",
                 "/properties/value",
             ]),
@@ -227,7 +319,7 @@ fn schema_support_and_diagnostic_matrix() {
                 "type": "object",
                 "properties": { "value": { "$ref": "https://example.test/schema.json" } }
             }),
-            SupportExpectation::Rejects(&[
+            SupportExpectation::RejectsLowering(&[
                 "unsupported external JSON Schema reference",
                 "/properties/value",
             ]),
@@ -238,7 +330,10 @@ fn schema_support_and_diagnostic_matrix() {
                 "type": "object",
                 "properties": { "value": { "type": "array" } }
             }),
-            SupportExpectation::Rejects(&["array schema is missing `items`", "/properties/value"]),
+            SupportExpectation::RejectsLowering(&[
+                "array schema is missing `items`",
+                "/properties/value",
+            ]),
         ),
         (
             "fixed fields with typed additional properties",
@@ -247,7 +342,10 @@ fn schema_support_and_diagnostic_matrix() {
                 "properties": { "fixed": { "type": "string" } },
                 "additionalProperties": { "type": "string" }
             }),
-            SupportExpectation::Rejects(&["typed `additionalProperties`", "/additionalProperties"]),
+            SupportExpectation::RejectsLowering(&[
+                "typed `additionalProperties`",
+                "/additionalProperties",
+            ]),
         ),
     ];
 
@@ -264,12 +362,25 @@ fn schema_support_and_diagnostic_matrix() {
                     );
                 }
             }
-            SupportExpectation::Rejects(fragments) => {
+            SupportExpectation::RejectsLowering(fragments) => {
                 let error = lower(schema).expect_err(label);
                 for fragment in fragments {
                     assert!(
                         error.contains(fragment),
-                        "{label}: expected `{fragment}` in diagnostic: {error}"
+                        "{label}: expected `{fragment}` in lowering diagnostic: {error}"
+                    );
+                }
+            }
+            SupportExpectation::RejectsRendering(fragments) => {
+                let graph = lower(schema)
+                    .unwrap_or_else(|error| panic!("{label}: graph lowering failed: {error}"));
+                let error = render_tool_schema_baml(&graph)
+                    .expect_err(label)
+                    .to_string();
+                for fragment in fragments {
+                    assert!(
+                        error.contains(fragment),
+                        "{label}: expected `{fragment}` in rendering diagnostic: {error}"
                     );
                 }
             }
@@ -382,6 +493,24 @@ fn schema_symbol_collision_matrix() {
             )]),
             HashMap::from([("Root".to_string(), "StructuredReply".to_string())]),
             CollisionExpectation::Error("is reserved"),
+        ),
+        (
+            "invalid public root identifier fails",
+            HashMap::from([(
+                "Root".to_string(),
+                json!({ "type": "string", "enum": ["x"] }),
+            )]),
+            HashMap::from([("Root".to_string(), "not valid".to_string())]),
+            CollisionExpectation::Error("public root"),
+        ),
+        (
+            "primitive public root identifier fails",
+            HashMap::from([(
+                "Root".to_string(),
+                json!({ "type": "string", "enum": ["x"] }),
+            )]),
+            HashMap::from([("Root".to_string(), "string".to_string())]),
+            CollisionExpectation::Error("public root"),
         ),
     ];
 
