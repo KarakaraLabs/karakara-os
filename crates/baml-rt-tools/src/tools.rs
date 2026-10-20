@@ -418,6 +418,8 @@ impl SecretRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTypeSpec {
     pub name: String,
+    /// Compatibility TypeScript declaration metadata. The builder's BAML DTO generation uses
+    /// the JSON Schema graph instead; graph-backed TypeScript generation is a later change.
     pub ts_decl: Option<String>,
 }
 
@@ -945,11 +947,15 @@ pub struct ToolFunctionMetadata {
     pub output_type: ToolTypeSpec,
     /// Pre-rendered BAML type declarations from `BamlType::baml_decl()`.
     ///
-    /// When present, `baml_gen.rs` uses this directly instead of converting
-    /// JSON schemas via `schema_to_baml`. Populated by tools that derive
-    /// `BamlType`; `None` for JS/guest tools that rely on the JSON Schema path.
+    /// Serialized for compatibility with existing catalog consumers. Builder DTO generation
+    /// lowers `open_input_schema`, `input_schema`, and `output_schema` into its canonical schema
+    /// graph and does not consume this field. Populated by tools that derive `BamlType`; `None`
+    /// for JS and guest tools.
     pub baml_decl: Option<String>,
     /// Extra TypeScript declarations required by tool types (e.g. dependent enums).
+    ///
+    /// Serialized for compatibility. Builder tool DTO BAML generation does not consume this
+    /// field, and TypeScript graph rendering is intentionally outside this migration.
     pub extra_ts_decls: Vec<String>,
     /// Access level required to invoke this tool.
     pub access: Option<ToolAccess>,

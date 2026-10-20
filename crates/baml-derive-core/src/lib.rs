@@ -66,7 +66,9 @@ pub trait BamlType: Send + Sync + 'static {
 ///
 /// # Attribute interaction
 ///
-/// - `#[baml(skip)]` suppresses the field/variant from both BAML and TypeScript output.
+/// - `#[baml(skip)]` suppresses the field/variant from BAML, TypeScript, and JSON Schema output.
+/// - `#[serde(skip)]` / `#[serde(skip_deserializing)]` also suppress a field or unit-enum variant
+///   because the generated schema describes the serde input contract.
 /// - `#[baml(alias)]` and `#[baml(description)]` are BAML-only; for **struct** fields TypeScript
 ///   keeps the Rust field name. For **unit enums**, TypeScript string literals and JSON Schema
 ///   enum values follow one wire rule: `#[baml(alias)]` if set, else `#[serde(rename)]` /

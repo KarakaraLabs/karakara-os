@@ -15,8 +15,9 @@ use syn::{DataEnum, DataStruct, DeriveInput, Fields, Type};
 
 use crate::{
     attrs::{
-        extract_doc_comment, parse_container_attrs, parse_field_attrs, parse_serde_rename_all,
-        parse_serde_variant_rename, parse_variant_attrs, serde_rename_all_variant,
+        extract_doc_comment, parse_container_attrs, parse_field_attrs, parse_serde_container_wire,
+        parse_serde_field_wire, parse_serde_variant_wire, parse_variant_attrs,
+        serde_rename_all_field, serde_rename_all_variant,
     },
     resolve::{resolve_type_tokens, resolve_type_tokens_for_vec_or_one_field},
     schema_resolve::{
@@ -57,6 +58,7 @@ fn expand_struct(
 
     let doc = extract_doc_comment(&input.attrs);
     let doc_tokens = option_str_tokens(&doc);
+    let serde_wire = parse_serde_container_wire(&input.attrs)?;
 
     let dynamic = container_attrs.dynamic;
 
@@ -80,15 +82,46 @@ fn expand_struct(
 
     for field in fields {
         let field_attrs = parse_field_attrs(&field.attrs)?;
+        let field_serde_wire = parse_serde_field_wire(&field.attrs)?;
         let field_name = field
             .ident
             .as_ref()
             .ok_or_else(|| syn::Error::new_spanned(field, "unnamed field"))?;
         let field_name_str = field_name.to_string();
 
+        if field_serde_wire.flatten {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[serde(flatten)]` cannot be represented faithfully in a derived JsonSchemaType; implement JsonSchemaType manually",
+            ));
+        }
+        if field_serde_wire.asymmetric_rename {
+            return Err(syn::Error::new_spanned(
+                field,
+                "asymmetric serde renames cannot be represented by one JsonSchemaType; implement JsonSchemaType manually",
+            ));
+        }
+        if field_serde_wire.custom_deserializer
+            && !field_attrs.vec_or_one
+            && field_attrs.type_override.is_none()
+        {
+            return Err(syn::Error::new_spanned(
+                field,
+                "custom serde deserializers cannot be represented faithfully in a derived JsonSchemaType; add `#[baml(vec_or_one)]`/`#[baml(type = ...)]` or implement JsonSchemaType manually",
+            ));
+        }
+
         let alias_tokens = option_str_tokens(&field_attrs.alias);
         let desc_tokens = option_str_tokens(&field_attrs.description);
-        let skip = field_attrs.skip;
+        let skip = field_attrs.skip || field_serde_wire.skip;
+        // JSON Schema property name follows the serde input wire contract: an explicit
+        // `#[serde(rename)]` wins, then the container `rename_all` rule, then the Rust ident.
+        let wire_name = field_serde_wire.rename.clone().unwrap_or_else(|| {
+            match serde_wire.rename_all.as_deref() {
+                Some(rule) => serde_rename_all_field(&field_name_str, rule),
+                None => field_name_str.clone(),
+            }
+        });
 
         if field_attrs.vec_or_one {
             if skip {
@@ -167,9 +200,13 @@ fn expand_struct(
                     Err(_) => quote! { ::serde_json::json!({}) },
                 }
             };
-            let is_required = !is_option_type(&field.ty);
+            // Omitted fields are accepted for `Option<T>` and for `#[serde(default)]`, both
+            // at the field and at the container level. Nullability stays a property of the
+            // type, never a signal for requiredness.
+            let is_required =
+                !is_option_type(&field.ty) && !field_serde_wire.default && !serde_wire.default;
             schema_field_triples.push((
-                field_name_str.clone(),
+                wire_name,
                 schema_expr,
                 field_attrs.description.clone(),
                 is_required,
@@ -234,6 +271,16 @@ fn expand_struct(
             }
         })
         .collect();
+    let deny_unknown_tokens = if serde_wire.deny_unknown_fields {
+        quote! {
+            __schema.insert(
+                "additionalProperties".to_string(),
+                ::serde_json::Value::Bool(false),
+            );
+        }
+    } else {
+        quote! {}
+    };
     let title_str = name_str.clone();
 
     Ok(quote! {
@@ -286,6 +333,7 @@ fn expand_struct(
                 if !__required.is_empty() {
                     __schema.insert("required".to_string(), ::serde_json::Value::Array(__required));
                 }
+                #deny_unknown_tokens
                 ::serde_json::Value::Object(__schema)
             }
         }
@@ -300,10 +348,24 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
     let doc = extract_doc_comment(&input.attrs);
     let doc_tokens = option_str_tokens(&doc);
 
-    let serde_rename_all = parse_serde_rename_all(&input.attrs);
+    let serde_wire = parse_serde_container_wire(&input.attrs)?;
+    if serde_wire.tag.is_some() || serde_wire.content.is_some() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "serde internally or adjacently tagged enums cannot be represented by a derived JsonSchemaType; implement JsonSchemaType manually",
+        ));
+    }
+    if serde_wire.untagged {
+        return Err(syn::Error::new_spanned(
+            input,
+            "untagged enums must be declared with `#[baml(union)]` so the derived JsonSchemaType is an `anyOf` union",
+        ));
+    }
+    let serde_rename_all = serde_wire.rename_all;
 
     let mut variant_tokens = Vec::new();
-    // Wire JSON strings for non-skipped variants (respects serde rename / rename_all).
+    // Wire JSON strings for variants that are both exposed by BAML and accepted on input
+    // (respects serde rename / rename_all / skip).
     let mut ts_wire_strings: Vec<String> = Vec::new();
 
     for variant in &data.variants {
@@ -316,8 +378,9 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         }
 
         let variant_attrs = parse_variant_attrs(&variant.attrs)?;
+        let serde_variant_wire = parse_serde_variant_wire(&variant.attrs)?;
         let variant_name_str = variant.ident.to_string();
-        let serde_wire = parse_serde_variant_rename(&variant.attrs).unwrap_or_else(|| {
+        let serde_variant_name = serde_variant_wire.rename.clone().unwrap_or_else(|| {
             serde_rename_all
                 .as_deref()
                 .map(|rule| serde_rename_all_variant(&variant_name_str, rule))
@@ -328,7 +391,7 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         let wire_repr = variant_attrs
             .alias
             .clone()
-            .unwrap_or_else(|| serde_wire.clone());
+            .unwrap_or_else(|| serde_variant_name.clone());
         let effective_alias = if wire_repr != variant_name_str {
             Some(wire_repr.clone())
         } else {
@@ -336,7 +399,11 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         };
         let alias_tokens = option_str_tokens(&effective_alias);
         let desc_tokens = option_str_tokens(&variant_attrs.description);
-        let skip = variant_attrs.skip;
+        // `#[baml(skip)]` hides a variant from the generated surface. Serde input skips
+        // must hide it too: a schema that lists a value serde rejects is a broken tool
+        // contract. `#[serde(skip_serializing)]` is intentionally not included here; it
+        // still accepts the variant on input, which is the direction this schema describes.
+        let skip = variant_attrs.skip || serde_variant_wire.skip;
 
         if !skip {
             ts_wire_strings.push(wire_repr);
@@ -402,7 +469,11 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
                 let __variants: ::std::vec::Vec<::serde_json::Value> = ::std::vec![
                     #(#json_schema_enum_entries),*
                 ];
-                ::serde_json::json!({"type": "string", "enum": __variants})
+                ::serde_json::json!({
+                    "type": "string",
+                    "title": #name_str,
+                    "enum": __variants,
+                })
             }
         }
     })
@@ -417,6 +488,13 @@ fn expand_union_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream
 
     let doc = extract_doc_comment(&input.attrs);
     let doc_tokens = option_str_tokens(&doc);
+    let serde_wire = parse_serde_container_wire(&input.attrs)?;
+    if serde_wire.tag.is_some() || serde_wire.content.is_some() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "serde internally or adjacently tagged unions cannot be represented by a derived JsonSchemaType; implement JsonSchemaType manually",
+        ));
+    }
 
     let mut variant_type_names = Vec::new();
     let mut dep_names = Vec::new();
@@ -501,7 +579,7 @@ fn expand_union_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream
             fn json_schema_inline() -> ::serde_json::Value {
                 let __any_of: ::std::vec::Vec<::serde_json::Value> =
                     ::std::vec![#(#variant_ident_tokens),*];
-                ::serde_json::json!({"anyOf": __any_of})
+                ::serde_json::json!({"title": #name_str, "anyOf": __any_of})
             }
         }
     })

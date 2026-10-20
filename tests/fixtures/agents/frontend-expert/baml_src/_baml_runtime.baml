@@ -118,25 +118,73 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from JSON schemas
-class ClaudeToolNextOutputEvents {
-  kind string
+// Domain types generated from the canonical tool schema graph
+class ClaudeToolNextOutputEventsAlt0 {
+  kind "assistant_text"
   text string
+  @@dynamic
 }
 
-enum ClaudeToolNextOutputCompletion {
+class ClaudeToolNextOutputEventsAlt1 {
+  kind "assistant_thinking"
+  thinking string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt2 {
+  kind "assistant_tool_use"
+  id string
+  name string
+  input string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt3 {
+  kind "assistant_tool_result"
+  tool_use_id string
+  content string?
+  is_error bool?
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt4 {
+  kind "system_notice"
+  subtype string
+  cwd string
+  model string
+  data string?
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt5 {
+  kind "stream_event_raw"
+  event string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt6 {
+  kind "terminal_result"
+  subtype string
+  is_error bool
+  num_turns int
+  total_cost_usd float?
+  result string?
+  @@dynamic
+}
+
+enum ClaudeCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
   INTERRUPTED
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -149,31 +197,49 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
+  @@dynamic
 }
 
 class ClaudeToolNextOutput {
-  events ClaudeToolNextOutputEvents[]
-  completion ClaudeToolNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  events (ClaudeToolNextOutputEventsAlt0 | ClaudeToolNextOutputEventsAlt1 | ClaudeToolNextOutputEventsAlt2 | ClaudeToolNextOutputEventsAlt3 | ClaudeToolNextOutputEventsAlt4 | ClaudeToolNextOutputEventsAlt5 | ClaudeToolNextOutputEventsAlt6)[]
+  completion (ClaudeCompletion | null)?
+  historyContext (HistoryContextV1 | null)?
+  @@dynamic
 }
 
 class ClaudeToolOpenInput {
-  workspace string | null?
+  workspace (string | null)?
+  @@dynamic
 }
 
-class ClaudeToolSendInputContent {
-  kind string
+class ClaudeToolSendInputContentAlt0 {
+  kind "text"
   text string
+  @@dynamic
+}
+
+class ClaudeToolSendInputContentAlt1 {
+  kind "image_url"
+  url string
+  @@dynamic
+}
+
+class ClaudeToolSendInputContentAlt2 {
+  kind "image_base64"
+  media_type string
+  data string
+  @@dynamic
 }
 
 class ClaudeToolSendInput {
-  prompt string | null?
-  content (ClaudeToolSendInputContent | ClaudeToolSendInputContent[]) | null?
+  prompt (string | null)?
+  content ((ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[]) | null)?
+  @@dynamic
 }
 
 /// Tool card for claude/dev: metadata for polymorphic Open selection.
@@ -183,7 +249,7 @@ class ClaudeDevToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ content?: anyOf(oneOf(oneOf({ kind: \"text\", text: string } | { kind: \"image_url\", url: string } | { data: string, kind: \"image_base64\", media_type: string }) | oneOf({ kind: \"text\", text: string } | { kind: \"image_url\", url: string } | { data: string, kind: \"image_base64\", media_type: string })[]) | null), prompt?: anyOf(string | null) }"
+  input_summary "ClaudeToolSendInput"
   tags string[] @description("Tool tags: claude, stream, session")
 }
 

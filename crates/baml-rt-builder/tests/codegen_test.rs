@@ -145,16 +145,17 @@ fn test_system_callback_tool_baml_interfaces() {
         "Expected callback payloads to use the explicit OpaqueJson transport type"
     );
     assert!(
-        baml_output.contains("input_summary \"oneOf("),
-        "Expected callback tool cards to summarize tagged-union inputs"
+        baml_output.contains("input_summary \"CallbackToolInput\""),
+        "Expected callback tool cards to reference the graph input root"
     );
     assert!(
-        baml_output.contains("op string"),
-        "Expected callback input variants to preserve the op discriminator in generated BAML"
+        baml_output.contains("op \"schedule\"") && baml_output.contains("op \"cancel\""),
+        "Expected callback input variants to preserve the op discriminator literals in generated BAML"
     );
     assert!(
-        baml_output.contains("outcome string"),
-        "Expected callback output variants to preserve the outcome discriminator in generated BAML"
+        baml_output.contains("outcome \"scheduled\"")
+            && baml_output.contains("outcome \"cancelled\""),
+        "Expected callback output variants to preserve the outcome discriminator literals in generated BAML"
     );
     assert!(
         baml_output.contains("class SystemCallbackOpenStep"),

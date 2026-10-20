@@ -1503,6 +1503,8 @@ dependencies = [
  "baml-derive 0.2.2",
  "baml-derive-core",
  "insta",
+ "jsonschema",
+ "serde",
  "serde_json",
 ]
 
@@ -1730,6 +1732,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.26",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "tempfile",
  "test-support",

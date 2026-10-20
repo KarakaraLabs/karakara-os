@@ -44,25 +44,25 @@ type ArchiveSearchReadStep = {
   input: ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
 }
 
-type CallbackToolInput = (CallbackToolInputVariant1 | CallbackToolInputVariant2)
+type CallbackCancelInput = {
+  callbackId?: string @description("Exact callback id to cancel.")
+  sourceKey?: string @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
+  dedupeKey?: string @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
+  op: "cancel"
+}
 
-type CallbackToolInputVariant1 = {
-  after_ms: int @description("Delay before the callback event is emitted, in milliseconds.")
-  source_key: string @description("Stable event source key for subscription matching, for example `coordinator-agent:follow-up`.")
+type CallbackContinuationMode = "Detached" | "ResumeCurrentTask"
+
+type CallbackScheduleInput = {
+  afterMs: int @description("Delay before the callback event is emitted, in milliseconds.")
+  sourceKey: string @description("Stable event source key for subscription matching, for example `coordinator-agent:follow-up`.")
   payload: OpaqueJson @description("Opaque JSON payload delivered back through onDispatch.")
-  dedupe_key?: string @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
-  continuation?: CallbackToolInputVariant1Continuation @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
-  op: string
+  dedupeKey?: string @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
+  continuation?: CallbackContinuationMode @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
+  op: "schedule"
 }
 
-type CallbackToolInputVariant1Continuation = "Detached" | "ResumeCurrentTask"
-
-type CallbackToolInputVariant2 = {
-  callback_id?: string @description("Exact callback id to cancel.")
-  source_key?: string @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
-  dedupe_key?: string @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
-  op: string
-}
+type CallbackToolInput = (CallbackScheduleInput | CallbackCancelInput)
 
 type DataPart = {
   type: "data"
@@ -110,7 +110,7 @@ type SystemCallbackSearchReadStep = {
 type SystemCallbackSendStep = {
   op: "Send"
   tool_name: "system/callback" @description("Tool this Send targets")
-  input: (CallbackToolInputVariant1 | CallbackToolInputVariant2) @description("Payload for this step.")
+  input: (CallbackScheduleInput | CallbackCancelInput) @description("Payload for this step.")
   citations: string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
 }
 

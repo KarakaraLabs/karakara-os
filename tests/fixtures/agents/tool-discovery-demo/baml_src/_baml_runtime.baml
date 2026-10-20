@@ -32,17 +32,23 @@ class ProvenancePlanStep {
   depends_on string[]? @description("Prerequisite step_ids (same alias namespace as step_id); omit or [] if none.")
 }
 
+class ArchiveLedgerEntry {
+  archive_ref string @description("Archive handle, e.g. @7")
+  header string @description("Compact tool/action identity for this Send, without result body")
+}
+
 /// Runtime session state injected by the step-executor loop.
 /// Do not construct manually — values come from the FSM.
 class SessionContext {
   contract_version string
   session_open bool
-  status string @description("FSM status: awaiting_open | just_opened | done")
-  last_step_op string? @description("Previous FSM step op when known: open | send | read | finish | abort")
-  last_step_status string? @description("Previous FSM step status when known: open | done | finished | aborted")
+  status string @description("FSM status: awaiting_open | just_opened | result_ready | done. result_ready means previous direct Send completed and its archive is available; read it or move on, do not re-Send same input.")
+  last_step_op string? @description("Previous FSM step op when known: open | send | duplicate_send | read | finish | abort")
+  last_step_status string? @description("Previous FSM step status when known: open | done | duplicate | finished | aborted")
   last_archive_ref string? @description("Archive ref from the previous Send when available, e.g. @4")
   last_output_header string? @description("Compact archive header from the previous Send/Read when available")
   last_completion string? @description("Tool-specific terminal completion marker when available, e.g. DONE | INPUT_REQUIRED | INTERRUPTED")
+  archives ArchiveLedgerEntry[]? @description("Bounded ledger of Send archives already materialized this executor session. Use it to avoid identical Sends; PageRead/SearchRead existing refs when details are needed.")
 }
 
 /// Opaque JSON transport wrapper for host-managed tools and event payloads.
@@ -107,54 +113,57 @@ class ArchivePageReadStep {
 }
 
 /// Terminal hop without a host tool session: answer from visible conversation archives only.
-/// Do not emit when you need a fresh Open/Send — use ENTRY Open or ACTIVE Send instead.
+/// Do not emit when you need to invoke a tool — emit a Send instead (eligible one-shot tools Send directly on entry; tools needing configuration Open first).
 class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// A binary arithmetic expression: left OP right.
-/// Provide integer operands and choose one of the four arithmetic operations.
+// Domain types generated from the canonical tool schema graph
+enum MathOperation {
+  Variant0
+    @alias("+")
+  Variant1
+    @alias("-")
+  Variant2
+    @alias("*")
+  Variant3
+    @alias("/")
+}
+
 class Expression {
   left int @description("Left-hand integer operand.")
   operation MathOperation @description("Arithmetic operation to apply.")
   right int @description("Right-hand integer operand. Must not be 0 when operation is Divide.")
+  @@dynamic
 }
 
-/// Arithmetic operation for a binary expression.
-/// Accepted as the variant name (e.g. 'Add') or its symbolic alias ('+', '-', '*', '/').
-enum MathOperation {
-  Add @alias("+")
-  Subtract @alias("-")
-  Multiply @alias("*")
-  Divide @alias("/")
-}
-
-/// Input to the calculator tool. Construct an Expression and submit it to evaluate.
 class CalculatorInput {
   expression Expression @description("The binary expression to evaluate.")
+  @@dynamic
 }
 
 class CalculatorOutput {
   expression string
   result float
   formatted string
+  @@dynamic
 }
-// Domain types generated from JSON schemas
+
 class ToolDiscoveryRecordDto {
   name string
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -167,26 +176,30 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
-  reason string | null?
+  reason (string | null)?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
-  query string | null?
-  limit int | null?
+  query (string | null)?
+  limit (int | null)?
+  @@dynamic
 }
 
 /// Tool card for system/discover_tools: metadata for polymorphic Open selection.
@@ -196,7 +209,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -245,7 +258,7 @@ class SupportCalculateToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "{ expression: { left: integer, operation: enum(\"*\" | \"+\" | \"-\" | \"/\"), right: integer } }"
+  input_summary "CalculatorInput"
   tags string[] @description("Tool tags: support, calculate")
 }
 

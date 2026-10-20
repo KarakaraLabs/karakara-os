@@ -118,34 +118,36 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from JSON schemas
+// Domain types generated from the canonical tool schema graph
 class AgentEventSubscriptionDto {
-  schema_versions string[]
-  source_kinds string[]
-  source_keys string[]
-  source_key_prefixes string[]
+  schemaVersions string[]?
+  sourceKinds string[]?
+  sourceKeys string[]?
+  sourceKeyPrefixes string[]?
+  @@dynamic
 }
 
 class AgentCardDto {
   name string
   version string
-  content_hash string | null?
-  repository_version int | null?
-  agent_package string
-  agent_instance_id string
+  contentHash (string | null)?
+  repositoryVersion (int | null)?
+  agentPackage string
+  agentInstanceId string
   tools string[]
-  description string | null?
+  description (string | null)?
   capabilities string[]
-  tags string[]
-  subscriptions AgentEventSubscriptionDto[]
+  tags string[]?
+  subscriptions AgentEventSubscriptionDto[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -158,30 +160,34 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
+  @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
+  @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
-  reason string | null?
+  reason (string | null)?
+  @@dynamic
 }
 
 class DiscoverAgentsSendInput {
-  query string | null?
-  required_capabilities string[] | null?
-  required_schema_versions string[] | null?
-  required_source_kinds string[] | null?
-  limit int | null?
-  offset int | null?
+  query (string | null)?
+  requiredCapabilities (string[] | null)?
+  requiredSchemaVersions (string[] | null)?
+  requiredSourceKinds (string[] | null)?
+  limit (int | null)?
+  offset (int | null)?
+  @@dynamic
 }
 
 class ToolDiscoveryRecordDto {
@@ -189,45 +195,52 @@ class ToolDiscoveryRecordDto {
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
-  reason string | null?
+  reason (string | null)?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
-  query string | null?
-  limit int | null?
+  query (string | null)?
+  limit (int | null)?
+  @@dynamic
 }
 
 class ConversationPart {
-  text string | null? @description("Plain text content for this conversation part.")
-  raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
-  url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
-  filename string | null? @description("Attachment filename when this part refers to a file.")
-  media_type string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  text (string | null)? @description("Plain text content for this conversation part.")
+  raw (string | null)? @description("Raw provider-native content when plain text would be lossy or unavailable.")
+  url (string | null)? @description("Remote URL for this part when the content points to a web or attachment resource.")
+  filename (string | null)? @description("Attachment filename when this part refers to a file.")
+  mediaType (string | null)? @description("MIME type for this part, for example text/plain or image/png.")
+  @@dynamic
 }
 
 class ConversationMessage {
-  role string | null?
+  role (string | null)?
   parts ConversationPart[]
+  @@dynamic
 }
 
 class ConversationChunk {
-  message ConversationMessage | null?
-  task string | null?
-  status_update string | null?
-  artifact_update string | null?
+  message (ConversationMessage | null)?
+  task (string | null)?
+  statusUpdate (string | null)?
+  artifactUpdate (string | null)?
+  @@dynamic
 }
 
-enum InternalA2aNextOutputCompletion {
+enum InternalA2aCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
@@ -236,21 +249,25 @@ enum InternalA2aNextOutputCompletion {
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  completion (InternalA2aCompletion | null)?
+  historyContext (HistoryContextV1 | null)?
+  @@dynamic
 }
 
 class InternalA2aTarget {
   agent_package string
   agent_instance_id string
+  @@dynamic
 }
 
 class InternalA2aOpenInput {
   target InternalA2aTarget
+  @@dynamic
 }
 
 class InternalA2aSendInput {
   parts ConversationPart[]
+  @@dynamic
 }
 
 /// Tool card for system/discover_agents: metadata for polymorphic Open selection.
@@ -260,7 +277,7 @@ class SystemDiscoverAgentsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), offset?: anyOf(integer | null), query?: anyOf(string | null), required_capabilities?: anyOf(string[] | null), required_schema_versions?: anyOf(string[] | null), required_source_kinds?: anyOf(string[] | null) }"
+  input_summary "DiscoverAgentsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -309,7 +326,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -358,7 +375,7 @@ class SystemInternalA2aToolCard {
   session_policy "MultiSend"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ parts: { filename?: anyOf(string | null), media_type?: anyOf(string | null), raw?: anyOf(string | null), text?: anyOf(string | null), url?: anyOf(string | null) }[] }"
+  input_summary "InternalA2aSendInput"
   tags string[] @description("Tool tags: system, a2a")
 }
 

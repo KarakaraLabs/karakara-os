@@ -1,7 +1,9 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 429
 expression: baml_output
 ---
 class ArrayTest {
   items string[]
+  @@dynamic
 }

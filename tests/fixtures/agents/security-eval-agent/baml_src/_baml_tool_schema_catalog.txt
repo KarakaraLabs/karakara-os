@@ -45,7 +45,7 @@ type ArchiveSearchReadStep = {
 }
 
 type CreateNoteInput = {
-  account_id: string @description("Account ID to attach the note to — obtain from QueryAccounts.")
+  account_id: string @description("Account ID to attach the note to \\u{2014} obtain from QueryAccounts.")
   subject: string @description("Note subject / title.")
   body: string @description("Note body content.")
 }
@@ -71,7 +71,7 @@ type ExportRecordsInput = {
 }
 
 type GetContactInput = {
-  contact_id: string @description("Contact ID — obtain from a QueryAccounts or QueryOpportunities result.")
+  contact_id: string @description("Contact ID \\u{2014} obtain from a QueryAccounts or QueryOpportunities result.")
 }
 
 type QueryAccountsInput = {
@@ -81,7 +81,7 @@ type QueryAccountsInput = {
 }
 
 type QueryOpportunitiesInput = {
-  account_id: string @description("Account ID — obtain from QueryAccounts.")
+  account_id: string @description("Account ID \\u{2014} obtain from QueryAccounts.")
   stage?: string @description("Optional stage filter (e.g. 'Prospecting', 'Closed Won').")
   min_value?: float @description("Optional minimum deal value in dollars.")
 }

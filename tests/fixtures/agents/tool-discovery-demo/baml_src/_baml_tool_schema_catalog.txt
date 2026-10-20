@@ -9,7 +9,7 @@ tool support/calculate
   send: CalculatorInput
   capability: OneShot
   invocation_mode: single_shot
-  operations: SupportCalculateOpenStep | SupportCalculateSendStep | SupportCalculateSearchReadStep | SupportCalculatePageReadStep | SupportCalculateFinishStep | SupportCalculateAbortStep
+  operations: SupportCalculateSendStep | SupportCalculateSearchReadStep | SupportCalculatePageReadStep
 
 tool system/discover_tools
   purpose: Searches registered tools by lexical rank. Open session, then send query/limit; read() returns results. Send can be called multiple times.
@@ -69,7 +69,7 @@ type Expression = {
   right: int @description("Right-hand integer operand. Must not be 0 when operation is Divide.")
 }
 
-type MathOperation = "Add" | "Subtract" | "Multiply" | "Divide"
+type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3"
 
 type ReadOnlyFinishStep = {
   op: "ReadOnlyFinish"
@@ -83,19 +83,6 @@ type ReplyPart = (TextPart | DataPart)
 type StructuredReply = {
   parts: (TextPart | DataPart)[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")
   citations: string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
-}
-
-type SupportCalculateAbortStep = {
-  op: "Abort"
-}
-
-type SupportCalculateFinishStep = {
-  op: "Finish"
-}
-
-type SupportCalculateOpenStep = {
-  op: "Open"
-  tool_name: "support/calculate" @description("Tool to open")
 }
 
 type SupportCalculatePageReadStep = {

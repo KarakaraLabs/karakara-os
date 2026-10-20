@@ -73,12 +73,23 @@ type ClaudeToolOpenInput = {
 
 type ClaudeToolSendInput = {
   prompt?: string
-  content?: (ClaudeToolSendInputContent | ClaudeToolSendInputContent[])
+  content?: (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[])
 }
 
-type ClaudeToolSendInputContent = {
-  kind: string
+type ClaudeToolSendInputContentAlt0 = {
+  kind: "text"
   text: string
+}
+
+type ClaudeToolSendInputContentAlt1 = {
+  kind: "image_url"
+  url: string
+}
+
+type ClaudeToolSendInputContentAlt2 = {
+  kind: "image_base64"
+  media_type: string
+  data: string
 }
 
 type DataPart = {

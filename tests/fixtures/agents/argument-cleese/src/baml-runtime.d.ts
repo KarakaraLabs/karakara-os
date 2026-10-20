@@ -21,7 +21,7 @@ export interface ConversationPart { text: string | null;
 raw: string | null;
 url: string | null;
 filename: string | null;
-media_type: string | null;
+mediaType: string | null;
  }
 
 export interface InternalA2aOpenInput { target: InternalA2aTarget;

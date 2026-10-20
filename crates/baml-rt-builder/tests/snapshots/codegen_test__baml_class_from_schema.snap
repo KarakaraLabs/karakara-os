@@ -1,9 +1,11 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 309
 expression: baml_output
 ---
 class Expression {
   left int
   right int
   optional_field string?
+  @@dynamic
 }

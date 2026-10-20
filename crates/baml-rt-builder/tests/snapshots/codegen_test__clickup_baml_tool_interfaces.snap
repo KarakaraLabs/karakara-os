@@ -122,85 +122,73 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// List all teams/workspaces — no parameters needed.
+// Domain types generated from the canonical tool schema graph
 class ListTeamsInput {
 }
 
-/// List spaces in a team. Call ListTeams first to get the team_id.
 class ListSpacesInput {
-  team_id string @description("ClickUp team (workspace) ID — obtain from ListTeams.")
+  team_id string @description("ClickUp team (workspace) ID \u{2014} obtain from ListTeams.")
 }
 
-/// List task-lists in a space. Call ListSpaces first to get the space_id.
 class ListListsInput {
-  space_id string @description("ClickUp space ID — obtain from ListSpaces.")
+  space_id string @description("ClickUp space ID \u{2014} obtain from ListSpaces.")
 }
 
-/// List tasks in a list. Call ListLists first to get the list_id.
 class ListTasksInput {
-  list_id string @description("ClickUp list ID — obtain from ListLists.")
+  list_id string @description("ClickUp list ID \u{2014} obtain from ListLists.")
 }
 
-/// Get full details of a specific task (description, status, priority, assignees).
 class GetTaskInput {
-  task_id string @description("ClickUp task ID — obtain from ListTasks.")
+  task_id string @description("ClickUp task ID \u{2014} obtain from ListTasks.")
 }
 
-/// Create a new task in a list.
 class CreateTaskInput {
-  list_id string @description("ClickUp list ID where the task will be created — obtain from ListLists.")
+  list_id string @description("ClickUp list ID where the task will be created \u{2014} obtain from ListLists.")
   name string @description("Task title / name.")
-  description string? @description("Optional long-form task description (Markdown supported).")
-  priority int? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  description (string | null)? @description("Optional long-form task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
-/// Update an existing task's status, description, or priority.
 class UpdateTaskInput {
-  task_id string @description("ClickUp task ID to update — obtain from ListTasks or GetTask.")
-  status string? @description("New task status string (e.g. 'in progress', 'complete').")
-  description string? @description("Updated task description (Markdown supported).")
-  priority int? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  task_id string @description("ClickUp task ID to update \u{2014} obtain from ListTasks or GetTask.")
+  status (string | null)? @description("New task status string (e.g. \'in progress\', \'complete\').")
+  description (string | null)? @description("Updated task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
-/// Permanently delete a task. Confirm with the user before proceeding.
 class DeleteTaskInput {
-  task_id string @description("ClickUp task ID to delete — obtain from ListTasks.")
+  task_id string @description("ClickUp task ID to delete \u{2014} obtain from ListTasks.")
   confirm_delete bool @description("Must be true to proceed. Always confirm deletion with the user first.")
 }
 
-/// ClickUp tool — navigate teams → spaces → lists → tasks.
-/// ListTeams → ListSpaces → ListLists → ListTasks → GetTask/CreateTask/UpdateTask/DeleteTask.
-/// IDs must come from prior navigation results, not invented.
 type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | ListTasksInput | GetTaskInput | CreateTaskInput | UpdateTaskInput | DeleteTaskInput
 
-/// Summary of a single ClickUp task, projected from the API response.
 class ClickUpTaskSummary {
   id string
   name string
   status string
-  description string?
+  description (string | null)?
   url string
-  assignees string[]
-  priority string?
-  due_date string?
+  assignees string[]?
+  priority (string | null)?
+  due_date (string | null)?
+  @@dynamic
 }
 
-/// A generic item returned by navigation actions (teams, spaces, lists).
 class ClickUpItem {
   id string
   name string
   kind string @description("The kind of resource: team, space, or list.")
+  @@dynamic
 }
 
-/// Output returned by every ClickUp tool action.
-///
-/// Task actions populate `tasks`; navigation actions populate `items`.
 class ClickUpOutput {
-  tasks ClickUpTaskSummary[]
-  items ClickUpItem[] @description("Teams, spaces, or lists returned by navigation actions.")
+  tasks ClickUpTaskSummary[]?
+  items ClickUpItem[]? @description("Teams, spaces, or lists returned by navigation actions.")
   message string
+  @@dynamic
 }
+
 /// Tool card for support/clickup: metadata for polymorphic Open selection.
 class SupportClickupToolCard {
   tool_name "support/clickup"
@@ -208,7 +196,7 @@ class SupportClickupToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "anyOf({  } | { team_id: string } | { space_id: string } | { list_id: string } | { task_id: string } | { description?: anyOf(string | null), list_id: string, name: string, priority?: anyOf(integer | null) } | { description?: anyOf(string | null), priority?: anyOf(integer | null), status?: anyOf(string | null), task_id: string } | { confirm_delete: boolean, task_id: string })"
+  input_summary "ClickUpInput"
   tags string[] @description("Tool tags: support, clickup")
 }
 

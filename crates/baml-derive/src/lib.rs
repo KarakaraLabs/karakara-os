@@ -47,14 +47,31 @@ use syn::{DeriveInput, parse_macro_input};
 ///
 /// - `#[baml(alias = "...")]` — adds `@alias("...")` in BAML (BAML only; TypeScript uses the Rust field name)
 /// - `#[baml(description = "...")]` — adds `@description("...")` in BAML (BAML only)
-/// - `#[baml(skip)]` — omits the field from **both** BAML and TypeScript output
+/// - `#[baml(skip)]` — omits the field from BAML, TypeScript, and the JSON Schema even if serde
+///   still accepts it; use this to keep an internal value out of the model-facing surface
 /// - `#[baml(type = "...")]` — overrides automatic BAML type resolution; TypeScript falls back to `any`
+///
+/// `#[serde(skip)]` and `#[serde(skip_deserializing)]` also omit a field automatically because
+/// the generated schema describes what serde accepts on input.
 ///
 /// # Variant Attributes (for unit enums)
 ///
 /// - `#[baml(alias = "...")]` — adds `@alias("...")` in BAML (BAML only)
 /// - `#[baml(description = "...")]` — adds `@description("...")` in BAML (BAML only)
-/// - `#[baml(skip)]` — omits the variant from **both** BAML and TypeScript output
+/// - `#[baml(skip)]` — omits the variant from BAML, TypeScript, and the JSON Schema even if serde
+///   still accepts it
+///
+/// `#[serde(skip)]` and `#[serde(skip_deserializing)]` on a unit variant also remove it from all
+/// three generated surfaces. `#[serde(skip_serializing)]` does not, because the variant is still
+/// valid input and the derived schema describes the input contract.
+///
+/// # Serde wire attributes
+///
+/// The generated `JsonSchemaType` follows the supported serde input contract:
+/// container `rename_all`, field and variant `rename`, `Option<T>` / `default` omission,
+/// `deny_unknown_fields`, and `skip` / `skip_deserializing`. Unsupported forms (`flatten`,
+/// tagged or untagged non-union enums, asymmetric renames, custom deserializers without a
+/// BAML wire annotation) fail the derive. See `JsonSchemaType` for details.
 #[proc_macro_derive(BamlType, attributes(baml))]
 pub fn derive_baml_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

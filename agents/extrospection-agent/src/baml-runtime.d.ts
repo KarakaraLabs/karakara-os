@@ -8,21 +8,21 @@
 
 export interface AgentCardDto { name: string;
 version: string;
-content_hash: string | null;
-repository_version: number | null;
-agent_package: string;
-agent_instance_id: string;
+contentHash: string | null;
+repositoryVersion: number | null;
+agentPackage: string;
+agentInstanceId: string;
 tools: string[];
 description: string | null;
 capabilities: string[];
-tags: string[];
-subscriptions: AgentEventSubscriptionDto[];
+tags: string[] | null;
+subscriptions: AgentEventSubscriptionDto[] | null;
  }
 
-export interface AgentEventSubscriptionDto { schema_versions: string[];
-source_kinds: string[];
-source_keys: string[];
-source_key_prefixes: string[];
+export interface AgentEventSubscriptionDto { schemaVersions: string[] | null;
+sourceKinds: string[] | null;
+sourceKeys: string[] | null;
+sourceKeyPrefixes: string[] | null;
  }
 
 export interface ArchivePageReadInput { archive_ref: string;
@@ -40,9 +40,9 @@ export interface DiscoverAgentsOpenInput { reason: string | null;
  }
 
 export interface DiscoverAgentsSendInput { query: string | null;
-required_capabilities: string[] | null;
-required_schema_versions: string[] | null;
-required_source_kinds: string[] | null;
+requiredCapabilities: string[] | null;
+requiredSchemaVersions: string[] | null;
+requiredSourceKinds: string[] | null;
 limit: number | null;
 offset: number | null;
  }
@@ -56,21 +56,21 @@ export interface ProvenanceQueryOpenInput { reason: string | null;
 
 export interface ProvenanceQuerySendInput { read: SessionReadEnvelope | null;
 resource: string;
-context_id: string | null;
-task_id: string | null;
-agent_id: string | null;
+contextId: string | null;
+taskId: string | null;
+agentId: string | null;
 provider: string | null;
 model: string | null;
-tool_name: string | null;
-baml_prompt: string | null;
-payload_text: string | null;
-group_by: string[] | null;
-sort_by: string | null;
-sort_dir: string | null;
+toolName: string | null;
+bamlPrompt: string | null;
+payloadText: string | null;
+groupBy: string[] | null;
+sortBy: string | null;
+sortDir: string | null;
 outcome: string | null;
-page_size: number | null;
+pageSize: number | null;
 cursor: string | null;
-top_k: number | null;
+topK: number | null;
  }
 
 export interface QueryIntent { kind: "query";
@@ -93,13 +93,13 @@ description: string | null;
 capabilities: string[];
  }
 
-export interface SessionReadEnvelope { mode: SessionReadEnvelopeMode | null;
-ref_id: string;
+export interface SessionReadEnvelope { mode: SessionReadMode | null;
+refId: string;
 projection: string | null;
-budget_hint: number | null;
+budgetHint: number | null;
  }
 
-export type SessionReadEnvelopeMode = "RetrieveRef";
+export type SessionReadMode = "RetrieveRef";
 
 export interface SystemDiscoverAgentsAbortStep { op: "Abort";
  }

@@ -24,6 +24,7 @@ pub mod return_shape;
 pub mod schema_to_baml;
 pub mod selection_hint;
 pub mod service;
+pub mod tool_schema_graph;
 pub mod traits;
 pub mod ts_gen;
 pub mod types;

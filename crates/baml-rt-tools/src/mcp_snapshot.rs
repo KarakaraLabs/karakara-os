@@ -186,7 +186,8 @@ impl FromStr for Digest {
             return Err(DigestParseError::InvalidLength { len: hex.len() });
         }
         let mut bytes = [0_u8; 32];
-        for (idx, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+        let chunks = hex.as_bytes().as_chunks::<2>().0;
+        for (idx, chunk) in chunks.iter().enumerate() {
             let hi = decode_hex_nibble(chunk[0]).ok_or(DigestParseError::InvalidHex)?;
             let lo = decode_hex_nibble(chunk[1]).ok_or(DigestParseError::InvalidHex)?;
             bytes[idx] = (hi << 4) | lo;

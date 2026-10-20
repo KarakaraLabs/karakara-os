@@ -7,6 +7,12 @@
 //! Each handler extracts path/query/body parameters, delegates to
 //! `RepositoryService`, and maps errors to RFC 7807 responses.
 
+// TODO: Profile handler futures before changing the public RFC 7807 error boundary to box errors.
+#![allow(
+    clippy::result_large_err,
+    reason = "handlers return HttpApiProblem directly so Axum preserves the standard error response"
+)]
+
 use std::sync::Arc;
 
 use axum::{

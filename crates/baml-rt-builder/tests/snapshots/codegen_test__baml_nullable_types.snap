@@ -4,9 +4,10 @@ expression: baml_output
 ---
 class NullableTest {
   required_string string
-  nullable_string string?
-  nullable_int int?
-  nullable_array string[]?
+  nullable_string (string | null)?
+  nullable_int (int | null)?
+  nullable_array (string[] | null)?
   plain_int int
   plain_u8 int
+  @@dynamic
 }

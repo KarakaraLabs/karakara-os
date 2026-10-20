@@ -28,7 +28,10 @@ pub use catalog::{CATALOG_FUNCTION_NAME, CATALOG_SIDECAR_FILE, CatalogPlan};
 use internal_baml_core::ir::ir_hasher::IRSignature;
 
 use super::ir_type_print::{collect_union_type_names, type_ir_to_baml};
-use crate::builder::error::{Result, write_line};
+use crate::builder::{
+    error::{Result, write_line},
+    tool_schema_graph::{OpenInputContract, ToolSchemaGraph, baml::render_schema_type_ref},
+};
 
 /// Compact state-indexed policy for **entry** hops with archive/read-only choices only.
 ///
@@ -204,6 +207,7 @@ fn entry_return_type_names(
 pub fn render_generated_session_baml_from_ir(
     runtime: &baml_runtime::BamlRuntime,
     tool_metadata: &[ToolFunctionMetadata],
+    graph: &ToolSchemaGraph,
     unified_roots: &baml_rt_tools::UnifiedStepExecutorFunctionsMap,
 ) -> Result<GeneratedSessionBaml> {
     let ir = runtime.ir.deref();
@@ -255,7 +259,12 @@ pub fn render_generated_session_baml_from_ir(
         candidates.sort_by_key(|t| t.name.to_string());
 
         if candidates.len() > 1 {
-            generate_polymorphic_session_baml_for_function(&mut poly_out, func_name, &candidates)?;
+            generate_polymorphic_session_baml_for_function(
+                &mut poly_out,
+                func_name,
+                &candidates,
+                graph,
+            )?;
             write_line(&mut poly_out, "")?;
         }
 
@@ -351,8 +360,13 @@ pub fn render_generated_session_baml_from_ir(
         phase_out.clear();
     }
 
-    let catalog_plan =
-        catalog::collect_catalog_types(&ir_sig, runtime.ir.deref(), tool_metadata, unified_roots);
+    let catalog_plan = catalog::collect_catalog_types(
+        &ir_sig,
+        runtime.ir.deref(),
+        tool_metadata,
+        graph,
+        unified_roots,
+    );
 
     Ok(GeneratedSessionBaml {
         polymorphic_types: poly_out,
@@ -455,6 +469,7 @@ fn generate_polymorphic_session_baml_for_function(
     output: &mut String,
     function_name: &str,
     candidates: &[&ToolFunctionMetadata],
+    graph: &ToolSchemaGraph,
 ) -> Result<()> {
     let open_step_name = format!("{function_name}OpenStep");
     let plan_name = format!("{function_name}SessionPlan");
@@ -465,20 +480,16 @@ fn generate_polymorphic_session_baml_for_function(
         .collect();
     let tool_name_union = tool_name_literals.join(" | ");
 
-    let open_input_types: Vec<&str> = candidates
+    let mut open_input_types: Vec<String> = candidates
         .iter()
-        .filter(|t| {
-            t.open_input_type.name != "()"
-                && t.open_input_type.name != "null"
-                && t.open_input_type.name != "void"
-                && t.open_input_schema
-                    .get("properties")
-                    .and_then(|p| p.as_object())
-                    .map(|m| !m.is_empty())
-                    .unwrap_or(false)
+        .filter_map(|tool| graph.tools.get(&tool.name.to_string()))
+        .filter_map(|contract| match &contract.open_input {
+            OpenInputContract::Absent => None,
+            OpenInputContract::Present { ty, .. } => Some(render_schema_type_ref(graph, ty)),
         })
-        .map(|t| t.open_input_type.name.as_str())
         .collect();
+    open_input_types.sort();
+    open_input_types.dedup();
 
     let card_names: Vec<String> = candidates
         .iter()
@@ -505,7 +516,7 @@ fn generate_polymorphic_session_baml_for_function(
     )?;
     if !open_input_types.is_empty() {
         let input_union = if open_input_types.len() == 1 {
-            open_input_types[0].to_string()
+            open_input_types[0].clone()
         } else {
             format!("({})", open_input_types.join(" | "))
         };
