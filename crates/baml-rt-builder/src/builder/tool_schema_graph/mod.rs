@@ -18,10 +18,13 @@ pub mod names;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use baml_rt_tools::tools::{ToolFunctionMetadata, ToolName};
+use baml_rt_tools::{
+    schema_allows_empty_or_optional_open_input,
+    tools::{ToolFunctionMetadata, ToolName},
+};
 use serde_json::Value;
 
-use crate::builder::error::Result;
+use crate::builder::error::{BamlBuilderError, Result};
 
 /// Stable internal identity for one schema declaration.
 ///
@@ -133,7 +136,16 @@ impl ToolSchemaGraph {
     /// resolve catalogs or imports again. Tools are sorted by qualified name before lowering.
     pub fn from_tools(metadata: &[ToolFunctionMetadata]) -> Result<Self> {
         let mut sorted: Vec<&ToolFunctionMetadata> = metadata.iter().collect();
-        sorted.sort_by_key(|a| a.name.to_string());
+        sorted.sort_by_key(|tool| tool.name.to_string());
+        if let Some(duplicate) = sorted
+            .windows(2)
+            .find(|pair| pair[0].name == pair[1].name)
+            .map(|pair| &pair[0].name)
+        {
+            return Err(BamlBuilderError::InvalidArgument(format!(
+                "duplicate resolved tool metadata for `{duplicate}`"
+            )));
+        }
         lower::build_from_tools(&sorted)
     }
 
@@ -176,6 +188,61 @@ pub enum OpenInputRequirement {
     Required,
 }
 
+/// Renderer-neutral classification of the metadata open-input contract before its schema root is
+/// lowered. Keeping this decision at the graph boundary prevents interface renderers from
+/// reinterpreting the raw metadata independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenInputClassification {
+    Absent,
+    Present(OpenInputRequirement),
+}
+
+/// Classify metadata using the runtime's established empty/open-schema policy.
+///
+/// The unit type remains the explicit absence convention. Every non-unit type is present, even
+/// when its schema is `{}`; the shared schema predicate determines only optional versus required.
+pub fn classify_open_input(metadata: &ToolFunctionMetadata) -> OpenInputClassification {
+    if metadata.open_input_type.name == "()" {
+        OpenInputClassification::Absent
+    } else if schema_allows_empty_or_optional_open_input(&metadata.open_input_schema) {
+        OpenInputClassification::Present(OpenInputRequirement::Optional)
+    } else {
+        OpenInputClassification::Present(OpenInputRequirement::Required)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SchemaOwner {
+    /// An advertised Open input, Send input, or output root belonging to a tool.
+    PublicRoot {
+        tool_name: String,
+        role: ToolSchemaRole,
+    },
+    /// A root from the standalone schema-to-BAML compatibility entry point.
+    StandaloneRoot { schema_name: String },
+    /// An inline declaration named from its schema path.
+    Nested {
+        document: String,
+        tool_name: Option<String>,
+        role: Option<ToolSchemaRole>,
+        path: Vec<String>,
+    },
+    /// A declaration introduced by `$defs` or `definitions`.
+    SharedDefinition {
+        document: String,
+        tool_name: Option<String>,
+        role: Option<ToolSchemaRole>,
+        original_name: String,
+        json_pointer: String,
+    },
+}
+
+impl SchemaOwner {
+    pub fn is_public_root(&self) -> bool {
+        matches!(self, Self::PublicRoot { .. } | Self::StandaloneRoot { .. })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SchemaDeclaration {
     pub id: SchemaTypeId,
@@ -183,8 +250,12 @@ pub struct SchemaDeclaration {
     pub symbol: String,
     /// The symbol requested before collision/dedup resolution.
     pub preferred_symbol: String,
+    /// Every schema origin represented by this declaration. Identical declarations may deduplicate
+    /// across tool roots or definitions, so ownership is intentionally one-to-many.
+    pub owners: BTreeSet<SchemaOwner>,
     pub kind: SchemaDeclarationKind,
     pub dependencies: BTreeSet<SchemaTypeId>,
+    /// First source encountered in deterministic lowering order. `owners` retains all origins.
     pub source: SchemaLocation,
     /// Deterministic structural fingerprint (excludes descriptions).
     pub fingerprint: String,

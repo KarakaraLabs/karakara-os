@@ -9,7 +9,7 @@ use std::{collections::HashMap, ops::Deref};
 use baml_rt_builder::builder::{
     baml_gen::render_baml_tool_interfaces_from_metadata,
     tool_schema_graph::{
-        OpenInputContract, SchemaDeclarationKind, SchemaTypeRef, ToolSchemaGraph,
+        OpenInputContract, SchemaDeclarationKind, SchemaOwner, SchemaTypeRef, ToolSchemaGraph,
         baml::render_tool_schema_baml,
     },
 };
@@ -18,6 +18,7 @@ use baml_rt_tools::{
     tool_schema::json_schema_value, tools::ToolName,
 };
 use baml_rt_tools_claude::tools::ClaudeUserContentBlockDto;
+use baml_tools_system::metadata::system_callback_metadata;
 use serde_json::json;
 
 // ---------------------------------------------------------------------------
@@ -66,13 +67,19 @@ fn tool_schema_graph_representative_projection_snapshot() {
         }
     });
 
-    let schemas = HashMap::from([("RepresentativeToolInput".to_string(), representative_schema)]);
-    let type_names = HashMap::from([(
-        "RepresentativeToolInput".to_string(),
-        "RepresentativeToolInput".to_string(),
-    )]);
-    let graph = ToolSchemaGraph::from_root_schemas(&schemas, &type_names)
-        .expect("representative schema should lower");
+    let mut tool = system_callback_metadata();
+    tool.name = ToolName::parse("graph/representative").expect("tool name");
+    tool.class_name = "GraphRepresentative".to_string();
+    tool.input_type.name = "RepresentativeToolInput".to_string();
+    tool.input_schema = representative_schema;
+    tool.output_type.name = "RepresentativeToolOutput".to_string();
+    tool.output_schema = json!({
+        "type": "object",
+        "properties": { "accepted": { "type": "boolean" } },
+        "required": ["accepted"],
+        "additionalProperties": false
+    });
+    let graph = ToolSchemaGraph::from_tools(&[tool]).expect("representative schema should lower");
     let rendered = render_tool_schema_baml(&graph).expect("render BAML");
 
     insta::assert_snapshot!(
@@ -90,43 +97,51 @@ fn tool_schema_graph_representative_projection_snapshot() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_schema_graph_static_external_parity() {
-    let static_tool = resolve_manifest_tools(&["support/calculate".to_string()])
-        .expect("resolve calculator")
-        .into_iter()
-        .next()
-        .expect("calculator present");
+fn tool_schema_graph_static_external_parity_matrix() {
+    let mut tool_names = vec!["support/calculate"];
+    #[cfg(feature = "notion")]
+    tool_names.push("support/notion");
+    #[cfg(feature = "slack")]
+    tool_names.push("support/slack");
 
-    let static_graph =
-        ToolSchemaGraph::from_tools(std::slice::from_ref(&static_tool)).expect("lower static");
+    for tool_name in tool_names {
+        let static_tool = resolve_manifest_tools(&[tool_name.to_string()])
+            .unwrap_or_else(|error| panic!("resolve {tool_name}: {error}"))
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("{tool_name} present"));
+        let static_graph = ToolSchemaGraph::from_tools(std::slice::from_ref(&static_tool))
+            .unwrap_or_else(|error| panic!("lower static {tool_name}: {error}"));
 
-    let mut external_tool = static_tool.clone();
-    external_tool.name = ToolName::parse("external/calculate").expect("parse external name");
-    external_tool.class_name = "ExternalCalculate".to_string();
-    external_tool.origin = ToolOrigin::Guest;
-    external_tool.backend = ToolBackend::External;
-    external_tool.baml_decl = None;
+        let local_name = tool_name.split('/').next_back().expect("local tool name");
+        let mut external_tool = static_tool.clone();
+        external_tool.name =
+            ToolName::parse(&format!("external/{local_name}")).expect("parse external name");
+        external_tool.class_name = format!("External{local_name}");
+        external_tool.origin = ToolOrigin::Guest;
+        external_tool.backend = ToolBackend::External;
+        external_tool.baml_decl = None;
 
-    let external_graph = ToolSchemaGraph::from_tools(&[external_tool]).expect("lower external");
+        let external_graph = ToolSchemaGraph::from_tools(&[external_tool])
+            .unwrap_or_else(|error| panic!("lower external equivalent of {tool_name}: {error}"));
 
-    let static_render = render_tool_schema_baml(&static_graph).expect("render static");
-    let external_render = render_tool_schema_baml(&external_graph).expect("render external");
+        let static_render = render_tool_schema_baml(&static_graph)
+            .unwrap_or_else(|error| panic!("render static {tool_name}: {error}"));
+        let external_render = render_tool_schema_baml(&external_graph)
+            .unwrap_or_else(|error| panic!("render external equivalent of {tool_name}: {error}"));
+        assert_eq!(
+            static_render, external_render,
+            "{tool_name}: equivalent schemas must render identically regardless of origin"
+        );
 
-    assert_eq!(
-        static_render, external_render,
-        "equivalent schemas must render identically regardless of tool origin"
-    );
-
-    let static_shapes = declaration_shapes(&static_graph);
-    let external_shapes = declaration_shapes(&external_graph);
-    assert_eq!(
-        static_shapes, external_shapes,
-        "equivalent schemas must produce equivalent normalized declarations"
-    );
-    assert!(
-        !static_shapes.is_empty(),
-        "expected non-empty declaration set"
-    );
+        let static_shapes = declaration_shapes(&static_graph);
+        let external_shapes = declaration_shapes(&external_graph);
+        assert_eq!(
+            static_shapes, external_shapes,
+            "{tool_name}: equivalent schemas must have equivalent normalized declarations"
+        );
+        assert!(!static_shapes.is_empty(), "{tool_name}: declaration set");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,43 +180,79 @@ fn production_tool_interfaces_use_the_graph_not_static_baml_declarations() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_schema_graph_dual_render_static_tool_wire_parity() {
-    let tool = resolve_manifest_tools(&["support/calculate".to_string()])
-        .expect("resolve calculator")
-        .into_iter()
-        .next()
-        .expect("calculator present");
+fn tool_schema_graph_dual_render_normalized_ir_matrix() {
+    let mut tool_names = vec!["support/calculate"];
+    #[cfg(feature = "notion")]
+    tool_names.push("support/notion");
+    #[cfg(feature = "slack")]
+    tool_names.push("support/slack");
 
-    let baml_decl = tool
-        .baml_decl
-        .clone()
-        .expect("calculator ships a pre-rendered baml_decl");
+    for tool_name in tool_names {
+        let tool = resolve_manifest_tools(&[tool_name.to_string()])
+            .unwrap_or_else(|error| panic!("resolve {tool_name}: {error}"))
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("{tool_name} present"));
+        let baml_decl = tool
+            .baml_decl
+            .clone()
+            .unwrap_or_else(|| panic!("{tool_name} ships a pre-rendered baml_decl"));
 
-    let graph = ToolSchemaGraph::from_tools(&[tool]).expect("lower calculator");
-    let graph_baml = render_tool_schema_baml(&graph).expect("render graph BAML");
+        let graph = ToolSchemaGraph::from_tools(&[tool])
+            .unwrap_or_else(|error| panic!("lower {tool_name}: {error}"));
+        let graph_baml = render_tool_schema_baml(&graph)
+            .unwrap_or_else(|error| panic!("render graph BAML for {tool_name}: {error}"));
 
-    let existing_runtime = compile_dto("existing.baml", &baml_decl);
-    let graph_runtime = compile_dto("graph.baml", &graph_baml);
+        let existing_runtime = compile_dto("existing.baml", &baml_decl);
+        let graph_runtime = compile_dto("graph.baml", &graph_baml);
+        let mut existing_ir = normalized_dto_ir(&existing_runtime);
+        let mut graph_ir = normalized_dto_ir(&graph_runtime);
 
-    let existing_sig = dto_wire_signature(&existing_runtime);
-    let graph_sig = dto_wire_signature(&graph_runtime);
+        // Notion and Slack mark collection outputs `#[serde(default)]`: omission is accepted on
+        // the wire. Their legacy hand-rendered BAML made those fields required, while the
+        // canonical schemas correctly make them optional. Remove only those recorded legacy
+        // deltas; every other compiled IR signature must match.
+        if tool_name == "support/notion" {
+            remove_expected_signature(
+                &mut existing_ir,
+                "class NotionOutput[blocks:NotionBlockSummary[];has_more:bool;message:string;next_cursor:string?;pages:NotionPageSummary[];sources:NotionSource[]]",
+                tool_name,
+            );
+            remove_expected_signature(
+                &mut graph_ir,
+                "class NotionOutput[blocks:NotionBlockSummary[]?;has_more:bool;message:string;next_cursor:string?;pages:NotionPageSummary[]?;sources:NotionSource[]?]",
+                tool_name,
+            );
+        }
+        if tool_name == "support/slack" {
+            remove_expected_signature(
+                &mut existing_ir,
+                "class SlackOutput[conversations:SlackConversationSummary[];has_more:bool;message:string;messages:SlackMessageSummary[];next_cursor:string?;sources:SlackSource[];users:SlackUserSummary[]]",
+                tool_name,
+            );
+            remove_expected_signature(
+                &mut graph_ir,
+                "class SlackOutput[conversations:SlackConversationSummary[]?;has_more:bool;message:string;messages:SlackMessageSummary[]?;next_cursor:string?;sources:SlackSource[]?;users:SlackUserSummary[]?]",
+                tool_name,
+            );
+        }
 
-    assert_eq!(
-        existing_sig, graph_sig,
-        "graph renderer must reproduce the wire-level DTO contract of the static tool"
-    );
+        assert_eq!(
+            existing_ir, graph_ir,
+            "{tool_name}: graph rendering must preserve normalized compiled DTO IR except recorded schema corrections"
+        );
 
-    // The schema path drops `#[baml(alias)]` metadata (the enum identifiers differ), but the wire
-    // values must survive. Assert the graph render emits the symbolic wire aliases.
-    assert!(
-        graph_baml.contains("@alias(\"+\")") && graph_baml.contains("@alias(\"/\")"),
-        "symbolic enum wire values must survive the schema path:\n{graph_baml}"
-    );
-    // Field descriptions authored via `#[baml(description)]` flow into the schema and back out.
-    assert!(
-        graph_baml.contains("Left-hand integer operand."),
-        "field descriptions must survive the schema path:\n{graph_baml}"
-    );
+        if tool_name == "support/calculate" {
+            assert!(
+                graph_baml.contains("@alias(\"+\")") && graph_baml.contains("@alias(\"/\")"),
+                "symbolic enum wire values must survive the schema path:\n{graph_baml}"
+            );
+            assert!(
+                graph_baml.contains("Left-hand integer operand."),
+                "field descriptions must survive the schema path:\n{graph_baml}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,20 +273,46 @@ fn compile_dto(name: &str, baml: &str) -> baml_runtime::BamlRuntime {
 fn type_str(ty: &baml_types::TypeIR) -> String {
     use baml_types::ir_type::{TypeGeneric, UnionTypeViewGeneric};
     match ty {
+        TypeGeneric::Top(_) => "any".to_string(),
         TypeGeneric::Primitive(tv, _) => tv.basename().to_string(),
         TypeGeneric::Class { name, .. }
         | TypeGeneric::Enum { name, .. }
         | TypeGeneric::RecursiveTypeAlias { name, .. } => name.clone(),
-        TypeGeneric::Union(u, _) => match u.view() {
-            UnionTypeViewGeneric::Optional(inner) => format!("{}?", type_str(inner)),
-            UnionTypeViewGeneric::OneOf(variants)
-            | UnionTypeViewGeneric::OneOfOptional(variants) => {
-                let parts: Vec<String> = variants.iter().map(|v| type_str(v)).collect();
-                format!("({})", parts.join(" | "))
+        TypeGeneric::Union(union, _) => {
+            let (mut parts, optional) = match union.view() {
+                UnionTypeViewGeneric::Null => return "null".to_string(),
+                UnionTypeViewGeneric::Optional(inner) => {
+                    return format!("{}?", type_str(inner));
+                }
+                UnionTypeViewGeneric::OneOf(variants) => (
+                    variants
+                        .iter()
+                        .map(|variant| type_str(variant))
+                        .collect::<Vec<_>>(),
+                    false,
+                ),
+                UnionTypeViewGeneric::OneOfOptional(variants) => (
+                    variants
+                        .iter()
+                        .map(|variant| type_str(variant))
+                        .collect::<Vec<_>>(),
+                    true,
+                ),
+            };
+            if optional {
+                parts.push("null".to_string());
             }
-            _ => "string".to_string(),
-        },
+            parts.sort();
+            format!("({})", parts.join(" | "))
+        }
         TypeGeneric::List(item, _) => format!("{}[]", type_str(item)),
+        TypeGeneric::Map(key, value, _) => {
+            format!("map<{}, {}>", type_str(key), type_str(value))
+        }
+        TypeGeneric::Tuple(items, _) => format!(
+            "({})",
+            items.iter().map(type_str).collect::<Vec<_>>().join(", ")
+        ),
         TypeGeneric::Literal(lv, _) => {
             use baml_types::LiteralValue;
             match lv {
@@ -244,14 +321,13 @@ fn type_str(ty: &baml_types::TypeIR) -> String {
                 LiteralValue::Bool(b) => b.to_string(),
             }
         }
-        _ => "string".to_string(),
+        TypeGeneric::Arrow(_, _) => "<function>".to_string(),
     }
 }
 
-/// Wire-level projection of a compiled BAML IR: class field wire names/types, enum wire values,
-/// and type-alias shapes. Identifiers are resolved to wire spellings so cosmetic naming deltas
-/// (enum variant identifiers) do not hide structural parity.
-fn dto_wire_signature(runtime: &baml_runtime::BamlRuntime) -> Vec<String> {
+/// Normalized projection of compiled BAML DTO IR. Field and enum identifiers are resolved to
+/// wire spellings, union members are sorted, and every representable IR type keeps its shape.
+fn normalized_dto_ir(runtime: &baml_runtime::BamlRuntime) -> Vec<String> {
     let ir = runtime.ir.deref();
     let mut lines = Vec::new();
 
@@ -301,6 +377,14 @@ fn dto_wire_signature(runtime: &baml_runtime::BamlRuntime) -> Vec<String> {
     lines
 }
 
+fn remove_expected_signature(signatures: &mut Vec<String>, expected: &str, tool_name: &str) {
+    let index = signatures
+        .iter()
+        .position(|signature| signature == expected)
+        .unwrap_or_else(|| panic!("{tool_name}: missing recorded IR signature `{expected}`"));
+    signatures.remove(index);
+}
+
 fn declaration_shapes(graph: &ToolSchemaGraph) -> Vec<(String, String)> {
     let mut shapes: Vec<(String, String)> = graph
         .symbols
@@ -323,6 +407,9 @@ fn project_graph(graph: &ToolSchemaGraph) -> String {
             decl.id.as_u32(),
             decl.fingerprint
         ));
+        for owner in &decl.owners {
+            out.push_str(&format!("  owner {}\n", owner_disp(owner)));
+        }
         match &decl.kind {
             SchemaDeclarationKind::Object(obj) => {
                 for field in &obj.fields {
@@ -374,6 +461,39 @@ fn project_graph(graph: &ToolSchemaGraph) -> String {
     }
 
     out
+}
+
+fn owner_disp(owner: &SchemaOwner) -> String {
+    match owner {
+        SchemaOwner::PublicRoot { tool_name, role } => {
+            format!("public {tool_name} {}", role.as_str())
+        }
+        SchemaOwner::StandaloneRoot { schema_name } => {
+            format!("standalone {schema_name}")
+        }
+        SchemaOwner::Nested {
+            document,
+            tool_name,
+            role,
+            path,
+        } => format!(
+            "nested {document} {} {} /{}",
+            tool_name.as_deref().unwrap_or("<standalone>"),
+            role.map(|value| value.as_str()).unwrap_or("<none>"),
+            path.join("/")
+        ),
+        SchemaOwner::SharedDefinition {
+            document,
+            tool_name,
+            role,
+            original_name,
+            json_pointer,
+        } => format!(
+            "definition {document} {} {} {original_name} {json_pointer}",
+            tool_name.as_deref().unwrap_or("<standalone>"),
+            role.map(|value| value.as_str()).unwrap_or("<none>"),
+        ),
+    }
 }
 
 fn ty_disp(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> String {

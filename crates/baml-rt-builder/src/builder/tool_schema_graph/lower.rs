@@ -12,16 +12,15 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use baml_rt_tools::{
-    OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY,
-    schema_allows_empty_or_optional_open_input, tools::ToolFunctionMetadata,
+    OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY, tools::ToolFunctionMetadata,
 };
 use serde_json::Value;
 
 use super::{
-    AdditionalProperties, OpenInputContract, OpenInputRequirement, SchemaDeclaration,
-    SchemaDeclarationKind, SchemaEnum, SchemaEnumVariant, SchemaField, SchemaLiteral,
-    SchemaLocation, SchemaObject, SchemaTypeId, SchemaTypeRef, ToolSchemaContract, ToolSchemaGraph,
-    ToolSchemaRole,
+    AdditionalProperties, OpenInputClassification, OpenInputContract, OpenInputRequirement,
+    SchemaDeclaration, SchemaDeclarationKind, SchemaEnum, SchemaEnumVariant, SchemaField,
+    SchemaLiteral, SchemaLocation, SchemaObject, SchemaOwner, SchemaTypeId, SchemaTypeRef,
+    ToolSchemaContract, ToolSchemaGraph, ToolSchemaRole, classify_open_input,
     diagnostics::{external_reference, unsupported_json_schema, unsupported_named_schema},
     names::{
         enum_variant_identifier, is_reserved_symbol, is_valid_identifier, sanitize_identifier,
@@ -49,8 +48,7 @@ struct NamedSchema {
     location: SchemaLocation,
     /// Pre-allocated id (assigned in sorted order before lowering).
     id: SchemaTypeId,
-    /// Public roots keep their requested name; conflicting public roots are a hard error.
-    is_public_root: bool,
+    owner: SchemaOwner,
 }
 
 /// Per-tool root information used to build [`ToolSchemaContract`]s after lowering.
@@ -58,7 +56,7 @@ struct ToolRootPlan {
     tool_name: String,
     class_name: String,
     open_input_key: Option<SchemaKey>,
-    open_input_requirement: OpenInputRequirement,
+    open_input_requirement: Option<OpenInputRequirement>,
     input_key: SchemaKey,
     output_key: SchemaKey,
 }
@@ -76,18 +74,21 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
         };
         let document = |role: ToolSchemaRole| format!("tool:{}:{}", tool.name, role.as_str());
 
-        let open_unit = tool.open_input_type.name == "()";
-        let open_input_key = if open_unit {
-            None
-        } else {
-            Some(insert_document(
+        let open_input_classification = classify_open_input(tool);
+        let open_input_key = match open_input_classification {
+            OpenInputClassification::Absent => None,
+            OpenInputClassification::Present(_) => Some(insert_document(
                 &mut named,
                 document(ToolSchemaRole::OpenInput),
                 tool.open_input_type.name.clone(),
                 tool.open_input_schema.clone(),
                 location(ToolSchemaRole::OpenInput),
+                SchemaOwner::PublicRoot {
+                    tool_name: tool.name.to_string(),
+                    role: ToolSchemaRole::OpenInput,
+                },
                 None,
-            )?)
+            )?),
         };
         let input_key = insert_document(
             &mut named,
@@ -95,6 +96,10 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
             tool.input_type.name.clone(),
             tool.input_schema.clone(),
             location(ToolSchemaRole::Input),
+            SchemaOwner::PublicRoot {
+                tool_name: tool.name.to_string(),
+                role: ToolSchemaRole::Input,
+            },
             None,
         )?;
         let output_key = insert_document(
@@ -103,21 +108,23 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
             tool.output_type.name.clone(),
             tool.output_schema.clone(),
             location(ToolSchemaRole::Output),
+            SchemaOwner::PublicRoot {
+                tool_name: tool.name.to_string(),
+                role: ToolSchemaRole::Output,
+            },
             None,
         )?;
 
-        let requirement =
-            if open_unit || schema_allows_empty_or_optional_open_input(&tool.open_input_schema) {
-                OpenInputRequirement::Optional
-            } else {
-                OpenInputRequirement::Required
-            };
+        let open_input_requirement = match open_input_classification {
+            OpenInputClassification::Absent => None,
+            OpenInputClassification::Present(requirement) => Some(requirement),
+        };
 
         tool_plans.push(ToolRootPlan {
             tool_name: tool.name.to_string(),
             class_name: tool.class_name.clone(),
             open_input_key,
-            open_input_requirement: requirement,
+            open_input_requirement,
             input_key,
             output_key,
         });
@@ -150,6 +157,9 @@ pub(crate) fn build_from_root_schemas(
                 role: None,
                 json_pointer: String::new(),
             },
+            SchemaOwner::StandaloneRoot {
+                schema_name: name.clone(),
+            },
             Some(type_names),
         )?;
     }
@@ -164,6 +174,7 @@ fn insert_document(
     root_symbol: String,
     schema: Value,
     location: SchemaLocation,
+    owner: SchemaOwner,
     definition_type_names: Option<&HashMap<String, String>>,
 ) -> Result<SchemaKey> {
     let root_key = SchemaKey {
@@ -184,7 +195,7 @@ fn insert_document(
             schema: schema.clone(),
             location: location.clone(),
             id: SchemaTypeId::new(0),
-            is_public_root: true,
+            owner,
         },
     );
 
@@ -241,7 +252,16 @@ fn collect_named_definitions(
                                 json_pointer: definition_pointer.clone(),
                             },
                             id: SchemaTypeId::new(0),
-                            is_public_root: false,
+                            owner: SchemaOwner::SharedDefinition {
+                                document: document.to_string(),
+                                tool_name: root_location
+                                    .tool_name
+                                    .as_ref()
+                                    .map(ToString::to_string),
+                                role: root_location.role,
+                                original_name: name.clone(),
+                                json_pointer: definition_pointer.clone(),
+                            },
                         });
                         collect_named_definitions(
                             named,
@@ -330,7 +350,7 @@ impl GraphBuilder {
         // Reserve and validate public symbols before nested lowering can claim one.
         for key in &keys {
             let n = &named[key];
-            if n.is_public_root {
+            if n.owner.is_public_root() {
                 if is_reserved_symbol(&n.symbol) || !is_valid_identifier(&n.symbol) {
                     return Err(BamlBuilderError::InvalidArgument(format!(
                         "public root `{}` at {} is not a valid generated BAML symbol or is reserved",
@@ -344,13 +364,13 @@ impl GraphBuilder {
         // Public roots keep priority over definitions with the same preferred symbol.
         let mut ordered: Vec<SchemaKey> = keys
             .iter()
-            .filter(|key| named[*key].is_public_root)
+            .filter(|key| named[*key].owner.is_public_root())
             .cloned()
             .collect();
         ordered.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol).then_with(|| a.cmp(b)));
         let mut definitions: Vec<SchemaKey> = keys
             .iter()
-            .filter(|key| !named[*key].is_public_root)
+            .filter(|key| !named[*key].owner.is_public_root())
             .cloned()
             .collect();
         definitions.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol).then_with(|| a.cmp(b)));
@@ -367,12 +387,18 @@ impl GraphBuilder {
         for plan in tool_plans {
             let input = self.named_ref(&plan.input_key)?;
             let output = self.named_ref(&plan.output_key)?;
-            let open_input = match &plan.open_input_key {
-                None => OpenInputContract::Absent,
-                Some(key) => OpenInputContract::Present {
+            let open_input = match (&plan.open_input_key, plan.open_input_requirement) {
+                (None, None) => OpenInputContract::Absent,
+                (Some(key), Some(requirement)) => OpenInputContract::Present {
                     ty: self.named_ref(key)?,
-                    requirement: plan.open_input_requirement,
+                    requirement,
                 },
+                _ => {
+                    return Err(BamlBuilderError::InvalidArgument(format!(
+                        "internal: inconsistent open-input classification for tool `{}`",
+                        plan.tool_name
+                    )));
+                }
             };
             tools.insert(
                 plan.tool_name.clone(),
@@ -407,10 +433,13 @@ impl GraphBuilder {
 
     fn lower_named(&mut self, n: &NamedSchema) -> Result<SchemaTypeId> {
         let kind = self.compute_kind(&n.symbol, &n.schema, &n.key.document, &n.location)?;
-        self.register(
-            self.new_declaration(n.id, n.symbol.clone(), kind, &n.location),
-            n.is_public_root,
-        )
+        self.register(self.new_declaration(
+            n.id,
+            n.symbol.clone(),
+            kind,
+            n.owner.clone(),
+            &n.location,
+        ))
     }
 
     /// Lower an inline declaration discovered during field traversal (title or parent+field name).
@@ -427,16 +456,19 @@ impl GraphBuilder {
     ) -> Result<SchemaTypeId> {
         let kind = self.compute_kind(name, schema, document, location)?;
         let fingerprint = fingerprint_of_kind(&kind);
-        if let Some(existing_id) = self.symbols.get(name)
-            && self.declarations[existing_id].fingerprint == fingerprint
+        let owner = nested_owner(document, location);
+        if let Some(existing_id) = self.symbols.get(name).copied()
+            && self.declarations[&existing_id].fingerprint == fingerprint
         {
-            return Ok(*existing_id);
+            self.declarations
+                .get_mut(&existing_id)
+                .expect("symbol registry points to a declaration")
+                .owners
+                .insert(owner);
+            return Ok(existing_id);
         }
         let id = self.alloc_id();
-        self.register(
-            self.new_declaration(id, name.to_string(), kind, location),
-            false,
-        )
+        self.register(self.new_declaration(id, name.to_string(), kind, owner, location))
     }
 
     /// Build a declaration (dependencies and fingerprint) with an unassigned render order.
@@ -445,6 +477,7 @@ impl GraphBuilder {
         id: SchemaTypeId,
         symbol: String,
         kind: SchemaDeclarationKind,
+        owner: SchemaOwner,
         source: &SchemaLocation,
     ) -> SchemaDeclaration {
         let dependencies = collect_dependencies(&kind);
@@ -453,6 +486,7 @@ impl GraphBuilder {
             id,
             preferred_symbol: symbol.clone(),
             symbol,
+            owners: BTreeSet::from([owner]),
             kind,
             dependencies,
             source: source.clone(),
@@ -467,13 +501,10 @@ impl GraphBuilder {
     /// declarations are qualified with their owning tool and schema path when their preferred
     /// symbol is reserved, claimed by a root, or already taken by an incompatible declaration.
     /// Inline deduplication is handled by [`Self::lower_inline`] before an id is allocated.
-    fn register(
-        &mut self,
-        mut decl: SchemaDeclaration,
-        is_public_root: bool,
-    ) -> Result<SchemaTypeId> {
+    fn register(&mut self, mut decl: SchemaDeclaration) -> Result<SchemaTypeId> {
         let preferred = decl.preferred_symbol.clone();
         let fingerprint = decl.fingerprint.clone();
+        let is_public_root = decl.owners.iter().any(SchemaOwner::is_public_root);
 
         let symbol = if is_public_root {
             if is_reserved_symbol(&preferred) || !is_valid_identifier(&preferred) {
@@ -482,11 +513,16 @@ impl GraphBuilder {
                     decl.source
                 )));
             }
-            if let Some(existing_id) = self.symbols.get(&preferred) {
-                let existing = &self.declarations[existing_id];
+            if let Some(existing_id) = self.symbols.get(&preferred).copied() {
+                let existing = &self.declarations[&existing_id];
                 if existing.fingerprint == fingerprint {
-                    self.id_aliases.insert(decl.id, *existing_id);
-                    return Ok(*existing_id);
+                    self.declarations
+                        .get_mut(&existing_id)
+                        .expect("symbol registry points to a declaration")
+                        .owners
+                        .extend(decl.owners);
+                    self.id_aliases.insert(decl.id, existing_id);
+                    return Ok(existing_id);
                 }
                 return Err(BamlBuilderError::InvalidArgument(format!(
                     "conflicting public roots named `{preferred}` at {} and {}",
@@ -494,11 +530,16 @@ impl GraphBuilder {
                 )));
             }
             preferred
-        } else if let Some(existing_id) = self.symbols.get(&preferred)
-            && self.declarations[existing_id].fingerprint == fingerprint
+        } else if let Some(existing_id) = self.symbols.get(&preferred).copied()
+            && self.declarations[&existing_id].fingerprint == fingerprint
         {
-            self.id_aliases.insert(decl.id, *existing_id);
-            return Ok(*existing_id);
+            self.declarations
+                .get_mut(&existing_id)
+                .expect("symbol registry points to a declaration")
+                .owners
+                .extend(decl.owners);
+            self.id_aliases.insert(decl.id, existing_id);
+            return Ok(existing_id);
         } else if is_reserved_symbol(&preferred)
             || self.root_symbols.contains(&preferred)
             || self.symbols.contains_key(&preferred)
@@ -581,6 +622,19 @@ impl GraphBuilder {
         document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaDeclarationKind> {
+        match schema {
+            Value::Bool(true) => {
+                return Ok(SchemaDeclarationKind::Alias(SchemaTypeRef::JsonValue));
+            }
+            Value::Bool(false) => {
+                return Err(unsupported_json_schema(
+                    "the `false` boolean schema accepts no values and generated BAML has no `never` type",
+                    schema,
+                    location,
+                ));
+            }
+            _ => {}
+        }
         let obj = schema.as_object().ok_or_else(|| {
             unsupported_json_schema(
                 format!("schema for `{symbol}` must be an object"),
@@ -589,7 +643,7 @@ impl GraphBuilder {
             )
         })?;
 
-        if is_opaque_marker(obj) {
+        if is_opaque_marker(obj) || obj.is_empty() {
             return Ok(SchemaDeclarationKind::Alias(SchemaTypeRef::JsonValue));
         }
 
@@ -975,12 +1029,16 @@ impl GraphBuilder {
         document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaTypeRef> {
-        if schema.is_boolean() {
-            return Err(unsupported_json_schema(
-                "boolean schemas cannot be represented in generated BAML",
-                schema,
-                location,
-            ));
+        match schema {
+            Value::Bool(true) => return Ok(SchemaTypeRef::JsonValue),
+            Value::Bool(false) => {
+                return Err(unsupported_json_schema(
+                    "the `false` boolean schema accepts no values and generated BAML has no `never` type",
+                    schema,
+                    location,
+                ));
+            }
+            _ => {}
         }
         let obj = schema
             .as_object()
@@ -1356,6 +1414,21 @@ fn lower_additional_properties(
 }
 
 /// Stable name for an inline object/enum: explicit `title` else parent + PascalCase field.
+fn nested_owner(document: &str, location: &SchemaLocation) -> SchemaOwner {
+    let path = location
+        .json_pointer
+        .split('/')
+        .skip(1)
+        .map(|segment| decode_json_pointer_segment(segment).unwrap_or_else(|| segment.to_string()))
+        .collect();
+    SchemaOwner::Nested {
+        document: document.to_string(),
+        tool_name: location.tool_name.as_ref().map(ToString::to_string),
+        role: location.role,
+        path,
+    }
+}
+
 fn unique_identifier(base: String, used: &mut BTreeSet<String>) -> String {
     if used.insert(base.clone()) {
         return base;

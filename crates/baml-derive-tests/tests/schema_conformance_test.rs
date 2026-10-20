@@ -26,6 +26,8 @@ struct ConformanceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     note: Option<String>,
     tags: Vec<String>,
+    #[serde(skip)]
+    internal_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
@@ -41,8 +43,8 @@ struct ConformanceRead {
     resource_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, BamlType)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct ConformanceWrite {
     resource_id: String,
     #[serde(default)]
@@ -84,7 +86,9 @@ fn static_dto_schema_conformance_matrix() {
         retries: 0,
         note: None,
         tags: vec!["alpha".to_string()],
+        internal_note: "not on the wire".to_string(),
     };
+    assert_eq!(request.internal_note, "not on the wire");
     assert_wire_and_schema(
         "rename_all + field rename + enum wire value",
         &request,
@@ -102,6 +106,10 @@ fn static_dto_schema_conformance_matrix() {
     assert!(request_schema["properties"].get("requestId").is_some());
     assert!(request_schema["properties"].get("payloadKind").is_some());
     assert!(request_schema["properties"].get("request_id").is_none());
+    assert!(
+        request_schema["properties"].get("internal_note").is_none(),
+        "`#[serde(skip)]` fields are absent from the input schema"
+    );
     let required = request_schema["required"]
         .as_array()
         .expect("required array");
@@ -164,6 +172,20 @@ fn static_dto_schema_conformance_matrix() {
         }),
         json!({ "resourceId": "res-2", "dryRun": false }),
     );
+
+    let write_schema = root_json_schema::<ConformanceWrite>();
+    assert!(
+        write_schema.get("required").is_none(),
+        "container `#[serde(default)]` makes every field omittable"
+    );
+    assert!(
+        compiled::<ConformanceWrite>().validate(&json!({})).is_ok(),
+        "an omitted container-default DTO validates"
+    );
+    let default_write: ConformanceWrite =
+        serde_json::from_value(json!({})).expect("serde applies the container default");
+    assert_eq!(default_write.resource_id, "");
+    assert!(!default_write.dry_run);
 
     let call_schema = root_json_schema::<ConformanceToolCall>();
     assert_eq!(call_schema["title"], "ConformanceToolCall");

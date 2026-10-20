@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use baml_rt_builder::builder::tool_schema_graph::{
-    SchemaDeclarationKind, SchemaTypeRef, ToolSchemaGraph, baml::render_tool_schema_baml,
+    SchemaDeclarationKind, SchemaOwner, SchemaTypeRef, ToolSchemaGraph, ToolSchemaRole,
+    baml::render_tool_schema_baml,
 };
 use baml_rt_tools::tools::ToolName;
 use baml_tools_system::metadata::system_callback_metadata;
@@ -71,6 +72,68 @@ fn nullable_type_arrays_keep_the_null_arm() {
         baml.contains("value string | null"),
         "rendered BAML:\n{baml}"
     );
+}
+
+#[test]
+fn boolean_schema_policy_matrix() {
+    let true_root = HashMap::from([("TrueRoot".to_string(), json!(true))]);
+    let graph = lower(&true_root).expect("true root schema lowers to opaque JSON");
+    let baml = render_tool_schema_baml(&graph).expect("render true root schema");
+    assert!(baml.contains("type TrueRoot = OpaqueJson"));
+
+    let true_nested = HashMap::from([(
+        "TrueNested".to_string(),
+        json!({
+            "type": "object",
+            "properties": { "anything": true },
+            "required": ["anything"],
+            "additionalProperties": false
+        }),
+    )]);
+    let graph = lower(&true_nested).expect("true nested schema lowers to opaque JSON");
+    let baml = render_tool_schema_baml(&graph).expect("render true nested schema");
+    assert!(baml.contains("anything OpaqueJson"));
+
+    let false_root = HashMap::from([("FalseRoot".to_string(), json!(false))]);
+    let err = lower(&false_root).expect_err("false root schema is unsupported");
+    assert!(err.contains("`false` boolean schema"), "got: {err}");
+    assert!(err.contains("<root schema>"), "got: {err}");
+
+    let mut tool = system_callback_metadata();
+    tool.input_schema = json!({
+        "type": "object",
+        "properties": { "impossible": false }
+    });
+    let err = ToolSchemaGraph::from_tools(&[tool])
+        .expect_err("false nested schema is unsupported")
+        .to_string();
+    assert!(err.contains("`false` boolean schema"), "got: {err}");
+    assert!(
+        err.contains("tool system/callback input/properties/impossible"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn graph_retains_all_declaration_owners_after_deduplication() {
+    let first = system_callback_metadata();
+    let mut second = first.clone();
+    second.name = ToolName::parse("review/callback").expect("tool name");
+
+    let graph = ToolSchemaGraph::from_tools(&[first, second]).expect("lower equivalent tools");
+    let contract = &graph.tools["system/callback"];
+    let SchemaTypeRef::Named(input_id) = &contract.input else {
+        panic!("tool input must be a named declaration");
+    };
+    let owners = &graph.declarations[input_id].owners;
+    assert!(owners.contains(&SchemaOwner::PublicRoot {
+        tool_name: "system/callback".to_string(),
+        role: ToolSchemaRole::Input,
+    }));
+    assert!(owners.contains(&SchemaOwner::PublicRoot {
+        tool_name: "review/callback".to_string(),
+        role: ToolSchemaRole::Input,
+    }));
 }
 
 #[test]
