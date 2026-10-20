@@ -427,7 +427,7 @@ fn component_min_order(graph: &ToolSchemaGraph, component: &[SchemaTypeId]) -> u
 
 /// Kosaraju's algorithm, implemented iteratively so deeply nested schemas cannot overflow the
 /// stack. Nodes and edges are `BTreeMap`/`BTreeSet`, so the result is deterministic.
-fn strongly_connected_components(
+pub(crate) fn strongly_connected_components(
     nodes: &[SchemaTypeId],
     edges: &BTreeMap<SchemaTypeId, BTreeSet<SchemaTypeId>>,
 ) -> Vec<Vec<SchemaTypeId>> {

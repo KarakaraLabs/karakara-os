@@ -409,6 +409,58 @@ fn schema_symbol_collision_matrix() {
             CollisionExpectation::Symbols(&["SharedRoot"]),
         ),
         (
+            "equivalent public roots with local definitions deduplicate",
+            HashMap::from([
+                (
+                    "A".to_string(),
+                    json!({
+                        "type": "object",
+                        "properties": { "value": { "$ref": "#/$defs/SharedThing" } },
+                        "$defs": { "SharedThing": { "type": "string", "enum": ["same"] } }
+                    }),
+                ),
+                (
+                    "B".to_string(),
+                    json!({
+                        "type": "object",
+                        "properties": { "value": { "$ref": "#/$defs/SharedThing" } },
+                        "$defs": { "SharedThing": { "type": "string", "enum": ["same"] } }
+                    }),
+                ),
+            ]),
+            HashMap::from([
+                ("A".to_string(), "SharedRoot".to_string()),
+                ("B".to_string(), "SharedRoot".to_string()),
+            ]),
+            CollisionExpectation::Symbols(&["SharedRoot", "SharedThing"]),
+        ),
+        (
+            "conflicting public roots with local definitions fail",
+            HashMap::from([
+                (
+                    "A".to_string(),
+                    json!({
+                        "type": "object",
+                        "properties": { "value": { "$ref": "#/$defs/SharedThing" } },
+                        "$defs": { "SharedThing": { "type": "string", "enum": ["same"] } }
+                    }),
+                ),
+                (
+                    "B".to_string(),
+                    json!({
+                        "type": "object",
+                        "properties": { "value": { "$ref": "#/$defs/SharedThing" } },
+                        "$defs": { "SharedThing": { "type": "string", "enum": ["different"] } }
+                    }),
+                ),
+            ]),
+            HashMap::from([
+                ("A".to_string(), "SharedRoot".to_string()),
+                ("B".to_string(), "SharedRoot".to_string()),
+            ]),
+            CollisionExpectation::Error("conflicting public roots named `SharedRoot`"),
+        ),
+        (
             "conflicting public roots fail",
             HashMap::from([
                 ("A".to_string(), json!({ "type": "string", "enum": ["x"] })),

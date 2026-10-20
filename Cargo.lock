@@ -1732,6 +1732,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.26",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "tempfile",
  "test-support",

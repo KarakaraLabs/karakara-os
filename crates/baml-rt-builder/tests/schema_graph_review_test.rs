@@ -367,3 +367,120 @@ fn unsupported_nested_schema_reports_its_tool_role_and_pointer() {
         "expected tool, role, and nested pointer in diagnostic, got: {err}"
     );
 }
+
+#[test]
+fn equivalent_public_roots_with_nested_local_definitions_deduplicate() {
+    let schema = json!({
+        "type": "object",
+        "properties": { "parent": { "$ref": "#/$defs/Parent" } },
+        "required": ["parent"],
+        "$defs": {
+            "Parent": {
+                "type": "object",
+                "properties": { "child": { "$ref": "#/$defs/Child" } },
+                "required": ["child"],
+                "additionalProperties": false
+            },
+            "Child": { "type": "string", "enum": ["ok"] }
+        }
+    });
+    let schemas = HashMap::from([("A".to_string(), schema.clone()), ("B".to_string(), schema)]);
+    let names = HashMap::from([
+        ("A".to_string(), "SharedRoot".to_string()),
+        ("B".to_string(), "SharedRoot".to_string()),
+    ]);
+
+    let graph = ToolSchemaGraph::from_root_schemas(&schemas, &names)
+        .expect("equivalent roots with nested local definitions must deduplicate");
+    let root_id = *graph.symbols.get("SharedRoot").expect("shared root symbol");
+    let root = &graph.declarations[&root_id];
+    assert_eq!(root.owners.len(), 2, "both roots must retain ownership");
+    assert!(root.owners.contains(&SchemaOwner::StandaloneRoot {
+        schema_name: "A".to_string(),
+    }));
+    assert!(root.owners.contains(&SchemaOwner::StandaloneRoot {
+        schema_name: "B".to_string(),
+    }));
+}
+
+#[test]
+fn equivalent_public_roots_with_recursive_local_definitions_deduplicate() {
+    let schema = json!({
+        "type": "object",
+        "properties": { "node": { "$ref": "#/$defs/Node" } },
+        "required": ["node"],
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "next": { "anyOf": [{ "$ref": "#/$defs/Node" }, { "type": "null" }] }
+                },
+                "additionalProperties": false
+            }
+        }
+    });
+    let schemas = HashMap::from([("A".to_string(), schema.clone()), ("B".to_string(), schema)]);
+    let names = HashMap::from([
+        ("A".to_string(), "SharedRoot".to_string()),
+        ("B".to_string(), "SharedRoot".to_string()),
+    ]);
+
+    let graph = ToolSchemaGraph::from_root_schemas(&schemas, &names)
+        .expect("equivalent recursive roots must deduplicate");
+    let root_id = *graph.symbols.get("SharedRoot").expect("shared root symbol");
+    assert_eq!(graph.declarations[&root_id].owners.len(), 2);
+}
+
+#[test]
+fn named_definitions_prefer_a_valid_schema_title() {
+    let schemas = HashMap::from([(
+        "Root".to_string(),
+        json!({
+            "type": "object",
+            "properties": { "value": { "$ref": "#/$defs/thing" } },
+            "required": ["value"],
+            "$defs": {
+                "thing": { "title": "Widget", "type": "string", "enum": ["ok"] }
+            }
+        }),
+    )]);
+    let graph = lower(&schemas).expect("lower titled definition");
+    assert!(
+        graph.symbols.contains_key("Widget"),
+        "symbols: {:?}",
+        graph.symbols
+    );
+    assert!(
+        !graph.symbols.contains_key("thing"),
+        "symbols: {:?}",
+        graph.symbols
+    );
+    let rendered = render_tool_schema_baml(&graph).expect("render titled definition");
+    assert!(
+        rendered.contains("enum Widget"),
+        "rendered BAML:\n{rendered}"
+    );
+}
+
+#[test]
+fn explicit_definition_type_names_override_titles() {
+    let schemas = HashMap::from([(
+        "Root".to_string(),
+        json!({
+            "type": "object",
+            "properties": { "value": { "$ref": "#/$defs/thing" } },
+            "required": ["value"],
+            "$defs": {
+                "thing": { "title": "Widget", "type": "string", "enum": ["ok"] }
+            }
+        }),
+    )]);
+    let names = HashMap::from([
+        ("Root".to_string(), "Root".to_string()),
+        ("thing".to_string(), "Override".to_string()),
+    ]);
+    let graph = ToolSchemaGraph::from_root_schemas(&schemas, &names)
+        .expect("lower explicitly named definition");
+    assert!(graph.symbols.contains_key("Override"));
+    assert!(!graph.symbols.contains_key("Widget"));
+}

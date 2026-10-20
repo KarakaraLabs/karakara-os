@@ -15,6 +15,7 @@ use baml_rt_tools::{
     OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY, tools::ToolFunctionMetadata,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::{
     AdditionalProperties, OpenInputClassification, OpenInputContract, OpenInputRequirement,
@@ -236,6 +237,12 @@ fn collect_named_definitions(
                         let requested_symbol = definition_type_names
                             .and_then(|names| names.get(name))
                             .cloned()
+                            .or_else(|| {
+                                definition
+                                    .as_object()
+                                    .and_then(usable_schema_title)
+                                    .map(str::to_string)
+                            })
                             .unwrap_or_else(|| name.clone());
                         let symbol = if is_valid_identifier(&requested_symbol) {
                             requested_symbol
@@ -382,6 +389,11 @@ impl GraphBuilder {
             self.key_to_id.insert(n.key.clone(), id);
         }
         self.remap_deduplicated_references();
+        // Public-root registration is deferred until every definition and inline declaration has
+        // been lowered. This lets root equivalence use canonical fingerprints rather than the
+        // preallocation ids embedded in the first-pass declaration fingerprints.
+        self.finalize_public_roots()?;
+        self.remap_deduplicated_references();
 
         let mut tools = BTreeMap::new();
         for plan in tool_plans {
@@ -513,22 +525,8 @@ impl GraphBuilder {
                     decl.source
                 )));
             }
-            if let Some(existing_id) = self.symbols.get(&preferred).copied() {
-                let existing = &self.declarations[&existing_id];
-                if existing.fingerprint == fingerprint {
-                    self.declarations
-                        .get_mut(&existing_id)
-                        .expect("symbol registry points to a declaration")
-                        .owners
-                        .extend(decl.owners);
-                    self.id_aliases.insert(decl.id, existing_id);
-                    return Ok(existing_id);
-                }
-                return Err(BamlBuilderError::InvalidArgument(format!(
-                    "conflicting public roots named `{preferred}` at {} and {}",
-                    existing.source, decl.source
-                )));
-            }
+            // Public roots are finalized after all declarations are lowered so equivalent roots
+            // can be compared by canonical fingerprints. Keep the requested symbol provisional.
             preferred
         } else if let Some(existing_id) = self.symbols.get(&preferred).copied()
             && self.declarations[&existing_id].fingerprint == fingerprint
@@ -560,9 +558,111 @@ impl GraphBuilder {
         decl.order = self.next_order;
         self.next_order += 1;
         let id = decl.id;
-        self.symbols.insert(symbol, id);
+        if !is_public_root {
+            self.symbols.insert(symbol, id);
+        }
         self.declarations.insert(id, decl);
         Ok(id)
+    }
+
+    /// Resolve deferred public-root symbols after every declaration has been lowered.
+    ///
+    /// Root fingerprints are structural (via [`canonical_fingerprints`]), so equivalent roots are
+    /// independent of the ids preallocated for their local `$defs`. Identical roots share one
+    /// declaration and retain every owner; differing roots with one requested symbol are rejected.
+    fn finalize_public_roots(&mut self) -> Result<()> {
+        let canonical = canonical_fingerprints(&self.declarations);
+        let mut groups: BTreeMap<String, Vec<SchemaTypeId>> = BTreeMap::new();
+        for (id, declaration) in &self.declarations {
+            groups
+                .entry(declaration.preferred_symbol.clone())
+                .or_default()
+                .push(*id);
+        }
+
+        let mut root_aliases = BTreeMap::new();
+        for (symbol, mut ids) in groups {
+            ids.sort_unstable();
+            let public_ids: Vec<SchemaTypeId> = ids
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.declarations[id]
+                        .owners
+                        .iter()
+                        .any(SchemaOwner::is_public_root)
+                })
+                .collect();
+            let Some(&keep) = public_ids.first() else {
+                continue;
+            };
+            let keep_fingerprint = canonical
+                .get(&keep)
+                .expect("canonical fingerprints cover every declaration");
+
+            let mut merge = BTreeSet::new();
+            for duplicate in &ids {
+                if *duplicate == keep {
+                    continue;
+                }
+                let is_public = self.declarations[duplicate]
+                    .owners
+                    .iter()
+                    .any(SchemaOwner::is_public_root);
+                let duplicate_fingerprint = canonical
+                    .get(duplicate)
+                    .expect("canonical fingerprints cover every declaration");
+                if duplicate_fingerprint != keep_fingerprint {
+                    if is_public {
+                        let existing = &self.declarations[&keep];
+                        let incoming = &self.declarations[duplicate];
+                        return Err(BamlBuilderError::InvalidArgument(format!(
+                            "conflicting public roots named `{symbol}` at {} and {}",
+                            existing.source, incoming.source
+                        )));
+                    }
+                    // A definition that requested the root symbol but has a different shape keeps
+                    // its qualified symbol.
+                    continue;
+                }
+                merge.insert(*duplicate);
+            }
+
+            if !merge.is_empty() {
+                let owners = self.declarations[&keep].owners.clone();
+                let mut owners = owners;
+                for duplicate in &merge {
+                    let declaration = self
+                        .declarations
+                        .remove(duplicate)
+                        .expect("merged declaration exists");
+                    if self.symbols.get(&declaration.symbol) == Some(duplicate) {
+                        self.symbols.remove(&declaration.symbol);
+                    }
+                    owners.extend(declaration.owners);
+                    root_aliases.insert(*duplicate, keep);
+                }
+                self.declarations
+                    .get_mut(&keep)
+                    .expect("public root declaration exists")
+                    .owners = owners;
+            }
+
+            if let Some(existing) = self.symbols.insert(symbol.clone(), keep) {
+                return Err(BamlBuilderError::InvalidArgument(format!(
+                    "public root `{symbol}` collides with non-root declaration {}",
+                    existing.as_u32()
+                )));
+            }
+        }
+
+        if !root_aliases.is_empty() {
+            self.id_aliases.extend(root_aliases);
+            for id in self.key_to_id.values_mut() {
+                *id = canonical_id(*id, &self.id_aliases);
+            }
+        }
+        Ok(())
     }
 
     fn remap_deduplicated_references(&mut self) {
@@ -1514,11 +1614,18 @@ fn unique_identifier(base: String, used: &mut BTreeSet<String>) -> String {
     }
 }
 
+/// Explicit, usable `title` for a generated declaration.
+///
+/// Titles are preferred over `$defs` keys and parent/field hints, but a title that is not a legal
+/// generated identifier or that collides with a reserved symbol is ignored.
+fn usable_schema_title(obj: &serde_json::Map<String, Value>) -> Option<&str> {
+    obj.get("title")
+        .and_then(Value::as_str)
+        .filter(|title| is_valid_identifier(title) && !is_reserved_symbol(title))
+}
+
 fn nested_name(obj: &serde_json::Map<String, Value>, hint: Option<(&str, &str)>) -> Result<String> {
-    if let Some(title) = obj.get("title").and_then(Value::as_str)
-        && is_valid_identifier(title)
-        && !is_reserved_symbol(title)
-    {
+    if let Some(title) = usable_schema_title(obj) {
         return Ok(title.to_string());
     }
     let Some((parent, field)) = hint else {
@@ -1667,8 +1774,109 @@ fn collect_type_ref_deps(ty: &SchemaTypeRef, deps: &mut BTreeSet<SchemaTypeId>) 
     }
 }
 
+/// Compute canonical fingerprints that identify declarations by structure, not allocation id.
+///
+/// References are replaced by the referenced declaration's canonical fingerprint. Cyclic
+/// components use a small Weisfeiler-Lehman-style color refinement so equivalent recursive
+/// definitions from different schema documents still compare equal.
+fn canonical_fingerprints(
+    declarations: &BTreeMap<SchemaTypeId, SchemaDeclaration>,
+) -> BTreeMap<SchemaTypeId, String> {
+    let nodes: Vec<SchemaTypeId> = declarations.keys().copied().collect();
+    let edges: BTreeMap<SchemaTypeId, BTreeSet<SchemaTypeId>> = declarations
+        .iter()
+        .map(|(id, declaration)| (*id, declaration.dependencies.clone()))
+        .collect();
+    let mut components = super::cycles::strongly_connected_components(&nodes, &edges);
+    // Kosaraju returns source components before their dependencies; reverse for dependency-first
+    // processing so every external reference already has a canonical fingerprint.
+    components.reverse();
+
+    let mut fingerprints: BTreeMap<SchemaTypeId, String> = BTreeMap::new();
+    for component in components {
+        let members: BTreeSet<SchemaTypeId> = component.iter().copied().collect();
+        let self_recursive = component.len() == 1
+            && edges
+                .get(&component[0])
+                .is_some_and(|dependencies| dependencies.contains(&component[0]));
+
+        if component.len() == 1 && !self_recursive {
+            let id = component[0];
+            let fingerprint = fingerprint_of_kind_with(&declarations[&id].kind, |target| {
+                fingerprints
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("ref:{}", target.as_u32()))
+            });
+            fingerprints.insert(id, fingerprint);
+            continue;
+        }
+
+        // Seed each node with its local shape. Internal references start as an opaque marker and
+        // are refined from neighbouring colors below.
+        let mut colors: BTreeMap<SchemaTypeId, String> = component
+            .iter()
+            .map(|id| {
+                let fingerprint = fingerprint_of_kind_with(&declarations[id].kind, |target| {
+                    if members.contains(&target) {
+                        "@internal".to_string()
+                    } else {
+                        fingerprints
+                            .get(&target)
+                            .cloned()
+                            .unwrap_or_else(|| format!("ref:{}", target.as_u32()))
+                    }
+                });
+                (*id, canonical_digest(&fingerprint))
+            })
+            .collect();
+
+        for _ in 0..=component.len() {
+            let next: BTreeMap<SchemaTypeId, String> = component
+                .iter()
+                .map(|id| {
+                    let fingerprint = fingerprint_of_kind_with(&declarations[id].kind, |target| {
+                        if members.contains(&target) {
+                            format!("@color:{}", colors[&target])
+                        } else {
+                            fingerprints
+                                .get(&target)
+                                .cloned()
+                                .unwrap_or_else(|| format!("ref:{}", target.as_u32()))
+                        }
+                    });
+                    (*id, canonical_digest(&fingerprint))
+                })
+                .collect();
+            let stable = next == colors;
+            colors = next;
+            if stable {
+                break;
+            }
+        }
+
+        for id in component {
+            fingerprints.insert(id, colors[&id].clone());
+        }
+    }
+
+    fingerprints
+}
+
+fn canonical_digest(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    format!("{digest:x}")
+}
+
 /// Deterministic structural fingerprint of a declaration kind (descriptions excluded).
 fn fingerprint_of_kind(kind: &SchemaDeclarationKind) -> String {
+    fingerprint_of_kind_with(kind, |id| format!("ref:{}", id.as_u32()))
+}
+
+fn fingerprint_of_kind_with<F>(kind: &SchemaDeclarationKind, mut reference: F) -> String
+where
+    F: FnMut(SchemaTypeId) -> String,
+{
     match kind {
         SchemaDeclarationKind::Object(o) => {
             let mut parts: Vec<String> = o
@@ -1679,7 +1887,7 @@ fn fingerprint_of_kind(kind: &SchemaDeclarationKind) -> String {
                         "{}:{}:{}",
                         f.wire_name,
                         f.required,
-                        type_ref_fingerprint(&f.ty)
+                        type_ref_fingerprint_with(&f.ty, &mut reference)
                     )
                 })
                 .collect();
@@ -1694,11 +1902,20 @@ fn fingerprint_of_kind(kind: &SchemaDeclarationKind) -> String {
                 .collect();
             format!("enum[{}]", parts.join(","))
         }
-        SchemaDeclarationKind::Alias(t) => format!("alias[{}]", type_ref_fingerprint(t)),
+        SchemaDeclarationKind::Alias(t) => {
+            format!("alias[{}]", type_ref_fingerprint_with(t, &mut reference))
+        }
     }
 }
 
 fn type_ref_fingerprint(ty: &SchemaTypeRef) -> String {
+    type_ref_fingerprint_with(ty, &mut |id| format!("ref:{}", id.as_u32()))
+}
+
+fn type_ref_fingerprint_with<F>(ty: &SchemaTypeRef, reference: &mut F) -> String
+where
+    F: FnMut(SchemaTypeId) -> String,
+{
     match ty {
         SchemaTypeRef::String => "string".to_string(),
         SchemaTypeRef::Integer => "int".to_string(),
@@ -1707,14 +1924,26 @@ fn type_ref_fingerprint(ty: &SchemaTypeRef) -> String {
         SchemaTypeRef::Null => "null".to_string(),
         SchemaTypeRef::JsonValue => "json".to_string(),
         SchemaTypeRef::Literal(l) => format!("lit:{l:?}"),
-        SchemaTypeRef::Array(inner) => format!("arr[{}]", type_ref_fingerprint(inner)),
-        SchemaTypeRef::Map(inner) => format!("map[{}]", type_ref_fingerprint(inner)),
-        SchemaTypeRef::Named(id) => format!("ref:{}", id.as_u32()),
+        SchemaTypeRef::Array(inner) => {
+            format!("arr[{}]", type_ref_fingerprint_with(inner, reference))
+        }
+        SchemaTypeRef::Map(inner) => {
+            format!("map[{}]", type_ref_fingerprint_with(inner, reference))
+        }
+        SchemaTypeRef::Named(id) => reference(*id),
         SchemaTypeRef::Union(arms) => {
-            let parts: Vec<String> = arms.iter().map(type_ref_fingerprint).collect();
+            let parts: Vec<String> = arms
+                .iter()
+                .map(|arm| type_ref_fingerprint_with(arm, reference))
+                .collect();
             format!("union[{}]", parts.join("|"))
         }
-        SchemaTypeRef::VecOrOne(inner) => format!("vec_or_one[{}]", type_ref_fingerprint(inner)),
+        SchemaTypeRef::VecOrOne(inner) => {
+            format!(
+                "vec_or_one[{}]",
+                type_ref_fingerprint_with(inner, reference)
+            )
+        }
     }
 }
 
