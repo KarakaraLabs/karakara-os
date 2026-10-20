@@ -123,6 +123,76 @@ fn schema_support_and_diagnostic_matrix() {
             SupportExpectation::Renders(&["payload OpaqueJson"]),
         ),
         (
+            "nested const literals",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "const": "text" },
+                    "count": { "const": 3 },
+                    "enabled": { "const": true }
+                },
+                "required": ["kind", "count", "enabled"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::Renders(&["kind \"text\"", "count 3", "enabled true"]),
+        ),
+        (
+            "const arms inside a union",
+            json!({
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "oneOf": [
+                            { "const": "a" },
+                            { "const": 1 },
+                            { "const": true }
+                        ]
+                    },
+                    "any_value": {
+                        "anyOf": [
+                            { "const": "b" },
+                            { "const": 2 }
+                        ]
+                    }
+                },
+                "required": ["value", "any_value"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::Renders(&["value \"a\" | 1 | true", "any_value \"b\" | 2"]),
+        ),
+        (
+            "enum without an explicit type",
+            json!({
+                "type": "object",
+                "properties": { "mode": { "enum": ["fast", "slow"] } },
+                "required": ["mode"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::Renders(&["enum MatrixRootMode", "mode MatrixRootMode"]),
+        ),
+        (
+            "integer enum with an explicit type",
+            json!({
+                "type": "object",
+                "properties": { "level": { "type": "integer", "enum": [1, 2] } },
+                "required": ["level"],
+                "additionalProperties": false
+            }),
+            SupportExpectation::Renders(&[
+                "enum MatrixRootLevel",
+                "level MatrixRootLevel",
+                "@alias(\"1\")",
+            ]),
+        ),
+        (
+            "object const is unsupported",
+            json!({
+                "type": "object",
+                "properties": { "value": { "const": { "nested": true } } }
+            }),
+            SupportExpectation::Rejects(&["`const` must be", "/properties/value"]),
+        ),
+        (
             "true boolean schema",
             json!(true),
             SupportExpectation::Renders(&["type MatrixRoot = OpaqueJson"]),

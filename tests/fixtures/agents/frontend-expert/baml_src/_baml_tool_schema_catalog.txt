@@ -77,17 +77,17 @@ type ClaudeToolSendInput = {
 }
 
 type ClaudeToolSendInputContentAlt0 = {
-  kind: string
+  kind: "text"
   text: string
 }
 
 type ClaudeToolSendInputContentAlt1 = {
-  kind: string
+  kind: "image_url"
   url: string
 }
 
 type ClaudeToolSendInputContentAlt2 = {
-  kind: string
+  kind: "image_base64"
   media_type: string
   data: string
 }

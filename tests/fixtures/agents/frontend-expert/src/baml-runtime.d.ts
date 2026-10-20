@@ -65,15 +65,15 @@ export interface ClaudeToolSendInput { prompt: string | null;
 content: ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[] | null;
  }
 
-export interface ClaudeToolSendInputContentAlt0 { kind: string;
+export interface ClaudeToolSendInputContentAlt0 { kind: "text";
 text: string;
  }
 
-export interface ClaudeToolSendInputContentAlt1 { kind: string;
+export interface ClaudeToolSendInputContentAlt1 { kind: "image_url";
 url: string;
  }
 
-export interface ClaudeToolSendInputContentAlt2 { kind: string;
+export interface ClaudeToolSendInputContentAlt2 { kind: "image_base64";
 media_type: string;
 data: string;
  }

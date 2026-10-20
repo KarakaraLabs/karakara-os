@@ -25,19 +25,19 @@ RepresentativeToolInput (2) fp=object[request:true:ref:1,required_nullable:true:
   field opaque_payload: json required=true
   deps [Address, NestedRequest, RepresentativeToolInputContentAlt0, RepresentativeToolInputContentAlt1, RepresentativeToolInputContentAlt2]
 
-RepresentativeToolInputContentAlt0 (5) fp=object[kind:true:string,text:true:string,ap:AllowedAny]
+RepresentativeToolInputContentAlt0 (5) fp=object[kind:true:lit:String("text"),text:true:string,ap:AllowedAny]
   owner nested tool:graph/representative:input graph/representative input /properties/content/oneOf/1/items/oneOf/0
-  field kind: string required=true
+  field kind: literal(String("text")) required=true
   field text: string required=true
 
-RepresentativeToolInputContentAlt1 (6) fp=object[kind:true:string,url:true:string,ap:AllowedAny]
+RepresentativeToolInputContentAlt1 (6) fp=object[kind:true:lit:String("image_url"),url:true:string,ap:AllowedAny]
   owner nested tool:graph/representative:input graph/representative input /properties/content/oneOf/1/items/oneOf/1
-  field kind: string required=true
+  field kind: literal(String("image_url")) required=true
   field url: string required=true
 
-RepresentativeToolInputContentAlt2 (7) fp=object[kind:true:string,media_type:true:string,data:true:string,ap:AllowedAny]
+RepresentativeToolInputContentAlt2 (7) fp=object[kind:true:lit:String("image_base64"),media_type:true:string,data:true:string,ap:AllowedAny]
   owner nested tool:graph/representative:input graph/representative input /properties/content/oneOf/1/items/oneOf/2
-  field kind: string required=true
+  field kind: literal(String("image_base64")) required=true
   field media_type: string required=true
   field data: string required=true
 
@@ -57,19 +57,19 @@ tool graph/representative (class GraphRepresentative)
 
 == rendered BAML ==
 class RepresentativeToolInputContentAlt0 {
-  kind string
+  kind "text"
   text string
   @@dynamic
 }
 
 class RepresentativeToolInputContentAlt1 {
-  kind string
+  kind "image_url"
   url string
   @@dynamic
 }
 
 class RepresentativeToolInputContentAlt2 {
-  kind string
+  kind "image_base64"
   media_type string
   data string
   @@dynamic

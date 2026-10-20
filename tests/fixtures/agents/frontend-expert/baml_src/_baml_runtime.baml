@@ -120,19 +120,19 @@ class ReadOnlyFinishStep {
 }
 // Domain types generated from the canonical tool schema graph
 class ClaudeToolNextOutputEventsAlt0 {
-  kind string
+  kind "assistant_text"
   text string
   @@dynamic
 }
 
 class ClaudeToolNextOutputEventsAlt1 {
-  kind string
+  kind "assistant_thinking"
   thinking string
   @@dynamic
 }
 
 class ClaudeToolNextOutputEventsAlt2 {
-  kind string
+  kind "assistant_tool_use"
   id string
   name string
   input string
@@ -140,7 +140,7 @@ class ClaudeToolNextOutputEventsAlt2 {
 }
 
 class ClaudeToolNextOutputEventsAlt3 {
-  kind string
+  kind "assistant_tool_result"
   tool_use_id string
   content string?
   is_error bool?
@@ -148,7 +148,7 @@ class ClaudeToolNextOutputEventsAlt3 {
 }
 
 class ClaudeToolNextOutputEventsAlt4 {
-  kind string
+  kind "system_notice"
   subtype string
   cwd string
   model string
@@ -157,13 +157,13 @@ class ClaudeToolNextOutputEventsAlt4 {
 }
 
 class ClaudeToolNextOutputEventsAlt5 {
-  kind string
+  kind "stream_event_raw"
   event string
   @@dynamic
 }
 
 class ClaudeToolNextOutputEventsAlt6 {
-  kind string
+  kind "terminal_result"
   subtype string
   is_error bool
   num_turns int
@@ -218,19 +218,19 @@ class ClaudeToolOpenInput {
 }
 
 class ClaudeToolSendInputContentAlt0 {
-  kind string
+  kind "text"
   text string
   @@dynamic
 }
 
 class ClaudeToolSendInputContentAlt1 {
-  kind string
+  kind "image_url"
   url string
   @@dynamic
 }
 
 class ClaudeToolSendInputContentAlt2 {
-  kind string
+  kind "image_base64"
   media_type string
   data string
   @@dynamic

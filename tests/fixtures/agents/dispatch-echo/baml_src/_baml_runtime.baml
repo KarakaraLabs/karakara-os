@@ -132,7 +132,7 @@ class CallbackScheduleInput {
   payload OpaqueJson @description("Opaque JSON payload delivered back through onDispatch.")
   dedupeKey (string | null)? @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
   continuation (CallbackContinuationMode | null)? @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
-  op string
+  op "schedule"
   @@dynamic
 }
 
@@ -140,7 +140,7 @@ class CallbackCancelInput {
   callbackId (string | null)? @description("Exact callback id to cancel.")
   sourceKey (string | null)? @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
   dedupeKey (string | null)? @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
-  op string
+  op "cancel"
   @@dynamic
 }
 
@@ -155,7 +155,7 @@ class CallbackScheduledOutput {
   dispatchTaskId (string | null)?
   schedulingContextId (string | null)?
   schedulingTaskId (string | null)?
-  outcome string
+  outcome "scheduled"
   @@dynamic
 }
 
@@ -164,7 +164,7 @@ class CallbackCancelledOutput {
   callbackId (string | null)?
   sourceKey (string | null)?
   dedupeKey (string | null)?
-  outcome string
+  outcome "cancelled"
   @@dynamic
 }
 

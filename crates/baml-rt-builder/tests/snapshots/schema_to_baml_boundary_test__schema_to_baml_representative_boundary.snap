@@ -4,19 +4,19 @@ expression: "format!(\"== rendered BAML ==\\n{}\\n== unsupported allOf diagnosti
 ---
 == rendered BAML ==
 class RepresentativeToolInputContentAlt0 {
-  kind string
+  kind "text"
   text string
   @@dynamic
 }
 
 class RepresentativeToolInputContentAlt1 {
-  kind string
+  kind "image_url"
   url string
   @@dynamic
 }
 
 class RepresentativeToolInputContentAlt2 {
-  kind string
+  kind "image_base64"
   media_type string
   data string
   @@dynamic

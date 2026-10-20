@@ -647,12 +647,15 @@ impl GraphBuilder {
             return Ok(SchemaDeclarationKind::Alias(SchemaTypeRef::JsonValue));
         }
 
+        if let Some(const_value) = obj.get("const") {
+            let literal = require_schema_literal(const_value, schema, location, "`const`")?;
+            return Ok(SchemaDeclarationKind::Alias(SchemaTypeRef::Literal(
+                literal,
+            )));
+        }
+
         if let Some(enum_values) = obj.get("enum").and_then(Value::as_array) {
-            return Ok(SchemaDeclarationKind::Enum(self.build_flat_enum(
-                enum_values,
-                schema,
-                location,
-            )?));
+            return self.build_enum_declaration(enum_values, schema, location);
         }
 
         if let Some(one_of) = obj.get("oneOf").and_then(Value::as_array) {
@@ -660,9 +663,7 @@ impl GraphBuilder {
                 .iter()
                 .all(|v| v.as_object().is_some_and(|o| o.contains_key("const")))
             {
-                return Ok(SchemaDeclarationKind::Enum(
-                    self.build_const_enum(one_of, schema, location)?,
-                ));
+                return self.build_const_declaration(one_of, schema, location);
             }
             return self.build_root_union(symbol, "oneOf", one_of, document, location);
         }
@@ -708,12 +709,12 @@ impl GraphBuilder {
         Err(unsupported_named_schema(symbol, location))
     }
 
-    fn build_flat_enum(
+    fn build_enum_declaration(
         &self,
         values: &[Value],
         schema: &Value,
         location: &SchemaLocation,
-    ) -> Result<SchemaEnum> {
+    ) -> Result<SchemaDeclarationKind> {
         if values.is_empty() {
             return Err(unsupported_json_schema(
                 "empty `enum` array",
@@ -721,70 +722,58 @@ impl GraphBuilder {
                 location,
             ));
         }
-        let mut variants = Vec::new();
-        let mut identifiers = BTreeSet::new();
+        let mut variants = Vec::with_capacity(values.len());
         for (index, value) in values.iter().enumerate() {
-            if let Some(s) = value.as_str() {
-                let name = unique_identifier(enum_variant_identifier(s, index), &mut identifiers);
-                variants.push(SchemaEnumVariant {
-                    wire_value: SchemaLiteral::String(s.to_string()),
-                    preferred_identifier: name,
-                    description: None,
-                });
-            } else if let Some(n) = value.as_i64() {
-                variants.push(SchemaEnumVariant {
-                    wire_value: SchemaLiteral::Integer(n),
-                    preferred_identifier: unique_identifier(
-                        format!("Variant{n}"),
-                        &mut identifiers,
-                    ),
-                    description: None,
-                });
-            } else {
-                return Err(unsupported_json_schema(
-                    "enum values must all be strings or all be integers",
-                    schema,
-                    location,
-                ));
-            }
+            let literal = require_schema_literal(
+                value,
+                schema,
+                &location.child("enum").index(index),
+                "`enum` value",
+            )?;
+            variants.push((literal, None));
         }
-        Ok(SchemaEnum {
-            variants,
-            description: None,
-        })
+        Ok(enum_or_literal_declaration(variants))
     }
 
-    fn build_const_enum(
+    fn build_const_declaration(
         &self,
         one_of: &[Value],
         schema: &Value,
         location: &SchemaLocation,
-    ) -> Result<SchemaEnum> {
-        let mut variants = Vec::new();
-        let mut identifiers = BTreeSet::new();
+    ) -> Result<SchemaDeclarationKind> {
+        if one_of.is_empty() {
+            return Err(unsupported_json_schema(
+                "empty `oneOf` const variant list",
+                schema,
+                location,
+            ));
+        }
+        let mut variants = Vec::with_capacity(one_of.len());
         for (index, variant) in one_of.iter().enumerate() {
+            let variant_location = location.child("oneOf").index(index);
             let obj = variant.as_object().ok_or_else(|| {
-                unsupported_json_schema("non-object `const` enum variant", schema, location)
+                unsupported_json_schema(
+                    "non-object `const` enum variant",
+                    variant,
+                    &variant_location,
+                )
             })?;
-            let const_val = obj.get("const").and_then(Value::as_str).ok_or_else(|| {
-                unsupported_json_schema("non-string `const` enum variant", schema, location)
+            let const_value = obj.get("const").ok_or_else(|| {
+                unsupported_json_schema(
+                    "`oneOf` const variant is missing `const`",
+                    variant,
+                    &variant_location,
+                )
             })?;
-            let name =
-                unique_identifier(enum_variant_identifier(const_val, index), &mut identifiers);
+            let literal =
+                require_schema_literal(const_value, variant, &variant_location, "`const`")?;
             let description = obj
                 .get("description")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            variants.push(SchemaEnumVariant {
-                wire_value: SchemaLiteral::String(const_val.to_string()),
-                preferred_identifier: name,
-                description,
-            });
+            variants.push((literal, description));
         }
-        Ok(SchemaEnum {
-            variants,
-            description: None,
-        })
+        Ok(enum_or_literal_declaration(variants))
     }
 
     /// Root-level `oneOf`/`anyOf` union: object variants become named `VariantN` declarations,
@@ -927,6 +916,10 @@ impl GraphBuilder {
         if obj.contains_key("$ref") {
             return Ok(());
         }
+        // `const` lowers inline to a literal; no named declaration is needed.
+        if obj.contains_key("const") {
+            return Ok(());
+        }
         if is_map_schema(obj) {
             if let Some(value_schema) = obj.get("additionalProperties") {
                 self.preemit_inline(
@@ -1052,6 +1045,11 @@ impl GraphBuilder {
             return self.lower_ref(ref_path, document, location);
         }
 
+        if let Some(const_value) = obj.get("const") {
+            let literal = require_schema_literal(const_value, schema, location, "`const`")?;
+            return Ok(SchemaTypeRef::Literal(literal));
+        }
+
         // Inline object with properties.
         if is_inline_object_schema(obj) {
             let nested_name = nested_name(obj, hint)?;
@@ -1071,6 +1069,13 @@ impl GraphBuilder {
                 SchemaTypeRef::String
             };
             return Ok(SchemaTypeRef::Map(Box::new(value_type)));
+        }
+
+        // Inline enums (with or without an explicit `type`) become named enum/literal declarations.
+        if obj.get("enum").and_then(Value::as_array).is_some() {
+            let nested_name = nested_name(obj, hint)?;
+            let id = self.lower_inline(&nested_name, schema, document, location)?;
+            return Ok(SchemaTypeRef::Named(id));
         }
 
         // `type: ["T", "null"]` and other type arrays. Nullability is preserved: `null` is a
@@ -1197,21 +1202,7 @@ impl GraphBuilder {
         location: &SchemaLocation,
     ) -> Result<SchemaTypeRef> {
         match type_str {
-            "string" => {
-                if let Some(enum_array) = obj.get("enum").and_then(Value::as_array)
-                    && !enum_array.is_empty()
-                {
-                    let nested_name = nested_name(obj, hint)?;
-                    let id = self.lower_inline(
-                        &nested_name,
-                        &Value::Object(obj.clone()),
-                        document,
-                        location,
-                    )?;
-                    return Ok(SchemaTypeRef::Named(id));
-                }
-                Ok(SchemaTypeRef::String)
-            }
+            "string" => Ok(SchemaTypeRef::String),
             "integer" => Ok(SchemaTypeRef::Integer),
             "number" => Ok(SchemaTypeRef::Number),
             "boolean" => Ok(SchemaTypeRef::Boolean),
@@ -1426,6 +1417,86 @@ fn nested_owner(document: &str, location: &SchemaLocation) -> SchemaOwner {
         tool_name: location.tool_name.as_ref().map(ToString::to_string),
         role: location.role,
         path,
+    }
+}
+
+/// Convert a JSON `const` or `enum` value into a renderer-neutral literal.
+///
+/// Object and array literals have no generated-language literal form and return `None`.
+fn schema_literal(value: &Value) -> Option<SchemaLiteral> {
+    match value {
+        Value::String(value) => Some(SchemaLiteral::String(value.clone())),
+        Value::Bool(value) => Some(SchemaLiteral::Boolean(*value)),
+        Value::Number(value) => {
+            if let Some(integer) = value.as_i64() {
+                Some(SchemaLiteral::Integer(integer))
+            } else {
+                Some(SchemaLiteral::Number(value.to_string()))
+            }
+        }
+        Value::Null => Some(SchemaLiteral::Null),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+fn require_schema_literal(
+    value: &Value,
+    schema: &Value,
+    location: &SchemaLocation,
+    context: &str,
+) -> Result<SchemaLiteral> {
+    schema_literal(value).ok_or_else(|| {
+        unsupported_json_schema(
+            format!(
+                "{context} must be a string, integer, number, boolean, or null to become a generated literal"
+            ),
+            schema,
+            location,
+        )
+    })
+}
+
+/// Emit a generated enum when the wire values are homogeneous strings or integers. Other literal
+/// sets use a literal union so boolean, null, mixed, and (for the TypeScript renderer) numeric
+/// values keep their wire shape.
+fn enum_or_literal_declaration(
+    variants: Vec<(SchemaLiteral, Option<String>)>,
+) -> SchemaDeclarationKind {
+    let all_strings = variants
+        .iter()
+        .all(|(literal, _)| matches!(literal, SchemaLiteral::String(_)));
+    let all_integers = variants
+        .iter()
+        .all(|(literal, _)| matches!(literal, SchemaLiteral::Integer(_)));
+
+    if all_strings || all_integers {
+        let mut identifiers = BTreeSet::new();
+        let variants = variants
+            .into_iter()
+            .enumerate()
+            .map(|(index, (wire_value, description))| {
+                let base = match &wire_value {
+                    SchemaLiteral::String(value) => enum_variant_identifier(value, index),
+                    SchemaLiteral::Integer(value) => format!("Variant{value}"),
+                    _ => format!("Variant{index}"),
+                };
+                SchemaEnumVariant {
+                    wire_value,
+                    preferred_identifier: unique_identifier(base, &mut identifiers),
+                    description,
+                }
+            })
+            .collect();
+        SchemaDeclarationKind::Enum(SchemaEnum {
+            variants,
+            description: None,
+        })
+    } else {
+        let arms = variants
+            .into_iter()
+            .map(|(literal, _)| SchemaTypeRef::Literal(literal))
+            .collect();
+        SchemaDeclarationKind::Alias(normalize_union(arms))
     }
 }
 

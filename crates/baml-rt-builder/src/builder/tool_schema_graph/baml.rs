@@ -6,15 +6,18 @@
 
 use super::{
     AdditionalProperties, SchemaDeclaration, SchemaDeclarationKind, SchemaEnum, SchemaEnumVariant,
-    SchemaLiteral, SchemaObject, SchemaTypeRef, ToolSchemaGraph, cycles::baml_emission_order,
+    SchemaLiteral, SchemaLocation, SchemaObject, SchemaTypeRef, ToolSchemaGraph,
+    cycles::baml_emission_order,
 };
 use crate::builder::error::{BamlBuilderError, Result, write_line};
 
 /// Render every declaration in the graph as BAML, once each, in deterministic dependency order.
 ///
-/// Cycle analysis runs before any text is written, so unsupported recursive components fail with
-/// their participating symbols and source locations instead of a downstream BAML compiler error.
+/// Cycle and literal analysis run before any text is written, so unsupported recursive components
+/// and BAML literals fail with graph symbols and source locations instead of a downstream compiler
+/// error.
 pub fn render_tool_schema_baml(graph: &ToolSchemaGraph) -> Result<String> {
+    validate_baml_literals(graph)?;
     let mut output = String::new();
     for id in baml_emission_order(graph)? {
         let decl = graph
@@ -25,6 +28,76 @@ pub fn render_tool_schema_baml(graph: &ToolSchemaGraph) -> Result<String> {
         write_line(&mut output, "")?;
     }
     Ok(output)
+}
+
+/// Reject literals BAML cannot represent without widening their semantics.
+///
+/// BAML has string, integer, boolean, and null literal types, but no float literal type. Generated
+/// enums only carry string and integer wire values; other literal sets lower to literal unions.
+fn validate_baml_literals(graph: &ToolSchemaGraph) -> Result<()> {
+    for declaration in graph.declarations.values() {
+        match &declaration.kind {
+            SchemaDeclarationKind::Object(object) => {
+                for field in &object.fields {
+                    let location = declaration
+                        .source
+                        .child("properties")
+                        .child(&field.wire_name);
+                    validate_baml_type_literals(&field.ty, &location)?;
+                }
+                if let AdditionalProperties::Typed(ty) = &object.additional_properties {
+                    validate_baml_type_literals(
+                        ty,
+                        &declaration.source.child("additionalProperties"),
+                    )?;
+                }
+            }
+            SchemaDeclarationKind::Alias(ty) => {
+                validate_baml_type_literals(ty, &declaration.source)?;
+            }
+            SchemaDeclarationKind::Enum(enumeration) => {
+                for variant in &enumeration.variants {
+                    if !matches!(
+                        &variant.wire_value,
+                        SchemaLiteral::String(_) | SchemaLiteral::Integer(_)
+                    ) {
+                        return Err(BamlBuilderError::InvalidArgument(format!(
+                            "unsupported generated BAML enum variant `{}` at {}: generated BAML enums only support string and integer wire values; use a literal union or OpaqueJson",
+                            variant.preferred_identifier, declaration.source
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_baml_type_literals(ty: &SchemaTypeRef, location: &SchemaLocation) -> Result<()> {
+    match ty {
+        SchemaTypeRef::Literal(SchemaLiteral::Number(value)) => {
+            Err(BamlBuilderError::InvalidArgument(format!(
+                "unsupported float literal `{value}` for generated BAML at {location}: BAML has no float literal type; use OpaqueJson or a string representation"
+            )))
+        }
+        SchemaTypeRef::Array(inner)
+        | SchemaTypeRef::Map(inner)
+        | SchemaTypeRef::VecOrOne(inner) => validate_baml_type_literals(inner, location),
+        SchemaTypeRef::Union(arms) => {
+            for arm in arms {
+                validate_baml_type_literals(arm, location)?;
+            }
+            Ok(())
+        }
+        SchemaTypeRef::String
+        | SchemaTypeRef::Integer
+        | SchemaTypeRef::Number
+        | SchemaTypeRef::Boolean
+        | SchemaTypeRef::Null
+        | SchemaTypeRef::JsonValue
+        | SchemaTypeRef::Literal(_)
+        | SchemaTypeRef::Named(_) => Ok(()),
+    }
 }
 
 fn render_declaration(

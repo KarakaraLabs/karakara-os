@@ -48,7 +48,7 @@ type CallbackCancelInput = {
   callbackId?: string @description("Exact callback id to cancel.")
   sourceKey?: string @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
   dedupeKey?: string @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
-  op: string
+  op: "cancel"
 }
 
 type CallbackContinuationMode = "Detached" | "ResumeCurrentTask"
@@ -59,7 +59,7 @@ type CallbackScheduleInput = {
   payload: OpaqueJson @description("Opaque JSON payload delivered back through onDispatch.")
   dedupeKey?: string @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
   continuation?: CallbackContinuationMode @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
-  op: string
+  op: "schedule"
 }
 
 type CallbackToolInput = (CallbackScheduleInput | CallbackCancelInput)
