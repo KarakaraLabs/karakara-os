@@ -8,11 +8,11 @@
 //! or `extra_ts_decls`, so static, external, MCP, sandbox, and WASM tools with equivalent schemas
 //! produce equivalent declarations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     AdditionalProperties, OpenInputContract, OpenInputRequirement, SchemaDeclaration,
-    SchemaDeclarationKind, SchemaEnum, SchemaLiteral, SchemaObject, SchemaTypeRef,
+    SchemaDeclarationKind, SchemaEnum, SchemaLiteral, SchemaObject, SchemaTypeId, SchemaTypeRef,
     ToolSchemaContract, ToolSchemaGraph,
 };
 use crate::builder::{
@@ -46,25 +46,29 @@ pub struct ToolTypescriptContract {
 /// Declarations are sorted by emitted symbol, which is sufficient because TypeScript does not
 /// require dependency order. The output is therefore byte-stable regardless of graph ids or tool
 /// origin.
+///
+/// Graph symbols are shaped into valid TypeScript type names first. The graph permits BAML
+/// identifiers such as `Foo-Bar`, but TypeScript does not; those symbols are mapped deterministically
+/// and every `Named` reference uses the same mapped name.
 pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTypescriptSurface> {
+    let renderer = TypescriptRenderer::new(graph);
     let mut ordered: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
-    ordered.sort_by(|left, right| left.symbol.cmp(&right.symbol));
+    ordered.sort_by(|left, right| {
+        renderer
+            .symbol(left.id)
+            .cmp(renderer.symbol(right.id))
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
     let mut declarations = Vec::with_capacity(ordered.len());
     for declaration in ordered {
         declarations.push(TsDeclaration {
-            symbol: declaration.symbol.clone(),
-            body: render_declaration(graph, declaration)?,
+            symbol: renderer.symbol(declaration.id).to_string(),
+            body: renderer.render_declaration(declaration)?,
             dependencies: declaration
                 .dependencies
                 .iter()
-                .map(|id| {
-                    graph
-                        .declarations
-                        .get(id)
-                        .map(|dependency| dependency.symbol.clone())
-                        .unwrap_or_else(|| format!("<unresolved:{}>", id.as_u32()))
-                })
+                .map(|id| renderer.symbol(*id).to_string())
                 .collect(),
             origin: TsDeclarationOrigin::ToolSchema {
                 owners: declaration.owners.clone(),
@@ -76,7 +80,7 @@ pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTyp
     let tools = graph
         .tools
         .iter()
-        .map(|(name, contract)| (name.clone(), render_tool_contract(graph, contract)))
+        .map(|(name, contract)| (name.clone(), renderer.render_tool_contract(contract)))
         .collect();
 
     Ok(ToolTypescriptSurface {
@@ -85,73 +89,256 @@ pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTyp
     })
 }
 
-fn render_declaration(graph: &ToolSchemaGraph, declaration: &SchemaDeclaration) -> Result<String> {
-    match &declaration.kind {
-        SchemaDeclarationKind::Object(object) => render_interface(graph, declaration, object),
-        SchemaDeclarationKind::Enum(enumeration) => {
-            Ok(render_enum(&declaration.symbol, enumeration))
+/// Render a normalized graph type expression in TypeScript syntax.
+///
+/// This convenience entry point derives the same TypeScript-safe symbol map as
+/// [`render_tool_typescript_surface`], so references match emitted declarations.
+pub fn render_schema_type_ref(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> String {
+    TypescriptRenderer::new(graph).render_type(ty)
+}
+
+struct TypescriptRenderer {
+    symbols: BTreeMap<SchemaTypeId, String>,
+}
+
+impl TypescriptRenderer {
+    fn new(graph: &ToolSchemaGraph) -> Self {
+        Self {
+            symbols: build_typescript_symbols(graph),
         }
-        SchemaDeclarationKind::Alias(ty) => Ok(format!(
-            "export type {} = {};",
-            declaration.symbol,
-            render_schema_type_ref(graph, ty)
-        )),
+    }
+
+    fn symbol(&self, id: SchemaTypeId) -> &str {
+        self.symbols
+            .get(&id)
+            .map(String::as_str)
+            .unwrap_or("<unresolved>")
+    }
+
+    fn render_declaration(&self, declaration: &SchemaDeclaration) -> Result<String> {
+        match &declaration.kind {
+            SchemaDeclarationKind::Object(object) => self.render_interface(declaration, object),
+            SchemaDeclarationKind::Enum(enumeration) => {
+                Ok(render_enum(self.symbol(declaration.id), enumeration))
+            }
+            SchemaDeclarationKind::Alias(ty) => Ok(format!(
+                "export type {} = {};",
+                self.symbol(declaration.id),
+                self.render_type(ty)
+            )),
+        }
+    }
+
+    fn render_tool_contract(&self, contract: &ToolSchemaContract) -> ToolTypescriptContract {
+        let (open_input, open_requirement) = match &contract.open_input {
+            OpenInputContract::Absent => (None, None),
+            OpenInputContract::Present { ty, requirement } => {
+                (Some(self.render_type(ty)), Some(*requirement))
+            }
+        };
+        ToolTypescriptContract {
+            tool_name: contract.tool_name.clone(),
+            open_input,
+            open_requirement,
+            input: self.render_type(&contract.input),
+            output: self.render_type(&contract.output),
+        }
+    }
+
+    fn render_interface(
+        &self,
+        declaration: &SchemaDeclaration,
+        object: &SchemaObject,
+    ) -> Result<String> {
+        let symbol = self.symbol(declaration.id);
+        let mut body = String::new();
+        // Graph field order is the canonical wire projection order, so do not sort fields.
+        for field in &object.fields {
+            let optional = if field.required { "" } else { "?" };
+            write_line(
+                &mut body,
+                &format!(
+                    "  {}{optional}: {};",
+                    render_property_key(&field.wire_name),
+                    self.render_type(&field.ty)
+                ),
+            )?;
+        }
+        match &object.additional_properties {
+            AdditionalProperties::AllowedAny => {
+                write_line(&mut body, "  [key: string]: JsonValue | undefined;")?;
+            }
+            AdditionalProperties::Forbidden => {}
+            AdditionalProperties::Typed(_) => {
+                return Err(BamlBuilderError::InvalidArgument(format!(
+                    "interface `{symbol}` at {} mixes fixed fields with typed additional properties, which generated TypeScript cannot represent",
+                    declaration.source
+                )));
+            }
+        }
+        Ok(format!("export interface {symbol} {{\n{body}}}"))
+    }
+
+    fn render_type(&self, ty: &SchemaTypeRef) -> String {
+        match ty {
+            SchemaTypeRef::String => "string".to_string(),
+            SchemaTypeRef::Integer | SchemaTypeRef::Number => "number".to_string(),
+            SchemaTypeRef::Boolean => "boolean".to_string(),
+            SchemaTypeRef::Null => "null".to_string(),
+            SchemaTypeRef::JsonValue => "JsonValue".to_string(),
+            SchemaTypeRef::Literal(literal) => render_literal(literal),
+            SchemaTypeRef::Array(inner) => self.render_array_suffix(inner),
+            SchemaTypeRef::Map(inner) => {
+                format!("Record<string, {}>", self.render_type(inner))
+            }
+            SchemaTypeRef::Named(id) => self.symbol(*id).to_string(),
+            SchemaTypeRef::Union(arms) => arms
+                .iter()
+                .map(|arm| self.render_type(arm))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            SchemaTypeRef::VecOrOne(inner) => {
+                let scalar = self.render_type(inner);
+                let list = self.render_array_suffix(inner);
+                format!("{scalar} | {list}")
+            }
+        }
+    }
+
+    /// Render an array of `inner`, parenthesizing a union element so `[]` does not bind to only
+    /// its last arm (`A | B[]` parses as `A | (B[])`). `VecOrOne` also renders as a union.
+    fn render_array_suffix(&self, inner: &SchemaTypeRef) -> String {
+        let rendered = self.render_type(inner);
+        if is_union_like(inner) {
+            format!("({rendered})[]")
+        } else {
+            format!("{rendered}[]")
+        }
     }
 }
 
-fn render_tool_contract(
-    graph: &ToolSchemaGraph,
-    contract: &ToolSchemaContract,
-) -> ToolTypescriptContract {
-    let (open_input, open_requirement) = match &contract.open_input {
-        OpenInputContract::Absent => (None, None),
-        OpenInputContract::Present { ty, requirement } => {
-            (Some(render_schema_type_ref(graph, ty)), Some(*requirement))
+/// Map every graph declaration to a valid, unique TypeScript symbol.
+///
+/// Valid TypeScript names are preserved. Invalid graph symbols (for example BAML identifiers with
+/// hyphens) are sanitized, and the resulting collisions get a deterministic numeric suffix.
+fn build_typescript_symbols(graph: &ToolSchemaGraph) -> BTreeMap<SchemaTypeId, String> {
+    let mut ordered: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
+    ordered.sort_by(|left, right| {
+        left.symbol
+            .cmp(&right.symbol)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut symbols = BTreeMap::new();
+    let mut used = BTreeSet::new();
+
+    // Preserve graph symbols that are already legal TypeScript type names.
+    for declaration in &ordered {
+        if is_typescript_identifier(&declaration.symbol)
+            && !is_typescript_reserved_word(&declaration.symbol)
+        {
+            used.insert(declaration.symbol.clone());
+            symbols.insert(declaration.id, declaration.symbol.clone());
         }
-    };
-    ToolTypescriptContract {
-        tool_name: contract.tool_name.clone(),
-        open_input,
-        open_requirement,
-        input: render_schema_type_ref(graph, &contract.input),
-        output: render_schema_type_ref(graph, &contract.output),
     }
+
+    // Derive stable names for the rest without taking a preserved name.
+    for declaration in &ordered {
+        if symbols.contains_key(&declaration.id) {
+            continue;
+        }
+        let mut base = sanitize_typescript_identifier(&declaration.symbol);
+        if is_typescript_reserved_word(&base) {
+            base.push_str("_Type");
+        }
+        let mut candidate = base.clone();
+        let mut suffix = 2;
+        while used.contains(&candidate) {
+            candidate = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        used.insert(candidate.clone());
+        symbols.insert(declaration.id, candidate);
+    }
+
+    symbols
 }
 
-fn render_interface(
-    graph: &ToolSchemaGraph,
-    declaration: &SchemaDeclaration,
-    object: &SchemaObject,
-) -> Result<String> {
-    let mut body = String::new();
-    // Graph field order is the canonical wire projection order, so do not sort fields.
-    for field in &object.fields {
-        let optional = if field.required { "" } else { "?" };
-        write_line(
-            &mut body,
-            &format!(
-                "  {}{optional}: {};",
-                render_property_key(&field.wire_name),
-                render_schema_type_ref(graph, &field.ty)
-            ),
-        )?;
+fn sanitize_typescript_identifier(symbol: &str) -> String {
+    let mut shaped: String = symbol
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if shaped.is_empty() {
+        shaped.push_str("Type");
     }
-    match &object.additional_properties {
-        AdditionalProperties::AllowedAny => {
-            write_line(&mut body, "  [key: string]: JsonValue | undefined;")?;
-        }
-        AdditionalProperties::Forbidden => {}
-        AdditionalProperties::Typed(_) => {
-            return Err(BamlBuilderError::InvalidArgument(format!(
-                "interface `{}` at {} mixes fixed fields with typed additional properties, which generated TypeScript cannot represent",
-                declaration.symbol, declaration.source
-            )));
-        }
+    if !shaped
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+    {
+        shaped.insert(0, '_');
     }
-    Ok(format!(
-        "export interface {} {{\n{body}}}",
-        declaration.symbol
-    ))
+    shaped
+}
+
+/// TypeScript keywords that cannot be used as a type alias or interface name.
+fn is_typescript_reserved_word(name: &str) -> bool {
+    matches!(
+        name,
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+            | "await"
+    )
 }
 
 fn render_enum(symbol: &str, enumeration: &SchemaEnum) -> String {
@@ -166,48 +353,6 @@ fn render_enum(symbol: &str, enumeration: &SchemaEnum) -> String {
         variants.join(" | ")
     };
     format!("export type {symbol} = {union};")
-}
-
-/// Render a normalized graph type expression in TypeScript syntax.
-pub fn render_schema_type_ref(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> String {
-    match ty {
-        SchemaTypeRef::String => "string".to_string(),
-        SchemaTypeRef::Integer | SchemaTypeRef::Number => "number".to_string(),
-        SchemaTypeRef::Boolean => "boolean".to_string(),
-        SchemaTypeRef::Null => "null".to_string(),
-        SchemaTypeRef::JsonValue => "JsonValue".to_string(),
-        SchemaTypeRef::Literal(literal) => render_literal(literal),
-        SchemaTypeRef::Array(inner) => render_array_suffix(graph, inner),
-        SchemaTypeRef::Map(inner) => {
-            format!("Record<string, {}>", render_schema_type_ref(graph, inner))
-        }
-        SchemaTypeRef::Named(id) => graph
-            .declarations
-            .get(id)
-            .map(|declaration| declaration.symbol.clone())
-            .unwrap_or_else(|| format!("<unresolved:{}>", id.as_u32())),
-        SchemaTypeRef::Union(arms) => arms
-            .iter()
-            .map(|arm| render_schema_type_ref(graph, arm))
-            .collect::<Vec<_>>()
-            .join(" | "),
-        SchemaTypeRef::VecOrOne(inner) => {
-            let scalar = render_schema_type_ref(graph, inner);
-            let list = render_array_suffix(graph, inner);
-            format!("{scalar} | {list}")
-        }
-    }
-}
-
-/// Render an array of `inner`, parenthesizing a union element so `[]` does not bind to only its
-/// last arm (`A | B[]` parses as `A | (B[])`). `VecOrOne` also renders as a union.
-fn render_array_suffix(graph: &ToolSchemaGraph, inner: &SchemaTypeRef) -> String {
-    let rendered = render_schema_type_ref(graph, inner);
-    if is_union_like(inner) {
-        format!("({rendered})[]")
-    } else {
-        format!("{rendered}[]")
-    }
 }
 
 fn is_union_like(ty: &SchemaTypeRef) -> bool {

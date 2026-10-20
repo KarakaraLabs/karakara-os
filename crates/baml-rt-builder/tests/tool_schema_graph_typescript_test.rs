@@ -36,6 +36,9 @@ fn tool_schema_graph_typescript_surface() {
     // Expression matrix: requiredness, nullability, literals, arrays, maps, and VecOrOne.
     assert_expression_matrix();
 
+    // BAML identifiers with hyphens and TypeScript keywords must become valid, unique symbols.
+    assert_typescript_symbol_shaping();
+
     // Origin parity: equivalent graphs render equivalent TypeScript after root normalization.
     let mut external_tool = static_tool.clone();
     external_tool.name = ToolName::parse("graph/external-representative").expect("external name");
@@ -239,6 +242,66 @@ fn assert_expression_matrix() {
             );
         }
     }
+}
+
+fn assert_typescript_symbol_shaping() {
+    let graph = ToolSchemaGraph::from_root_schemas(
+        &HashMap::from([(
+            "Root".to_string(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "hyphenated": { "$ref": "#/$defs/Foo-Bar" },
+                    "plain": { "$ref": "#/$defs/Foo_Bar" },
+                    "keyword": { "$ref": "#/$defs/class" }
+                },
+                "required": ["hyphenated", "plain", "keyword"],
+                "$defs": {
+                    "Foo-Bar": {
+                        "type": "object",
+                        "properties": { "id": { "type": "string" } },
+                        "required": ["id"]
+                    },
+                    "Foo_Bar": {
+                        "type": "object",
+                        "properties": { "id": { "type": "integer" } },
+                        "required": ["id"]
+                    },
+                    "class": {
+                        "type": "object",
+                        "properties": { "id": { "type": "boolean" } },
+                        "required": ["id"]
+                    }
+                }
+            }),
+        )]),
+        &HashMap::from([("Root".to_string(), "Root".to_string())]),
+    )
+    .expect("lower hyphenated and reserved symbols");
+    let surface = render_tool_typescript_surface(&graph).expect("render TypeScript surface");
+    let rendered = surface
+        .declarations
+        .iter()
+        .map(|declaration| declaration.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!rendered.contains("Foo-Bar"), "no hyphenated type names");
+    assert!(
+        rendered.contains("export interface Foo_Bar {"),
+        "valid graph symbol is preserved:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("export interface Foo_Bar_2 {"),
+        "hyphenated symbol gets a stable suffix:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("export interface class_Type {"),
+        "reserved word is mapped:\n{rendered}"
+    );
+    assert!(rendered.contains("hyphenated: Foo_Bar_2;"));
+    assert!(rendered.contains("plain: Foo_Bar;"));
+    assert!(rendered.contains("keyword: class_Type;"));
 }
 
 fn project_surface(surface: &ToolTypescriptSurface) -> String {
