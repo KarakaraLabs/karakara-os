@@ -6,24 +6,28 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
-export interface AgentCardDto { name: string;
-version: string;
-contentHash: string | null;
-repositoryVersion: number | null;
-agentPackage: string;
-agentInstanceId: string;
-tools: string[];
-description: string | null;
-capabilities: string[];
-tags: string[] | null;
-subscriptions: AgentEventSubscriptionDto[] | null;
- }
+export interface AgentCardDto {
+  name: string;
+  version: string;
+  contentHash?: string | null;
+  repositoryVersion?: number | null;
+  agentPackage: string;
+  agentInstanceId: string;
+  tools: string[];
+  description?: string | null;
+  capabilities: string[];
+  tags?: string[];
+  subscriptions?: AgentEventSubscriptionDto[];
+  [key: string]: JsonValue | undefined;
+}
 
-export interface AgentEventSubscriptionDto { schemaVersions: string[] | null;
-sourceKinds: string[] | null;
-sourceKeys: string[] | null;
-sourceKeyPrefixes: string[] | null;
- }
+export interface AgentEventSubscriptionDto {
+  schemaVersions?: string[];
+  sourceKinds?: string[];
+  sourceKeys?: string[];
+  sourceKeyPrefixes?: string[];
+  [key: string]: JsonValue | undefined;
+}
 
 export interface ArchivePageReadInput { archive_ref: string;
 offset: number | null;
@@ -36,42 +40,140 @@ offset: number | null;
 limit: number | null;
  }
 
-export interface DiscoverAgentsOpenInput { reason: string | null;
- }
+export interface DiscoverAgentsNextOutput {
+  agents: AgentCardDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface DiscoverAgentsSendInput { query: string | null;
-requiredCapabilities: string[] | null;
-requiredSchemaVersions: string[] | null;
-requiredSourceKinds: string[] | null;
-limit: number | null;
-offset: number | null;
- }
+export interface DiscoverAgentsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsSendInput {
+  query?: string | null;
+  requiredCapabilities?: string[] | null;
+  requiredSchemaVersions?: string[] | null;
+  requiredSourceKinds?: string[] | null;
+  limit?: number | null;
+  offset?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
+
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
+
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface NeedClarification { kind: "clarify";
 question: string;
  }
 
-export interface ProvenanceQueryOpenInput { reason: string | null;
- }
+export interface ProvenanceArchiveRecordDto {
+  archiveRef: string;
+  payloads: (ProvenancePayloadLlmCallDto | ProvenancePayloadLlmResultDto | ProvenancePayloadToolCallDto | ProvenancePayloadToolResultDto)[];
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ProvenanceQuerySendInput { read: SessionReadEnvelope | null;
-resource: string;
-contextId: string | null;
-taskId: string | null;
-agentId: string | null;
-provider: string | null;
-model: string | null;
-toolName: string | null;
-bamlPrompt: string | null;
-payloadText: string | null;
-groupBy: string[] | null;
-sortBy: string | null;
-sortDir: string | null;
-outcome: string | null;
-pageSize: number | null;
-cursor: string | null;
-topK: number | null;
- }
+export interface ProvenanceArchiveSummaryDto {
+  archiveRef: string;
+  payloadCount: number;
+  payloadSources: string[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenancePayloadLlmCallDto {
+  payload_ref: string;
+  activity_ref: string;
+  prompt_json: string;
+  source: "llm_call";
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenancePayloadLlmResultDto {
+  payload_ref: string;
+  activity_ref: string;
+  result_json: string;
+  source: "llm_result";
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenancePayloadToolCallDto {
+  payload_ref: string;
+  activity_ref: string;
+  tool_name?: string | null;
+  phase?: string | null;
+  args_json: string;
+  source: "tool_call";
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenancePayloadToolResultDto {
+  payload_ref: string;
+  activity_ref: string;
+  result_json: string;
+  source: "tool_result";
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenanceQueryNextOutput {
+  payloadJson?: string | null;
+  readResult?: SessionReadResultDto | null;
+  retrievalBudget?: ProvenanceRetrievalBudgetDto | null;
+  budgetExhausted?: boolean | null;
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenanceQueryOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenanceQuerySendInput {
+  read?: SessionReadEnvelope | null;
+  resource: string;
+  contextId?: string | null;
+  taskId?: string | null;
+  agentId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  toolName?: string | null;
+  bamlPrompt?: string | null;
+  payloadText?: string | null;
+  groupBy?: string[] | null;
+  sortBy?: string | null;
+  sortDir?: string | null;
+  outcome?: string | null;
+  pageSize?: number | null;
+  cursor?: string | null;
+  topK?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type ProvenanceReadProjectionDto = "identity" | "summary" | "detail";
+
+export interface ProvenanceRetrievalBudgetDto {
+  callsUsed: number;
+  callsCap: number;
+  bytesUsed: number;
+  bytesCap: number;
+  itemsUsed: number;
+  itemsCap: number;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface QueryIntent { kind: "query";
 resource: QueryResource;
@@ -93,13 +195,25 @@ description: string | null;
 capabilities: string[];
  }
 
-export interface SessionReadEnvelope { mode: SessionReadMode | null;
-refId: string;
-projection: string | null;
-budgetHint: number | null;
- }
+export interface SessionReadEnvelope {
+  mode?: SessionReadMode | null;
+  refId: string;
+  projection?: string | null;
+  budgetHint?: number | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export type SessionReadMode = "RetrieveRef";
+export type SessionReadMode = "retrieve_ref";
+
+export interface SessionReadResultDto {
+  mode: SessionReadMode;
+  refId: string;
+  projection: ProvenanceReadProjectionDto;
+  refs: string[];
+  archiveSummary?: ProvenanceArchiveSummaryDto | null;
+  archiveRecord?: ProvenanceArchiveRecordDto | null;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface SystemDiscoverAgentsAbortStep { op: "Abort";
  }
@@ -158,6 +272,7 @@ citations: string[];
 export interface SystemExtrospectionSessionPlan { step: SystemExtrospectionOpenStep | SystemExtrospectionSendStep | SystemExtrospectionSearchReadStep | SystemExtrospectionPageReadStep | SystemExtrospectionFinishStep | SystemExtrospectionAbortStep;
 citations: string[];
  }
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -523,6 +638,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -534,6 +654,78 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "system/discover_agents"
+  | "system/extrospection";
+
+export interface ToolInputMap {
+  "system/discover_agents": DiscoverAgentsSendInput;
+  "system/extrospection": ProvenanceQuerySendInput;
+}
+
+export interface ToolOutputMap {
+  "system/discover_agents": DiscoverAgentsNextOutput;
+  "system/extrospection": ProvenanceQueryNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "system/discover_agents": DiscoverAgentsOpenInput;
+  "system/extrospection": ProvenanceQueryOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput = never;
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -575,12 +767,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

@@ -6,6 +6,127 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
+export interface GetConversationHistoryInput {
+  channel_id: string;
+  cursor?: string | null;
+  limit?: number | null;
+  oldest?: string | null;
+  latest?: string | null;
+  inclusive?: boolean | null;
+  order?: SlackHistoryOrder | null;
+  resolve_users?: SlackUserResolutionMode | null;
+  auth?: SlackAuthPreference | null;
+}
+
+export interface GetThreadRepliesInput {
+  channel_id: string;
+  thread_ts: string;
+  cursor?: string | null;
+  limit?: number | null;
+  oldest?: string | null;
+  latest?: string | null;
+  inclusive?: boolean | null;
+  order?: SlackHistoryOrder | null;
+  resolve_users?: SlackUserResolutionMode | null;
+  auth?: SlackAuthPreference | null;
+}
+
+export interface ListConversationsInput {
+  kinds: SlackConversationKind[];
+  cursor?: string | null;
+  limit?: number | null;
+  exclude_archived?: boolean | null;
+  include_num_members?: boolean | null;
+  auth?: SlackAuthPreference | null;
+}
+
+export interface ResolveUsersInput {
+  user_ids: string[];
+  auth?: SlackAuthPreference | null;
+}
+
+export interface SearchMessagesInput {
+  query: string;
+  count?: number | null;
+  page?: number | null;
+  sort?: SlackSearchSort | null;
+  direction?: SlackSearchDirection | null;
+  resolve_users?: SlackUserResolutionMode | null;
+  auth?: SlackAuthPreference | null;
+}
+
+export type SlackAuthPreference = "auto" | "bot" | "user";
+
+export type SlackConversationKind = "public_channel" | "private_channel" | "im" | "mpim";
+
+export interface SlackConversationSummary {
+  id: string;
+  name?: string | null;
+  kind: SlackConversationKind;
+  is_archived: boolean;
+  is_member?: boolean | null;
+  num_members?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type SlackHistoryOrder = "latest_first" | "oldest_first";
+
+export type SlackInput = GetThreadRepliesInput | GetConversationHistoryInput | SearchMessagesInput | ResolveUsersInput | ListConversationsInput;
+
+export interface SlackMessageSummary {
+  channel_id: string;
+  ts: string;
+  thread_ts?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+  text: string;
+  subtype?: string | null;
+  source_ref: string;
+  permalink?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface SlackOutput {
+  conversations?: SlackConversationSummary[];
+  messages?: SlackMessageSummary[];
+  users?: SlackUserSummary[];
+  next_cursor?: string | null;
+  has_more: boolean;
+  sources?: SlackSource[];
+  message: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export type SlackSearchDirection = "asc" | "desc";
+
+export type SlackSearchSort = "score" | "timestamp";
+
+export interface SlackSource {
+  kind: SlackSourceKind;
+  reference: string;
+  permalink?: string | null;
+  channel_id?: string | null;
+  message_ts?: string | null;
+  thread_ts?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type SlackSourceKind = "conversation" | "message" | "thread_reply" | "search_match" | "user";
+
+export type SlackUserResolutionMode = "none" | "resolve_users";
+
+export interface SlackUserSummary {
+  id: string;
+  name?: string | null;
+  display_name?: string | null;
+  real_name?: string | null;
+  is_bot: boolean;
+  is_deleted: boolean;
+  email?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
 declare global {
@@ -360,6 +481,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -371,4 +497,72 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "support/slack";
+
+export interface ToolInputMap {
+  "support/slack": SlackInput;
+}
+
+export interface ToolOutputMap {
+  "support/slack": SlackOutput;
+}
+
+export interface ToolOpenInputMap {
+  "support/slack": Record<string, never>;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput = never;
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }

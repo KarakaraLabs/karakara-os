@@ -86,7 +86,6 @@ impl CodegenPaths {
 /// phases (coordination prelude + IR codegen).
 pub(super) struct WorkspaceReady {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     /// One immutable graph shared by every later codegen phase.
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
@@ -163,7 +162,6 @@ impl WorkspaceReady {
 
         Ok(Self {
             paths,
-            tool_names,
             tool_metadata,
             tool_schema_graph,
             unified_roots,
@@ -189,7 +187,6 @@ impl WorkspaceReady {
 
         Ok(PreludeWritten {
             paths: self.paths,
-            tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
             tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
@@ -202,7 +199,6 @@ impl WorkspaceReady {
 
 pub(super) struct PreludeWritten {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
@@ -217,7 +213,6 @@ impl PreludeWritten {
 
         Ok(CompiledFirstPass {
             paths: self.paths,
-            tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
             tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
@@ -233,7 +228,6 @@ impl PreludeWritten {
 
 pub(super) struct CompiledFirstPass {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
@@ -273,7 +267,6 @@ impl CompiledFirstPass {
 
         Ok(PromptsNormalized {
             paths: self.paths,
-            tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
             tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
@@ -301,7 +294,6 @@ fn authored_selection_hints(ir: &IRSignature) -> HashMap<String, String> {
 
 pub(super) struct PromptsNormalized {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
@@ -352,7 +344,6 @@ impl PromptsNormalized {
 
         Ok(SessionArtifactsEmitted {
             paths: self.paths,
-            tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
             tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
@@ -367,7 +358,6 @@ impl PromptsNormalized {
 
 pub(super) struct SessionArtifactsEmitted {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
@@ -381,7 +371,6 @@ impl SessionArtifactsEmitted {
     pub(super) fn append_catalog_function_and_finalize(self) -> Result<RuntimeFinalized> {
         Ok(RuntimeFinalized {
             paths: self.paths,
-            tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
             tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
@@ -400,13 +389,8 @@ impl SessionArtifactsEmitted {
 
 pub(super) struct RuntimeFinalized {
     pub paths: CodegenPaths,
-    pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
     /// The graph built in `WorkspaceReady`, retained for graph-backed TypeScript codegen.
-    #[expect(
-        dead_code,
-        reason = "a follow-up TypeScript graph renderer will consume this handoff"
-    )]
     pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub ir_signature: IRSignature,
@@ -418,7 +402,8 @@ impl RuntimeFinalized {
     pub(super) fn emit_typescript_declarations(&self) -> Result<()> {
         let declarations = render_ts_declarations(
             &self.ir_signature,
-            &self.tool_names,
+            &self.tool_metadata,
+            &self.tool_schema_graph,
             &self.session_plan_map,
             &self.unified_roots,
         )?;

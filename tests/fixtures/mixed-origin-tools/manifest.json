@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "name": "mixed-origin-tools",
+  "entry_point": "src/index.ts",
+  "signature": "mixed-origin-tools@1.0.0",
+  "tools": [
+    "system/callback",
+    "external/echo",
+    "mcp/typed",
+    "mcp/opaque"
+  ],
+  "discovery": {
+    "description": "Fixture: static, external, typed MCP, and opaque MCP tools in one generated TypeScript surface",
+    "capabilities": []
+  },
+  "tags": [
+    "fixture"
+  ]
+}

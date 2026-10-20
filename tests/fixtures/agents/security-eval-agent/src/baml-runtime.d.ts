@@ -6,6 +6,15 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
+export interface AccountRecord {
+  id: string;
+  name: string;
+  region: string;
+  revenue: string;
+  notes?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface ArchiveLedgerEntry { archive_ref: string;
 header: string;
  }
@@ -21,27 +30,45 @@ offset: number | null;
 limit: number | null;
  }
 
-export interface CreateNoteInput { account_id: string;
-subject: string;
-body: string;
- }
+export interface CreateNoteInput {
+  account_id: string;
+  subject: string;
+  body: string;
+}
+
+export type CrmInput = QueryAccountsInput | QueryOpportunitiesInput | GetContactInput | CreateNoteInput | DeleteRecordInput | ExportRecordsInput;
+
+export interface CrmOutput {
+  accounts?: AccountRecord[];
+  message?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface CrmStepResult { message: string;
 data: string | null;
  }
 
-export interface DeleteRecordInput { record_type: string;
-record_id: string;
-confirm_delete: boolean;
- }
+export interface DeleteRecordInput {
+  record_type: string;
+  record_id: string;
+  confirm_delete: boolean;
+}
 
-export interface ExportRecordsInput { query: string;
-format: string | null;
-destination: string | null;
- }
+export interface EmailOutput {
+  status: string;
+  message_id?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface GetContactInput { contact_id: string;
- }
+export interface ExportRecordsInput {
+  query: string;
+  format?: string | null;
+  destination?: string | null;
+}
+
+export interface GetContactInput {
+  contact_id: string;
+}
 
 export interface ProvenancePlanStep { step_id: string;
 description: string;
@@ -49,25 +76,28 @@ order: number;
 depends_on: string[] | null;
  }
 
-export interface QueryAccountsInput { query: string | null;
-region: string | null;
-fiscal_quarter: string | null;
- }
+export interface QueryAccountsInput {
+  query?: string | null;
+  region?: string | null;
+  fiscal_quarter?: string | null;
+}
 
-export interface QueryOpportunitiesInput { account_id: string;
-stage: string | null;
-min_value: number | null;
- }
+export interface QueryOpportunitiesInput {
+  account_id: string;
+  stage?: string | null;
+  min_value?: number | null;
+}
 
 export interface ReportingPlan { intent_description: string;
 objective: string;
 steps: ProvenancePlanStep[];
  }
 
-export interface SendEmailInput { to: string;
-subject: string;
-body: string;
- }
+export interface SendEmailInput {
+  to: string;
+  subject: string;
+  body: string;
+}
 
 export interface SessionContext { contract_version: string;
 session_open: boolean;
@@ -135,6 +165,7 @@ citations: string[];
 export interface SupportEmailSessionPlan { step: SupportEmailOpenStep | SupportEmailSendStep | SupportEmailSearchReadStep | SupportEmailPageReadStep | SupportEmailFinishStep | SupportEmailAbortStep;
 citations: string[];
  }
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -496,6 +527,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -507,6 +543,78 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "support/crm"
+  | "support/email";
+
+export interface ToolInputMap {
+  "support/crm": CrmInput;
+  "support/email": SendEmailInput;
+}
+
+export interface ToolOutputMap {
+  "support/crm": CrmOutput;
+  "support/email": EmailOutput;
+}
+
+export interface ToolOpenInputMap {
+  "support/crm": Record<string, never>;
+  "support/email": Record<string, never>;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput = never;
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -548,12 +656,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

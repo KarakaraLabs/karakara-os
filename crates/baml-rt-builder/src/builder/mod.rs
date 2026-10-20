@@ -26,6 +26,7 @@ pub mod selection_hint;
 pub mod service;
 pub mod tool_schema_graph;
 pub mod traits;
+pub mod ts_declarations;
 pub mod ts_gen;
 pub mod types;
 

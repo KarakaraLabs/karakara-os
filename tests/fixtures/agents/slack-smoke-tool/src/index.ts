@@ -1,16 +1,5 @@
 /// <reference path="./baml-runtime.d.ts" />
-
-type ToolSessionHandle = {
-  send(args: Record<string, unknown>): Promise<unknown>;
-  continue(): Promise<unknown>;
-  finish(): Promise<unknown>;
-  abort(reason?: string): Promise<unknown>;
-};
-
-declare function openToolSession(
-  toolName: string,
-  openInput?: Record<string, unknown>,
-): Promise<ToolSessionHandle>;
+import type { ToolInput, ToolOutput, ToolSession } from "./baml-runtime";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object";
@@ -25,7 +14,10 @@ function countConversations(output: unknown): number {
 async function onChatMessage(message: ChatMessage): Promise<void> {
   const s = session(message);
   await s.run(async () => {
-    let toolSession: ToolSessionHandle | null = null;
+    let toolSession: ToolSession<
+      ToolInput<"support/slack">,
+      ToolOutput<"support/slack">
+    > | null = null;
     try {
       toolSession = await openToolSession("support/slack");
       await toolSession.send({
@@ -35,7 +27,7 @@ async function onChatMessage(message: ChatMessage): Promise<void> {
       const next = await toolSession.continue();
       await toolSession.finish();
       toolSession = null;
-      const output = isObject(next) && isObject(next.output) ? next.output : next;
+      const output = "output" in next && isObject(next.output) ? next.output : next;
       const count = countConversations(output);
       return { message: `Slack smoke fixture fetched ${count} conversation(s).` };
     } catch (error) {

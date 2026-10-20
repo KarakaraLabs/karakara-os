@@ -15,6 +15,7 @@ use baml_rt_builder::builder::{
     baml_gen::render_baml_tool_interfaces,
     baml_signature_gen::{extract_baml_signatures, session_plan_functions_map},
     schema_to_baml::generate_baml_types_from_schemas,
+    tool_schema_graph::ToolSchemaGraph,
     ts_gen::{load_manifest_tools, render_ts_declarations},
 };
 use baml_rt_core::{
@@ -22,6 +23,7 @@ use baml_rt_core::{
     context::{self, InvocationScope, RuntimeScope},
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
+use baml_rt_tools::tool_catalog::resolve_manifest_tools;
 use baml_runtime::BamlRuntime;
 use internal_baml_core::feature_flags::FeatureFlags;
 use serde_json::Value;
@@ -242,11 +244,15 @@ async fn test_typescript_declaration_generation() {
         .expect("load BAML runtime from fixture");
     let ir_signature = extract_baml_signatures(&runtime).expect("extract IR signatures");
     let tool_names = load_manifest_tools(&baml_src).expect("load manifest tools");
+    let tool_metadata = resolve_manifest_tools(&tool_names).expect("resolve fixture tools");
+    let tool_schema_graph =
+        ToolSchemaGraph::from_tools(&tool_metadata).expect("lower fixture tool schemas");
 
     let session_plan_map = session_plan_functions_map(&ir_signature);
     let ts_output = render_ts_declarations(
         &ir_signature,
-        &tool_names,
+        &tool_metadata,
+        &tool_schema_graph,
         &session_plan_map,
         &Default::default(),
     )

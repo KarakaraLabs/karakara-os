@@ -425,7 +425,9 @@ When QuickJS calls a BAML function via the bridge, a return value that parses as
 
 ### 3.8 Imperative option — `openToolSession`
 
-Generated `**baml-runtime.d.ts`** declares `**openToolSession(toolName, openInput?)**` returning a handle with `**send**`, `**continue**` (passes input to the host read hop — model emits **SearchRead** or **PageRead** steps), `**finish`**, `**abort**`. Use this when you own the loop (e.g. parsing `**plan_steps**` from a coordinator). Reference: [session-tool-eval](../tests/fixtures/agents/session-tool-eval/src/index.ts), [coordinator-smoke](../tests/fixtures/agents/coordinator-smoke/src/index.ts).
+Generated `**baml-runtime.d.ts**` owns `openToolSession` for every tool in the manifest. Do **not** add a local `declare function openToolSession` shim: the generated global is typed from the tool schema graph. Its signature is generic over `ToolName`, so the compiler rejects tool names outside the allowlist and rejects a missing Open input when the tool schema requires one. Absent Open input is omitted; optional Open input stays optional.
+
+The handle exposes `sessionId`, `phase()`, `send(input)`, `continue(readInput?)`, `finish()`, and `abort(reason?)`. `continue` returns a `ToolStep` discriminated by `status`: `streaming`, `suspended`, `done` (`output: O | null`), or `error` (`error: ToolFailure`). Use this when you own the loop (e.g. parsing `**plan_steps**` from a coordinator). References: [coordinator-smoke](../tests/fixtures/agents/coordinator-smoke/src/index.ts), [slack-smoke-tool](../tests/fixtures/agents/slack-smoke-tool/src/index.ts), [dispatch-echo](../tests/fixtures/agents/dispatch-echo/src/index.ts), and the mixed-origin authority fixture [mixed-origin-tools](../tests/fixtures/mixed-origin-tools/src/index.ts).
 
 ### 3.9 Coordinator "product" plans vs executable session JSON
 

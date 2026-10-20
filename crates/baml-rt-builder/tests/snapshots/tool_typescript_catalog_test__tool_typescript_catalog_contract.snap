@@ -1,0 +1,88 @@
+---
+source: crates/baml-rt-builder/tests/tool_typescript_catalog_test.rs
+expression: catalog.trim_end()
+---
+
+
+export type ToolName =
+  | "external/typed"
+  | "matrix/absent"
+  | "matrix/optional"
+  | "matrix/required"
+  | "mcp/opaque"
+  | "mcp/typed";
+
+export interface ToolInputMap {
+  "external/typed": ExternalTypedInput;
+  "matrix/absent": MatrixAbsentInput;
+  "matrix/optional": MatrixOptionalInput;
+  "matrix/required": MatrixRequiredInput;
+  "mcp/opaque": McpOpaqueInput;
+  "mcp/typed": McpTypedInput;
+}
+
+export interface ToolOutputMap {
+  "external/typed": ExternalTypedOutput;
+  "matrix/absent": MatrixAbsentOutput;
+  "matrix/optional": MatrixOptionalOutput;
+  "matrix/required": MatrixRequiredOutput;
+  "mcp/opaque": McpOpaqueOutput;
+  "mcp/typed": McpTypedOutput;
+}
+
+export interface ToolOpenInputMap {
+  "external/typed": Record<string, never>;
+  "matrix/absent": Record<string, never>;
+  "matrix/optional": MatrixOptionalOpenInput;
+  "matrix/required": MatrixRequiredOpenInput;
+  "mcp/opaque": Record<string, never>;
+  "mcp/typed": Record<string, never>;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput =
+  | "matrix/required";
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
+}

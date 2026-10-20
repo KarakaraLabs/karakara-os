@@ -6,6 +6,29 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
+export interface AgentCardDto {
+  name: string;
+  version: string;
+  contentHash?: string | null;
+  repositoryVersion?: number | null;
+  agentPackage: string;
+  agentInstanceId: string;
+  tools: string[];
+  description?: string | null;
+  capabilities: string[];
+  tags?: string[];
+  subscriptions?: AgentEventSubscriptionDto[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface AgentEventSubscriptionDto {
+  schemaVersions?: string[];
+  sourceKinds?: string[];
+  sourceKeys?: string[];
+  sourceKeyPrefixes?: string[];
+  [key: string]: JsonValue | undefined;
+}
+
 export interface ArchivePageReadInput { archive_ref: string;
 offset: number | null;
 limit: number | null;
@@ -17,7 +40,109 @@ offset: number | null;
 limit: number | null;
  }
 
-export type BlockRenderMode = "Raw" | "Enriched";
+export type BlockRenderMode = "raw" | "enriched";
+
+export interface ConversationChunk {
+  message?: ConversationMessage | null;
+  task?: string | null;
+  statusUpdate?: string | null;
+  artifactUpdate?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ConversationMessage {
+  role?: string | null;
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ConversationPart {
+  text?: string | null;
+  raw?: string | null;
+  url?: string | null;
+  filename?: string | null;
+  mediaType?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsNextOutput {
+  agents: AgentCardDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsSendInput {
+  query?: string | null;
+  requiredCapabilities?: string[] | null;
+  requiredSchemaVersions?: string[] | null;
+  requiredSourceKinds?: string[] | null;
+  limit?: number | null;
+  offset?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsNextOutput {
+  tools: ToolDiscoveryRecordDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsSendInput {
+  query?: string | null;
+  limit?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
+
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
+
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type InternalA2aCompletion = "DONE" | "INPUT_REQUIRED" | "FAILED";
+
+export interface InternalA2aNextOutput {
+  chunks: ConversationChunk[];
+  completion?: InternalA2aCompletion | null;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aOpenInput {
+  target: InternalA2aTarget;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aSendInput {
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aTarget {
+  agent_package: string;
+  agent_instance_id: string;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface NeedClarification { kind: "clarify";
 question: string;
@@ -27,19 +152,49 @@ export interface NotRelevant { kind: "not_relevant";
 reason: string;
  }
 
-export interface NotionGetPageBlocksInput { block_id: string;
-start_cursor: string | null;
-page_size: number | null;
-raw_blocks: BlockRenderMode | null;
-max_depth: number | null;
- }
+export interface NotionBlockSummary {
+  id: string;
+  block_type: string;
+  text?: string | null;
+  has_children: boolean;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface NotionGetPageInput { page_id: string;
- }
+export interface NotionGetPageBlocksInput {
+  block_id: string;
+  start_cursor?: string | null;
+  page_size?: number | null;
+  raw_blocks?: BlockRenderMode | null;
+  max_depth?: number | null;
+}
+
+export interface NotionGetPageInput {
+  page_id: string;
+}
+
+export type NotionInput = NotionSearchPagesInput | NotionGetPageInput | NotionGetPageBlocksInput;
 
 export interface NotionIntent { kind: "intent";
 intent: string;
  }
+
+export interface NotionOutput {
+  pages?: NotionPageSummary[];
+  blocks?: NotionBlockSummary[];
+  next_cursor?: string | null;
+  has_more: boolean;
+  sources?: NotionSource[];
+  message: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface NotionPageSummary {
+  id: string;
+  title: string;
+  url: string;
+  last_edited_time?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface NotionPlan { goal: string;
 steps: NotionPlanStep[];
@@ -50,10 +205,17 @@ description: string;
 kind: "discover" | "read" | "synthesize";
  }
 
-export interface NotionSearchPagesInput { query: string | null;
-start_cursor: string | null;
-page_size: number | null;
- }
+export interface NotionSearchPagesInput {
+  query?: string | null;
+  start_cursor?: string | null;
+  page_size?: number | null;
+}
+
+export interface NotionSource {
+  page_id: string;
+  url: string;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface NotionSummary { commitments: string[];
 conflicts: string[];
@@ -88,6 +250,16 @@ citations: string[];
 export interface SupportNotionSessionPlan { step: SupportNotionOpenStep | SupportNotionSendStep | SupportNotionSearchReadStep | SupportNotionPageReadStep | SupportNotionFinishStep | SupportNotionAbortStep;
 citations: string[];
  }
+
+export interface ToolDiscoveryRecordDto {
+  name: string;
+  bundle: string;
+  description: string;
+  tags: string[];
+  eventSources?: string[];
+  [key: string]: JsonValue | undefined;
+}
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -453,6 +625,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -464,6 +641,87 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "support/notion"
+  | "system/discover_agents"
+  | "system/discover_tools"
+  | "system/internal_a2a";
+
+export interface ToolInputMap {
+  "support/notion": NotionInput;
+  "system/discover_agents": DiscoverAgentsSendInput;
+  "system/discover_tools": DiscoverToolsSendInput;
+  "system/internal_a2a": InternalA2aSendInput;
+}
+
+export interface ToolOutputMap {
+  "support/notion": NotionOutput;
+  "system/discover_agents": DiscoverAgentsNextOutput;
+  "system/discover_tools": DiscoverToolsNextOutput;
+  "system/internal_a2a": InternalA2aNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "support/notion": Record<string, never>;
+  "system/discover_agents": DiscoverAgentsOpenInput;
+  "system/discover_tools": DiscoverToolsOpenInput;
+  "system/internal_a2a": InternalA2aOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput =
+  | "system/internal_a2a";
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -505,12 +763,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

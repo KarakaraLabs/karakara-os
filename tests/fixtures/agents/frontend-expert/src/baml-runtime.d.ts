@@ -21,6 +21,8 @@ offset: number | null;
 limit: number | null;
  }
 
+export type ClaudeCompletion = "DONE" | "INPUT_REQUIRED" | "INTERRUPTED";
+
 export interface ClaudeDevAbortStep { op: "Abort";
  }
 
@@ -58,25 +60,95 @@ export interface ClaudeDevSessionPlan { step: ClaudeDevOpenStep | ClaudeDevSendS
 citations: string[];
  }
 
-export interface ClaudeToolOpenInput { workspace: string | null;
- }
+export interface ClaudeToolNextOutput {
+  events: (ClaudeToolNextOutputEventsAlt0 | ClaudeToolNextOutputEventsAlt1 | ClaudeToolNextOutputEventsAlt2 | ClaudeToolNextOutputEventsAlt3 | ClaudeToolNextOutputEventsAlt4 | ClaudeToolNextOutputEventsAlt5 | ClaudeToolNextOutputEventsAlt6)[];
+  completion?: ClaudeCompletion | null;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ClaudeToolSendInput { prompt: string | null;
-content: ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[] | null;
- }
+export interface ClaudeToolNextOutputEventsAlt0 {
+  kind: "assistant_text";
+  text: string;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ClaudeToolSendInputContentAlt0 { kind: "text";
-text: string;
- }
+export interface ClaudeToolNextOutputEventsAlt1 {
+  kind: "assistant_thinking";
+  thinking: string;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ClaudeToolSendInputContentAlt1 { kind: "image_url";
-url: string;
- }
+export interface ClaudeToolNextOutputEventsAlt2 {
+  kind: "assistant_tool_use";
+  id: string;
+  name: string;
+  input: string;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ClaudeToolSendInputContentAlt2 { kind: "image_base64";
-media_type: string;
-data: string;
- }
+export interface ClaudeToolNextOutputEventsAlt3 {
+  kind: "assistant_tool_result";
+  tool_use_id: string;
+  content?: string;
+  is_error?: boolean;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolNextOutputEventsAlt4 {
+  kind: "system_notice";
+  subtype: string;
+  cwd: string;
+  model: string;
+  data?: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolNextOutputEventsAlt5 {
+  kind: "stream_event_raw";
+  event: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolNextOutputEventsAlt6 {
+  kind: "terminal_result";
+  subtype: string;
+  is_error: boolean;
+  num_turns: number;
+  total_cost_usd?: number;
+  result?: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolOpenInput {
+  workspace?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolSendInput {
+  prompt?: string | null;
+  content?: ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[] | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolSendInputContentAlt0 {
+  kind: "text";
+  text: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolSendInputContentAlt1 {
+  kind: "image_url";
+  url: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClaudeToolSendInputContentAlt2 {
+  kind: "image_base64";
+  media_type: string;
+  data: string;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface CodeProposal { file_path: string;
 change_type: string;
@@ -91,6 +163,20 @@ impact_assessment: string;
 accessibility_notes: string | null;
  }
 
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
+
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
+
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface SessionContext { contract_version: string;
 session_open: boolean;
 status: string;
@@ -101,6 +187,7 @@ last_output_header: string | null;
 last_completion: string | null;
 archives: ArchiveLedgerEntry[] | null;
  }
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -462,6 +549,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -473,6 +565,74 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "claude/dev";
+
+export interface ToolInputMap {
+  "claude/dev": ClaudeToolSendInput;
+}
+
+export interface ToolOutputMap {
+  "claude/dev": ClaudeToolNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "claude/dev": ClaudeToolOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput = never;
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -514,12 +674,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

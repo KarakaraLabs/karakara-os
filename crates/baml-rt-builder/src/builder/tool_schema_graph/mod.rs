@@ -16,6 +16,7 @@ mod cycles;
 pub mod diagnostics;
 pub mod lower;
 pub mod names;
+pub mod typescript;
 
 use std::collections::{BTreeMap, BTreeSet};
 
