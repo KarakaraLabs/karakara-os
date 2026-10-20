@@ -30,14 +30,20 @@ use serde_json::Value;
 ///   choose `properties` keys;
 /// - `Option<T>` and `#[serde(default)]` fields are omitted from `required`;
 /// - `#[serde(deny_unknown_fields)]` emits `"additionalProperties": false`;
-/// - `#[serde(skip)]` / `#[serde(skip_deserializing)]` remove a field from `properties`;
+/// - `#[serde(skip)]` / `#[serde(skip_deserializing)]` remove a field or unit-enum variant
+///   from the input schema;
 /// - unit enum wire values follow `#[serde(rename)]` / `#[serde(rename_all)]`.
+///
+/// `#[serde(skip_serializing)]` does not remove anything from this schema: the variant or
+/// field is still accepted on input, which is the direction the generated document describes.
 ///
 /// `#[serde(alias = "...")]` spellings stay accepted by serde but are not enumerated in
 /// the schema. The schema lists the canonical wire spelling, which is also what generated
 /// BAML emits, so the model never sees a spelling the constrained decoder will not produce.
 ///
-/// `#[baml(skip)]` suppresses a field from the schema `properties` entirely.
+/// `#[baml(skip)]` suppresses a field or variant from the schema, BAML, and TypeScript output
+/// even when serde still accepts it. Use it to hide an internal value from the model-facing
+/// surface; add `#[serde(skip)]` when the value should not be on the wire at all.
 /// User-defined types appearing as field types must themselves implement
 /// `JsonSchemaType` (guaranteed when they also derive `BamlType`).
 ///

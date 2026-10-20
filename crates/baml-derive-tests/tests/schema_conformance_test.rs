@@ -7,11 +7,13 @@
 //! Each fixture is serialized, then validated against `root_json_schema::<T>()`
 //! (the same document `json_schema_value::<T>()` produces). The matrix covers the
 //! supported serde inputs from the tool-schema-graph plan: `rename_all`, field
-//! `rename`, `Option`/`default` omission, `deny_unknown_fields`, enum wire values,
+//! `rename`, `Option`/`default` omission, `deny_unknown_fields`, enum wire values and skips,
 //! and an `anyOf` union.
 
 use baml_derive::BamlType;
-use baml_derive_core::{JsonSchemaType, root_json_schema};
+use baml_derive_core::{
+    BamlType as BamlTypeTrait, JsonSchemaType, TsType as TsTypeTrait, root_json_schema,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -35,6 +37,18 @@ struct ConformanceRequest {
 enum ConformanceKind {
     FastPath,
     SlowPath,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+#[serde(rename_all = "snake_case")]
+enum ConformanceSkippedVariant {
+    Public,
+    #[serde(skip)]
+    Hidden,
+    #[serde(skip_deserializing)]
+    OutputOnly,
+    #[serde(skip_serializing)]
+    InputOnly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
@@ -194,5 +208,59 @@ fn static_dto_schema_conformance_matrix() {
             .as_array()
             .is_some_and(|arms| arms.len() == 2),
         "union schema is an anyOf over its variants"
+    );
+}
+
+#[test]
+fn serde_skipped_variants_follow_the_input_contract() {
+    let schema = root_json_schema::<ConformanceSkippedVariant>();
+    assert_eq!(
+        schema["enum"],
+        json!(["public", "input_only"]),
+        "serde input skips are absent; skip_serializing variants remain valid input"
+    );
+
+    let validator = compiled::<ConformanceSkippedVariant>();
+    assert!(validator.validate(&json!("public")).is_ok());
+    assert!(validator.validate(&json!("input_only")).is_ok());
+    assert_wire_and_schema(
+        "public enum variant",
+        &ConformanceSkippedVariant::Public,
+        json!("public"),
+    );
+
+    for rejected in ["hidden", "output_only"] {
+        assert!(
+            validator.validate(&json!(rejected)).is_err(),
+            "`{rejected}` must not validate: serde rejects it on input"
+        );
+        assert!(
+            serde_json::from_value::<ConformanceSkippedVariant>(json!(rejected)).is_err(),
+            "serde must reject `{rejected}` on input"
+        );
+    }
+
+    let input_only = serde_json::from_value::<ConformanceSkippedVariant>(json!("input_only"))
+        .expect("skip_serializing variants remain valid input");
+    assert!(matches!(input_only, ConformanceSkippedVariant::InputOnly));
+    assert!(
+        serde_json::to_value(ConformanceSkippedVariant::OutputOnly).is_ok(),
+        "skip_deserializing variants remain serializable"
+    );
+    assert!(
+        serde_json::to_value(ConformanceSkippedVariant::Hidden).is_err(),
+        "skip variants cannot be serialized either"
+    );
+
+    let baml = ConformanceSkippedVariant::baml_decl();
+    assert!(baml.contains("Public"));
+    assert!(baml.contains("InputOnly"));
+    assert!(!baml.contains("Hidden"));
+    assert!(!baml.contains("OutputOnly"));
+
+    let ts = ConformanceSkippedVariant::ts_decl().expect("unit enum has a TypeScript declaration");
+    assert_eq!(
+        ts,
+        "export type ConformanceSkippedVariant = \"public\" | \"input_only\";"
     );
 }

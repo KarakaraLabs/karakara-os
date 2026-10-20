@@ -16,7 +16,7 @@ use syn::{DataEnum, DataStruct, DeriveInput, Fields, Type};
 use crate::{
     attrs::{
         extract_doc_comment, parse_container_attrs, parse_field_attrs, parse_serde_container_wire,
-        parse_serde_field_wire, parse_serde_variant_rename, parse_variant_attrs,
+        parse_serde_field_wire, parse_serde_variant_wire, parse_variant_attrs,
         serde_rename_all_field, serde_rename_all_variant,
     },
     resolve::{resolve_type_tokens, resolve_type_tokens_for_vec_or_one_field},
@@ -364,7 +364,8 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
     let serde_rename_all = serde_wire.rename_all;
 
     let mut variant_tokens = Vec::new();
-    // Wire JSON strings for non-skipped variants (respects serde rename / rename_all).
+    // Wire JSON strings for variants that are both exposed by BAML and accepted on input
+    // (respects serde rename / rename_all / skip).
     let mut ts_wire_strings: Vec<String> = Vec::new();
 
     for variant in &data.variants {
@@ -377,8 +378,9 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         }
 
         let variant_attrs = parse_variant_attrs(&variant.attrs)?;
+        let serde_variant_wire = parse_serde_variant_wire(&variant.attrs)?;
         let variant_name_str = variant.ident.to_string();
-        let serde_variant_wire = parse_serde_variant_rename(&variant.attrs).unwrap_or_else(|| {
+        let serde_variant_name = serde_variant_wire.rename.clone().unwrap_or_else(|| {
             serde_rename_all
                 .as_deref()
                 .map(|rule| serde_rename_all_variant(&variant_name_str, rule))
@@ -389,7 +391,7 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         let wire_repr = variant_attrs
             .alias
             .clone()
-            .unwrap_or_else(|| serde_variant_wire.clone());
+            .unwrap_or_else(|| serde_variant_name.clone());
         let effective_alias = if wire_repr != variant_name_str {
             Some(wire_repr.clone())
         } else {
@@ -397,7 +399,11 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> Result<TokenStream, syn:
         };
         let alias_tokens = option_str_tokens(&effective_alias);
         let desc_tokens = option_str_tokens(&variant_attrs.description);
-        let skip = variant_attrs.skip;
+        // `#[baml(skip)]` hides a variant from the generated surface. Serde input skips
+        // must hide it too: a schema that lists a value serde rejects is a broken tool
+        // contract. `#[serde(skip_serializing)]` is intentionally not included here; it
+        // still accepts the variant on input, which is the direction this schema describes.
+        let skip = variant_attrs.skip || serde_variant_wire.skip;
 
         if !skip {
             ts_wire_strings.push(wire_repr);

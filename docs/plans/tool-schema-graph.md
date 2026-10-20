@@ -524,6 +524,12 @@ For named structs deriving `BamlType`, generated JSON Schema must honor the serd
 
 For enums and unions, preserve the current wire values from serde rename rules and add a stable `title` for named schemas. Structs already include a title; unit enums and union schemas should do the same.
 
+Treat BAML and serde skips as different controls, not alternatives. `#[serde(skip)]` and
+`#[serde(skip_deserializing)]` describe the wire and must remove a field or unit-enum variant from
+the input schema. `#[baml(skip)]` controls model exposure and removes the declaration from BAML,
+TypeScript, and the schema even when serde still accepts it. `#[serde(skip_serializing)]` leaves
+input capability intact, so it stays in the input schema.
+
 ### Unsupported serde forms
 
 Inventory static tool DTOs for:

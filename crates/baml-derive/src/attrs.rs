@@ -75,6 +75,16 @@ pub(crate) struct SerdeFieldWire {
     pub asymmetric_rename: bool,
 }
 
+/// Variant-level `#[serde(...)]` attributes that change the JSON wire shape.
+#[derive(Debug, Default)]
+pub(crate) struct SerdeVariantWire {
+    /// Input wire name from `#[serde(rename = "...")]` or the deserialize side of a
+    /// symmetric split rename.
+    pub rename: Option<String>,
+    /// `#[serde(skip)]` or `#[serde(skip_deserializing)]` removes the variant from input.
+    pub skip: bool,
+}
+
 /// Variant-level attributes from `#[baml(...)]`.
 #[derive(Debug, Default)]
 pub(crate) struct VariantAttrs {
@@ -221,25 +231,6 @@ fn parse_string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Stri
     let value = meta.value()?;
     let lit: syn::LitStr = value.parse()?;
     Ok(lit.value())
-}
-
-fn parse_serde_nested_string(attrs: &[Attribute], key: &str) -> Option<String> {
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let mut found: Option<String> = None;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident(key) {
-                found = Some(parse_string_value(&meta)?);
-            }
-            Ok(())
-        });
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
 }
 
 /// Parse container-level `#[serde(...)]` attributes that affect the generated schema.
@@ -401,9 +392,44 @@ fn consume_unrecognized(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()
     Ok(())
 }
 
-/// `#[serde(rename = "...")]` on a unit enum variant.
-pub(crate) fn parse_serde_variant_rename(attrs: &[Attribute]) -> Option<String> {
-    parse_serde_nested_string(attrs, "rename")
+/// Parse variant-level `#[serde(...)]` attributes that affect the generated schema.
+pub(crate) fn parse_serde_variant_wire(attrs: &[Attribute]) -> syn::Result<SerdeVariantWire> {
+    let mut result = SerdeVariantWire::default();
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                if meta.input.peek(syn::token::Paren) {
+                    let (rename, asymmetric) = parse_split_rename(&meta)?;
+                    if asymmetric {
+                        return Err(meta.error(
+                            "asymmetric serde variant renames cannot be represented by one JsonSchemaType; implement JsonSchemaType manually",
+                        ));
+                    }
+                    result.rename = rename;
+                } else {
+                    result.rename = Some(parse_string_value(&meta)?);
+                }
+                return Ok(());
+            }
+            if meta.path.is_ident("alias") {
+                // Alias spellings stay accepted by serde but are not enumerated in the
+                // schema; the schema lists the canonical wire name. Consume and continue.
+                let _ = parse_string_value(&meta)?;
+                return Ok(());
+            }
+            if meta.path.is_ident("skip") || meta.path.is_ident("skip_deserializing") {
+                result.skip = true;
+                return Ok(());
+            }
+            consume_unrecognized(&meta)
+        })?;
+    }
+
+    Ok(result)
 }
 
 /// Apply Serde's `rename_all` rules to a snake_case Rust struct field identifier.
@@ -480,7 +506,7 @@ fn to_snake_case(ident: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_serde_container_wire;
+    use super::{parse_serde_container_wire, parse_serde_variant_wire};
 
     #[test]
     fn rejects_asymmetric_container_rename_all() {
@@ -498,5 +524,52 @@ mod tests {
         );
         let parsed = parse_serde_container_wire(&[attr]).expect("symmetric rename_all");
         assert_eq!(parsed.rename_all.as_deref(), Some("camelCase"));
+    }
+
+    #[test]
+    fn rejects_asymmetric_variant_rename() {
+        let attrs: [syn::Attribute; 3] = [
+            syn::parse_quote!(#[serde(rename(serialize = "out", deserialize = "in"))]),
+            syn::parse_quote!(#[serde(rename(serialize = "out"))]),
+            syn::parse_quote!(#[serde(rename(deserialize = "in"))]),
+        ];
+        for attr in attrs {
+            let error = parse_serde_variant_wire(&[attr]).expect_err("asymmetric variant rename");
+            assert!(
+                error
+                    .to_string()
+                    .contains("asymmetric serde variant renames"),
+                "unexpected diagnostic: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_symmetric_variant_rename() {
+        let attr: syn::Attribute = syn::parse_quote!(
+            #[serde(rename(serialize = "same", deserialize = "same"))]
+        );
+        let parsed = parse_serde_variant_wire(&[attr]).expect("symmetric variant rename");
+        assert_eq!(parsed.rename.as_deref(), Some("same"));
+    }
+
+    #[test]
+    fn parses_variant_input_skips() {
+        let skip: syn::Attribute = syn::parse_quote!(#[serde(skip)]);
+        let skip_deserializing: syn::Attribute = syn::parse_quote!(#[serde(skip_deserializing)]);
+        let skip_serializing: syn::Attribute = syn::parse_quote!(#[serde(skip_serializing)]);
+
+        assert!(parse_serde_variant_wire(&[skip]).expect("skip").skip);
+        assert!(
+            parse_serde_variant_wire(&[skip_deserializing])
+                .expect("skip_deserializing")
+                .skip
+        );
+        assert!(
+            !parse_serde_variant_wire(&[skip_serializing])
+                .expect("skip_serializing")
+                .skip,
+            "skip_serializing variants remain valid input"
+        );
     }
 }
