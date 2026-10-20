@@ -57,6 +57,7 @@ pub const RUNTIME_TYPESCRIPT_SYMBOLS: &[&str] = &[
     "DispatchRunContext",
     "DispatchSession",
     "BamlAgent",
+    "ErrorDisposition",
     "ToolFailureKind",
     "ToolFailure",
 ];
@@ -478,6 +479,12 @@ declare global {
     tokens.line();
 
     quote_in!(tokens =>
+        export type ErrorDisposition =
+            | "host_retriable"
+            | "llm_correctable"
+            | "inform_and_continue"
+            | "fatal";
+
         export type ToolFailureKind =
             | "InvalidInput"
             | "ExecutionFailed"
@@ -490,6 +497,10 @@ declare global {
             kind: ToolFailureKind;
             message: string;
             retryable: boolean;
+            disposition: ErrorDisposition;
+            code: string;
+            hint: string | null;
+            retry_after_ms: number | null;
         }
     );
     tokens.line();

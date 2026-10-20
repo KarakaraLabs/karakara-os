@@ -11,8 +11,10 @@ use std::collections::HashMap;
 
 use baml_rt_builder::builder::{
     baml_signature_gen::{extract_baml_signatures, session_plan_functions_map},
+    tool_schema_graph::ToolSchemaGraph,
     ts_gen::{load_manifest_tools, render_ts_declarations},
 };
+use baml_rt_tools::tool_catalog::resolve_manifest_tools;
 use baml_runtime::BamlRuntime;
 use internal_baml_core::feature_flags::FeatureFlags;
 
@@ -47,10 +49,15 @@ fn generate_ts_from_fixture(fixture_name: &str) -> Result<String, Box<dyn std::e
         extract_baml_signatures(&runtime).map_err(|e| format!("extract_baml_signatures: {}", e))?;
     let tool_names =
         load_manifest_tools(&baml_src).map_err(|e| format!("load_manifest_tools: {}", e))?;
+    let tool_metadata = resolve_manifest_tools(&tool_names)
+        .map_err(|e| format!("resolve_manifest_tools: {}", e))?;
+    let tool_schema_graph = ToolSchemaGraph::from_tools(&tool_metadata)
+        .map_err(|e| format!("lower tool schemas: {}", e))?;
     let session_plan_map = session_plan_functions_map(&ir_signature);
     let ts = render_ts_declarations(
         &ir_signature,
-        &tool_names,
+        &tool_metadata,
+        &tool_schema_graph,
         &session_plan_map,
         &Default::default(),
     )
