@@ -7,13 +7,16 @@
 //! Semantics aligned with upstream BoundaryML TS generator: primitives, optional
 //! as T | null, unions, classes, enums, lists, maps. No BAML source parsing.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use baml_types::ir_type::{LiteralValue, TypeNonStreaming, TypeValue, UnionTypeViewGeneric};
 use genco::{lang::js, prelude::*};
 use internal_baml_core::ir::ir_hasher::IRSignature;
 
-use crate::builder::error::{BamlBuilderError, Result};
+use crate::builder::{
+    error::{BamlBuilderError, Result},
+    ts_declarations::{TsDeclaration, TsDeclarationOrigin},
+};
 
 /// Result of mapping one IR type: TS type expression and any type names that must be declared.
 #[derive(Debug, Clone)]
@@ -115,28 +118,19 @@ pub fn collect_type_decl_deps(frag: &TsTypeFrag) -> HashSet<String> {
     frag.deps.iter().cloned().collect()
 }
 
-/// Types defined in the bootstrap `render_tool_typescript` block (`baml_rt_tools::ts_gen`).
-/// BAML IR also contains copies from `_baml_runtime.baml`; emitting both breaks TS (duplicate
-/// `StructuredReply` and wrong `ReplyPart[]` precedence as `TextPart | DataPart[]`).
-const BOOTSTRAP_TS_RUNTIME_TYPES: &[&str] = &[
-    "StructuredReply",
-    "TextPart",
-    "DataPart",
-    "ReplyPart",
-    "ReplyMediaType",
-];
-
-/// Emit TypeScript type declarations (interfaces, enums, type aliases) for the given set of type names.
+/// Collect structured TypeScript declarations for the given set of type names.
 ///
 /// Transitively closes over:
 /// - **class** fields (nested classes, enums, aliases in field types)
 /// - **type alias** bodies (`type A = B | C` pulls in `B`, `C`, and their fields)
 ///
-/// so TS never references a BAML class/enum/alias name without a matching `export`.
-pub fn emit_type_declarations_tokens(
+/// so TS never references a BAML class/enum/alias name without a matching `export`. Runtime-owned
+/// symbols are returned too; [`crate::builder::ts_declarations::TsDeclarationRegistry`] owns their
+/// suppression.
+pub fn collect_ir_type_declarations(
     ir: &IRSignature,
     needed: &HashSet<String>,
-) -> Result<js::Tokens> {
+) -> Result<Vec<TsDeclaration>> {
     let mut all_needed = needed.clone();
     let mut worklist: Vec<String> = needed.iter().cloned().collect();
     while let Some(name) = worklist.pop() {
@@ -162,43 +156,102 @@ pub fn emit_type_declarations_tokens(
     }
     let mut names: Vec<&String> = all_needed.iter().collect();
     names.sort();
-    let mut out: js::Tokens = quote!();
+    let mut declarations = Vec::with_capacity(names.len());
     for name in names {
-        if BOOTSTRAP_TS_RUNTIME_TYPES.contains(&name.as_str()) {
+        if let Some(declaration) = ir_type_declaration(ir, name)? {
+            declarations.push(declaration);
+        }
+    }
+    Ok(declarations)
+}
+
+fn ir_type_declaration(ir: &IRSignature, name: &str) -> Result<Option<TsDeclaration>> {
+    if let Some((_, class_details)) = ir.classes.get(name) {
+        let mut fields: js::Tokens = quote!();
+        let mut dependencies = BTreeSet::new();
+        for (fname, fty) in class_details.fields.iter() {
+            let frag = type_to_ts_expr(fty.as_ref(), ir)?;
+            dependencies.extend(frag.deps);
+            let type_expr = frag.expr.as_str();
+            quote_in!(fields => $(fname): $(type_expr););
+            fields.push();
+        }
+        let mut tokens: js::Tokens = quote!();
+        quote_in!(tokens => export interface $(name) { $(fields) });
+        Ok(Some(TsDeclaration {
+            symbol: name.to_string(),
+            body: render_tokens(tokens)?,
+            dependencies,
+            origin: TsDeclarationOrigin::BamlIr,
+        }))
+    } else if let Some((_, enum_details)) = ir.enums.get(name) {
+        let variants: Vec<String> = enum_details
+            .values
+            .iter()
+            .map(|v| {
+                let escaped = v.replace('\\', "\\\\").replace('\"', "\\\"");
+                format!("\"{escaped}\"")
+            })
+            .collect();
+        let union_expr = variants.join(" | ");
+        Ok(Some(TsDeclaration {
+            symbol: name.to_string(),
+            body: format!("export type {name} = {union_expr};"),
+            dependencies: BTreeSet::new(),
+            origin: TsDeclarationOrigin::BamlIr,
+        }))
+    } else if let Some(type_node) = ir.type_aliases.get(name) {
+        let (type_expr, dependencies) = if name == "OpaqueJson" {
+            ("JsonValue".to_string(), BTreeSet::new())
+        } else {
+            let frag = type_to_ts_expr(type_node.field_type.as_ref(), ir)?;
+            (frag.expr, frag.deps.into_iter().collect())
+        };
+        Ok(Some(TsDeclaration {
+            symbol: name.to_string(),
+            body: format!("export type {name} = {type_expr};"),
+            dependencies,
+            origin: TsDeclarationOrigin::BamlIr,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn render_tokens(tokens: js::Tokens) -> Result<String> {
+    tokens
+        .to_file_string()
+        .map(|rendered| rendered.trim_end().to_string())
+        .map_err(|error| {
+            BamlBuilderError::InvalidArgument(format!("TypeScript render error: {error}"))
+        })
+}
+
+/// Emit TypeScript type declarations (interfaces, enums, type aliases) for the given set of type names.
+///
+/// Compatibility renderer for callers that still want one token stream. Symbols owned by the static
+/// runtime block are skipped because [`render_runtime_typescript`](baml_rt_tools::ts_gen::render_runtime_typescript)
+/// emits them.
+pub fn emit_type_declarations_tokens(
+    ir: &IRSignature,
+    needed: &HashSet<String>,
+) -> Result<js::Tokens> {
+    let declarations = collect_ir_type_declarations(ir, needed)?;
+    let runtime_symbols: HashSet<&str> = baml_rt_tools::ts_gen::runtime_typescript_symbols()
+        .iter()
+        .copied()
+        .collect();
+
+    let mut out: js::Tokens = quote!();
+    for declaration in declarations {
+        if runtime_symbols.contains(declaration.symbol.as_str()) {
             continue;
         }
-        if let Some((_, class_details)) = ir.classes.get(name) {
-            let mut fields: js::Tokens = quote!();
-            for (fname, fty) in class_details.fields.iter() {
-                let frag = type_to_ts_expr(fty.as_ref(), ir)?;
-                let type_expr = frag.expr.as_str();
-                quote_in!(fields => $(fname): $(type_expr););
-                fields.push();
-            }
-            quote_in!(out => export interface $(name) { $(fields) });
-            out.line();
-        } else if let Some((_, enum_details)) = ir.enums.get(name) {
-            let variants: Vec<String> = enum_details
-                .values
-                .iter()
-                .map(|v| {
-                    let escaped = v.replace('\\', "\\\\").replace('\"', "\\\"");
-                    format!("\"{escaped}\"")
-                })
-                .collect();
-            let union_expr = variants.join(" | ");
-            quote_in!(out => export type $(name) = $(union_expr););
-            out.line();
-        } else if let Some(type_node) = ir.type_aliases.get(name) {
-            let type_expr = if name == "OpaqueJson" {
-                "JsonValue".to_string()
-            } else {
-                let frag = type_to_ts_expr(type_node.field_type.as_ref(), ir)?;
-                frag.expr
-            };
-            quote_in!(out => export type $(name) = $(type_expr););
-            out.line();
+        for line in declaration.body.lines() {
+            quote_in!(out => $(line));
+            out.push();
         }
+        out.line();
     }
     Ok(out)
 }

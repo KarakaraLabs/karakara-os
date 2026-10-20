@@ -7,7 +7,75 @@ use genco::{lang::js, prelude::*};
 
 use crate::tools::ToolFunctionMetadata;
 
+/// Every symbol exported by [`render_runtime_typescript`].
+///
+/// The builder reserves these symbols before merging graph and BAML IR declarations, so a tool DTO
+/// cannot silently shadow a runtime-owned type. Keep this inventory next to the block it describes.
+pub const RUNTIME_TYPESCRIPT_SYMBOLS: &[&str] = &[
+    "A2aTaskState",
+    "A2aNonTerminalTaskState",
+    "A2aTerminalTaskState",
+    "A2aNextStates",
+    "A2aTaskContext",
+    "A2aTaskView",
+    "A2aActiveTask",
+    "A2aTerminalTask",
+    "A2aStateDispatcher",
+    "JsonPrimitive",
+    "JsonObject",
+    "JsonArray",
+    "JsonValue",
+    "YieldChunk",
+    "A2aMessageEvent",
+    "A2aSessionAwaitingInput",
+    "A2aSessionStreaming",
+    "A2aSessionClosed",
+    "IntentSubmission",
+    "PlanStepSubmission",
+    "PlanSubmission",
+    "A2aExecutionSessionAwaitIntent",
+    "A2aExecutionSessionAwaitPlan",
+    "A2aExecutionSessionExecutable",
+    "Part",
+    "Message",
+    "ChatMessage",
+    "ReplyMediaType",
+    "TextPart",
+    "DataPart",
+    "ReplyPart",
+    "StructuredReply",
+    "SessionResult",
+    "SessionEmitter",
+    "SessionBuilder",
+    "RunContext",
+    "HostDispatchRequest",
+    "HostDispatchAck",
+    "HostSourceRecordsBatch",
+    "DispatchScopeIds",
+    "DispatchWorkUnit",
+    "DispatchUnitContext",
+    "DispatchRunContext",
+    "DispatchSession",
+    "BamlAgent",
+    "ToolFailureKind",
+    "ToolFailure",
+];
+
+/// Symbols exported by the static runtime TypeScript block.
+pub fn runtime_typescript_symbols() -> &'static [&'static str] {
+    RUNTIME_TYPESCRIPT_SYMBOLS
+}
+
+/// Compatibility wrapper for callers that still pass tool metadata.
+///
+/// Tool DTOs are rendered from `ToolSchemaGraph`, so the parameter is ignored.
 pub fn render_tool_typescript(tools: &[ToolFunctionMetadata]) -> Result<String> {
+    let _ = tools;
+    render_runtime_typescript()
+}
+
+/// Render the static runtime and A2A TypeScript declarations.
+pub fn render_runtime_typescript() -> Result<String> {
     let mut tokens: js::Tokens = quote!(
         // TypeScript declarations for A2A task-only runtime API
         // This file is auto-generated - do not edit manually
@@ -425,8 +493,6 @@ declare global {
         }
     );
     tokens.line();
-    // tools used only for iteration; binding suppresses unused warning in codegen path
-    let _ = tools;
 
     tokens
         .to_file_string()
