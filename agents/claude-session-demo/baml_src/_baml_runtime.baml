@@ -118,25 +118,26 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from JSON schemas
+// Domain types generated from the canonical tool schema graph
 class ClaudeToolNextOutputEvents {
   kind string
   text string
+  @@dynamic
 }
 
-enum ClaudeToolNextOutputCompletion {
+enum ClaudeCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
   INTERRUPTED
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -149,31 +150,36 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class ClaudeToolNextOutput {
   events ClaudeToolNextOutputEvents[]
-  completion ClaudeToolNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  completion ClaudeCompletion | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class ClaudeToolOpenInput {
   workspace string | null?
+  @@dynamic
 }
 
 class ClaudeToolSendInputContent {
   kind string
   text string
+  @@dynamic
 }
 
 class ClaudeToolSendInput {
   prompt string | null?
   content (ClaudeToolSendInputContent | ClaudeToolSendInputContent[]) | null?
+  @@dynamic
 }
 
 /// Tool card for claude/dev: metadata for polymorphic Open selection.
@@ -183,7 +189,7 @@ class ClaudeDevToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ content?: anyOf(oneOf(oneOf({ kind: \"text\", text: string } | { kind: \"image_url\", url: string } | { data: string, kind: \"image_base64\", media_type: string }) | oneOf({ kind: \"text\", text: string } | { kind: \"image_url\", url: string } | { data: string, kind: \"image_base64\", media_type: string })[]) | null), prompt?: anyOf(string | null) }"
+  input_summary "ClaudeToolSendInput"
   tags string[] @description("Tool tags: claude, stream, session")
 }
 

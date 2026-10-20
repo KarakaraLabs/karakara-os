@@ -43,9 +43,9 @@ type DataPart = {
 }
 
 type GetConversationHistoryInput = {
-  channel_id: string @description("Slack channel ID (e.g. C01234ABCDE) — obtain from ListConversations.")
+  channel_id: string @description("Slack channel ID (e.g. C01234ABCDE) \\u{2014} obtain from ListConversations.")
   cursor?: string @description("Pagination cursor from a previous call's next_cursor.")
-  limit?: int @description("Max messages to return (1–1000, default 100).")
+  limit?: int @description("Max messages to return (1\\u{2013}1000, default 100).")
   oldest?: string @description("Return messages after this timestamp (Slack format: '1609459200.000001').")
   latest?: string @description("Return messages before this timestamp (Slack format: '1609459200.000001').")
   inclusive?: bool @description("Include messages exactly at oldest/latest boundaries.")
@@ -55,10 +55,10 @@ type GetConversationHistoryInput = {
 }
 
 type GetThreadRepliesInput = {
-  channel_id: string @description("Slack channel ID containing the thread — obtain from ListConversations.")
+  channel_id: string @description("Slack channel ID containing the thread \\u{2014} obtain from ListConversations.")
   thread_ts: string @description("Timestamp of the root message of the thread (Slack format: '1609459200.000001'). Use message.thread_ts or message.ts from a history/search result.")
   cursor?: string @description("Pagination cursor from a previous call's next_cursor.")
-  limit?: int @description("Max replies to return (1–1000, default 100).")
+  limit?: int @description("Max replies to return (1\\u{2013}1000, default 100).")
   oldest?: string @description("Return replies after this timestamp (Slack format: '1609459200.000001').")
   latest?: string @description("Return replies before this timestamp (Slack format: '1609459200.000001').")
   inclusive?: bool @description("Include messages exactly at oldest/latest boundaries.")
@@ -70,7 +70,7 @@ type GetThreadRepliesInput = {
 type ListConversationsInput = {
   kinds: SlackConversationKind[] @description("Conversation types to include. Pass empty list to include all types.")
   cursor?: string @description("Pagination cursor from a previous response's next_cursor.")
-  limit?: int @description("Max conversations to return (1–1000, default 100).")
+  limit?: int @description("Max conversations to return (1\\u{2013}1000, default 100).")
   exclude_archived?: bool @description("Exclude archived conversations (default true).")
   include_num_members?: bool @description("Include member count in results.")
   auth?: SlackAuthPreference @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
@@ -92,12 +92,12 @@ type ResolveUsersInput = {
 
 type SearchMessagesInput = {
   query: string @description("Search query. Supports modifiers: in:#channel, from:@user, before:YYYY-MM-DD, after:YYYY-MM-DD. Example: 'deploy in:#eng-releases after:2026-01-01'.")
-  count?: int @description("Results per page (1–100, default 20).")
+  count?: int @description("Results per page (1\\u{2013}100, default 20).")
   page?: int @description("Page number (1-based).")
   sort?: SlackSearchSort @description("`score` or `timestamp` (snake_case). `Score` / `Timestamp` also accepted.")
   direction?: SlackSearchDirection @description("`asc` or `desc` (snake_case). `Asc` / `Desc` also accepted.")
   resolve_users?: SlackUserResolutionMode @description("`none` or `resolve_users` (snake_case). PascalCase also accepted.")
-  auth?: SlackAuthPreference @description("Token preference — most orgs require User for search.")
+  auth?: SlackAuthPreference @description("Token preference \\u{2014} most orgs require User for search.")
 }
 
 type SlackAuthPreference = "Auto" | "Bot" | "User"

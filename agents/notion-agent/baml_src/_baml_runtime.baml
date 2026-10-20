@@ -118,103 +118,36 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// Search Notion pages by keyword. Returns a list of page titles and IDs.
-/// Does NOT return page content — use GetPageBlocks to read actual content.
-class NotionSearchPagesInput {
-  query string? @description("Search keyword. Omit to list all pages.")
-  start_cursor string? @description("Pagination cursor from a previous search result.")
-  page_size int? @description("Max pages to return per call (default 100). Use start_cursor to paginate.")
-}
-
-/// Fetch page METADATA only: title, URL, last-edited timestamp.
-/// Returns NO page content (text, headings, bullets, etc.).
-/// To read the actual content of a page, use GetPageBlocks with the same ID.
-class NotionGetPageInput {
-  page_id string @description("Notion page UUID from a SearchPages result, e.g. '238cff78-8181-80c8-8273-cc5fbdd8c7da'.")
-}
-
-/// Fetch the actual TEXT CONTENT of a Notion page as structured blocks
-/// (headings, paragraphs, bullet lists, etc.).
-/// block_id is the same UUID as the page id returned by SearchPages.
-/// Use this — not GetPage — when you need to read what a page says.
-class NotionGetPageBlocksInput {
-  block_id string @description("Page UUID to read blocks from — same value as the page id from SearchPages.")
-  start_cursor string? @description("Pagination cursor for large pages.")
-  page_size int?
-  raw_blocks BlockRenderMode? @description("Block render mode (omit for default enriched rendering).")
-  max_depth int? @description("Max child block depth to expand (omit to expand all children).")
-}
-
-/// Controls how Notion blocks are rendered in the output.
-/// Enriched (default): adds Notable Lines summaries and Missing Info hints for tables.
-/// Raw: returns blocks verbatim without post-processing or hints.
-enum BlockRenderMode {
-  Raw @alias("raw")
-  Enriched @alias("enriched")
-}
-
-/// Notion tool input — three mutually exclusive operations:
-/// SearchPages: find pages by keyword (returns titles+IDs, no content).
-/// GetPage: fetch page metadata only (title, URL, timestamps — NOT content).
-/// GetPageBlocks: read the actual text content of a page. Use this to understand what a page says.
-type NotionInput = NotionSearchPagesInput | NotionGetPageInput | NotionGetPageBlocksInput
-
-class NotionPageSummary {
-  id string
-  title string
-  url string
-  last_edited_time string?
-}
-
-class NotionBlockSummary {
-  id string
-  block_type string
-  text string?
-  has_children bool
-}
-
-class NotionSource {
-  page_id string
-  url string
-}
-
-class NotionOutput {
-  pages NotionPageSummary[]
-  blocks NotionBlockSummary[]
-  next_cursor string?
-  has_more bool
-  sources NotionSource[]
-  message string
-}
-// Domain types generated from JSON schemas
+// Domain types generated from the canonical tool schema graph
 class AgentEventSubscriptionDto {
-  schema_versions string[]
-  source_kinds string[]
-  source_keys string[]
-  source_key_prefixes string[]
+  schemaVersions string[]?
+  sourceKinds string[]?
+  sourceKeys string[]?
+  sourceKeyPrefixes string[]?
+  @@dynamic
 }
 
 class AgentCardDto {
   name string
   version string
-  content_hash string | null?
-  repository_version int | null?
-  agent_package string
-  agent_instance_id string
+  contentHash string | null?
+  repositoryVersion int | null?
+  agentPackage string
+  agentInstanceId string
   tools string[]
   description string | null?
   capabilities string[]
-  tags string[]
-  subscriptions AgentEventSubscriptionDto[]
+  tags string[]?
+  subscriptions AgentEventSubscriptionDto[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -227,30 +160,34 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverAgentsSendInput {
   query string | null?
-  required_capabilities string[] | null?
-  required_schema_versions string[] | null?
-  required_source_kinds string[] | null?
+  requiredCapabilities string[] | null?
+  requiredSchemaVersions string[] | null?
+  requiredSourceKinds string[] | null?
   limit int | null?
   offset int | null?
+  @@dynamic
 }
 
 class ToolDiscoveryRecordDto {
@@ -258,22 +195,26 @@ class ToolDiscoveryRecordDto {
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
   query string | null?
   limit int | null?
+  @@dynamic
 }
 
 class ConversationPart {
@@ -281,22 +222,25 @@ class ConversationPart {
   raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename string | null? @description("Attachment filename when this part refers to a file.")
-  media_type string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  mediaType string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  @@dynamic
 }
 
 class ConversationMessage {
   role string | null?
   parts ConversationPart[]
+  @@dynamic
 }
 
 class ConversationChunk {
   message ConversationMessage | null?
   task string | null?
-  status_update string | null?
-  artifact_update string | null?
+  statusUpdate string | null?
+  artifactUpdate string | null?
+  @@dynamic
 }
 
-enum InternalA2aNextOutputCompletion {
+enum InternalA2aCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
@@ -305,21 +249,84 @@ enum InternalA2aNextOutputCompletion {
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  completion InternalA2aCompletion | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class InternalA2aTarget {
   agent_package string
   agent_instance_id string
+  @@dynamic
 }
 
 class InternalA2aOpenInput {
   target InternalA2aTarget
+  @@dynamic
 }
 
 class InternalA2aSendInput {
   parts ConversationPart[]
+  @@dynamic
+}
+
+class NotionSearchPagesInput {
+  query string | null? @description("Search keyword. Omit to list all pages.")
+  start_cursor string | null? @description("Pagination cursor from a previous search result.")
+  page_size int | null? @description("Max pages to return per call (default 100). Use start_cursor to paginate.")
+}
+
+class NotionGetPageInput {
+  page_id string @description("Notion page UUID from a SearchPages result, e.g. \'238cff78-8181-80c8-8273-cc5fbdd8c7da\'.")
+}
+
+enum BlockRenderMode {
+  Raw
+    @alias("raw")
+  Enriched
+    @alias("enriched")
+}
+
+class NotionGetPageBlocksInput {
+  block_id string @description("Page UUID to read blocks from \u{2014} same value as the page id from SearchPages.")
+  start_cursor string | null? @description("Pagination cursor for large pages.")
+  page_size int | null?
+  raw_blocks BlockRenderMode | null? @description("Block render mode (omit for default enriched rendering).")
+  max_depth int | null? @description("Max child block depth to expand (omit to expand all children).")
+}
+
+type NotionInput = NotionSearchPagesInput | NotionGetPageInput | NotionGetPageBlocksInput
+
+class NotionPageSummary {
+  id string
+  title string
+  url string
+  last_edited_time string | null?
+  @@dynamic
+}
+
+class NotionBlockSummary {
+  id string
+  block_type string
+  text string | null?
+  has_children bool
+  @@dynamic
+}
+
+class NotionSource {
+  page_id string
+  url string
+  @@dynamic
+}
+
+class NotionOutput {
+  pages NotionPageSummary[]?
+  blocks NotionBlockSummary[]?
+  next_cursor string | null?
+  has_more bool
+  sources NotionSource[]?
+  message string
+  @@dynamic
 }
 
 /// Tool card for support/notion: metadata for polymorphic Open selection.
@@ -329,7 +336,7 @@ class SupportNotionToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "anyOf({ page_size?: anyOf(integer | null), query?: anyOf(string | null), start_cursor?: anyOf(string | null) } | { page_id: string } | { block_id: string, max_depth?: anyOf(integer | null), page_size?: anyOf(integer | null), raw_blocks?: anyOf(enum(\"enriched\" | \"raw\") | null), start_cursor?: anyOf(string | null) })"
+  input_summary "NotionInput"
   tags string[] @description("Tool tags: support, notion, read")
 }
 
@@ -377,7 +384,7 @@ class SystemDiscoverAgentsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), offset?: anyOf(integer | null), query?: anyOf(string | null), required_capabilities?: anyOf(string[] | null), required_schema_versions?: anyOf(string[] | null), required_source_kinds?: anyOf(string[] | null) }"
+  input_summary "DiscoverAgentsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -426,7 +433,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -475,7 +482,7 @@ class SystemInternalA2aToolCard {
   session_policy "MultiSend"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ parts: { filename?: anyOf(string | null), media_type?: anyOf(string | null), raw?: anyOf(string | null), text?: anyOf(string | null), url?: anyOf(string | null) }[] }"
+  input_summary "InternalA2aSendInput"
   tags string[] @description("Tool tags: system, a2a")
 }
 

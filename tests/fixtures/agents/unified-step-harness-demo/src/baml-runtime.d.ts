@@ -6,6 +6,10 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
+export interface ArchiveLedgerEntry { archive_ref: string;
+header: string;
+ }
+
 export interface ArchivePageReadInput { archive_ref: string;
 offset: number | null;
 limit: number | null;
@@ -25,7 +29,7 @@ operation: MathOperation;
 right: number;
  }
 
-export type MathOperation = "Add" | "Subtract" | "Multiply" | "Divide";
+export type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3";
 
 export interface SessionContext { contract_version: string;
 session_open: boolean;
@@ -35,6 +39,7 @@ last_step_status: string | null;
 last_archive_ref: string | null;
 last_output_header: string | null;
 last_completion: string | null;
+archives: ArchiveLedgerEntry[] | null;
  }
 
 export interface SupportCalculateAbortStep { op: "Abort";
@@ -456,14 +461,15 @@ export interface ToolFailure {
 export type StepExecutorFunctionName = "ChooseCalcTool" | "ChooseCalcTool__active__support_calculate" | "ChooseCalcTool__entry" | "UnifiedHarnessPick";
 
 export interface SessionContext {
-    contract_version: "session_context_v2";
+    contract_version: "session_context_v3";
     session_open: boolean;
-    status: "awaiting_open" | "just_opened" | "done";
-    last_step_op?: "open" | "send" | "read" | "finish" | "abort";
-    last_step_status?: "open" | "done" | "finished" | "aborted";
+    status: "awaiting_open" | "just_opened" | "result_ready" | "done";
+    last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
+    last_step_status?: "open" | "done" | "duplicate" | "finished" | "aborted";
     last_archive_ref?: string;
     last_output_header?: string;
     last_completion?: string;
+    archives?: Array<{ archive_ref: string; header: string }>;
 }
 
 /** Last archive read op for this hop (`StepExecutorStateInput.history_context`); distinct from tool-session `SessionStepOp` in Rust provenance. */

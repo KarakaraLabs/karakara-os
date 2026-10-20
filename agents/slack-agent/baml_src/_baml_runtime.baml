@@ -118,205 +118,36 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// Which Slack API token to use.
-/// Auto selects bot for most calls, user token for search (required in most orgs).
-/// Bot forces the bot token (xoxb-...). User forces the user token (xoxp-...).
-enum SlackAuthPreference {
-  Auto @alias("auto")
-  Bot @alias("bot")
-  User @alias("user")
-}
-
-/// Slack conversation type.
-/// Im = direct message (1:1 DM). Mpim = multi-person DM (group DM).
-enum SlackConversationKind {
-  PublicChannel @alias("public_channel")
-  PrivateChannel @alias("private_channel")
-  Im @alias("im") @description("Direct message (1:1 DM).")
-  Mpim @alias("mpim") @description("Multi-person direct message (group DM).")
-}
-
-/// Message sort order. LatestFirst is the default (newest messages first).
-enum SlackHistoryOrder {
-  LatestFirst @alias("latest_first")
-  OldestFirst @alias("oldest_first")
-}
-
-/// Controls whether Slack user IDs in results are resolved to display names.
-/// ResolveUsers (default) fetches profiles for each unique user_id found.
-/// None skips resolution — user_id only, no display name lookup.
-enum SlackUserResolutionMode {
-  None @alias("none")
-  ResolveUsers @alias("resolve_users")
-}
-
-/// Sort field for search results. Score ranks by relevance; Timestamp by time.
-enum SlackSearchSort {
-  Score @alias("score")
-  Timestamp @alias("timestamp")
-}
-
-/// Sort direction for search results.
-enum SlackSearchDirection {
-  Asc @alias("asc")
-  Desc @alias("desc")
-}
-
-/// List channels and DMs available to the token.
-/// Returns channel_id values to use in GetConversationHistory and GetThreadReplies.
-class ListConversationsInput {
-  kinds SlackConversationKind[] @description("Conversation types to include. Pass empty list to include all types.")
-  cursor string? @description("Pagination cursor from a previous response's next_cursor.")
-  limit int? @description("Max conversations to return (1–1000, default 100).")
-  exclude_archived bool? @description("Exclude archived conversations (default true).")
-  include_num_members bool? @description("Include member count in results.")
-  auth SlackAuthPreference? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
-}
-
-/// Retrieve messages from a channel's history.
-/// Use ListConversations to find the channel_id.
-/// Timestamps use Slack's float format: '1609459200.000001' (Unix seconds with microseconds).
-class GetConversationHistoryInput {
-  channel_id string @description("Slack channel ID (e.g. C01234ABCDE) — obtain from ListConversations.")
-  cursor string? @description("Pagination cursor from a previous call's next_cursor.")
-  limit int? @description("Max messages to return (1–1000, default 100).")
-  oldest string? @description("Return messages after this timestamp (Slack format: '1609459200.000001').")
-  latest string? @description("Return messages before this timestamp (Slack format: '1609459200.000001').")
-  inclusive bool? @description("Include messages exactly at oldest/latest boundaries.")
-  order SlackHistoryOrder? @description("Sort order: JSON string `latest_first` or `oldest_first` (snake_case). `LatestFirst` / `OldestFirst` also accepted.")
-  resolve_users SlackUserResolutionMode? @description("User enrichment: prefer snake_case `none` or `resolve_users`; PascalCase `None` / `ResolveUsers` also accepted.")
-  auth SlackAuthPreference? @description("Token: prefer snake_case `auto`, `bot`, or `user`; PascalCase also accepted.")
-}
-
-/// Retrieve all replies in a thread.
-/// thread_ts is the timestamp of the root message (found in message.thread_ts or message.ts).
-/// Timestamps use Slack's float format: '1609459200.000001' (Unix seconds with microseconds).
-class GetThreadRepliesInput {
-  channel_id string @description("Slack channel ID containing the thread — obtain from ListConversations.")
-  thread_ts string @description("Timestamp of the root message of the thread (Slack format: '1609459200.000001'). Use message.thread_ts or message.ts from a history/search result.")
-  cursor string? @description("Pagination cursor from a previous call's next_cursor.")
-  limit int? @description("Max replies to return (1–1000, default 100).")
-  oldest string? @description("Return replies after this timestamp (Slack format: '1609459200.000001').")
-  latest string? @description("Return replies before this timestamp (Slack format: '1609459200.000001').")
-  inclusive bool? @description("Include messages exactly at oldest/latest boundaries.")
-  order SlackHistoryOrder? @description("Sort order: JSON string `latest_first` or `oldest_first` (snake_case). `LatestFirst` / `OldestFirst` also accepted.")
-  resolve_users SlackUserResolutionMode? @description("User enrichment: `none` or `resolve_users` (snake_case). Prefer snake_case; PascalCase (`None`, `ResolveUsers`) is tolerated.")
-  auth SlackAuthPreference? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
-}
-
-/// Resolve a list of Slack user IDs to display names and profile data.
-class ResolveUsersInput {
-  user_ids string[] @description("List of Slack user IDs to resolve (e.g. ['U01234ABCDE']).")
-  auth SlackAuthPreference? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
-}
-
-/// Search Slack messages across all conversations.
-/// Requires a user token (SLACK_USER_TOKEN) in most orgs — use auth: User.
-/// Supports Slack search modifiers: in:#channel, from:@user, before:YYYY-MM-DD, after:YYYY-MM-DD.
-class SearchMessagesInput {
-  query string @description("Search query. Supports modifiers: in:#channel, from:@user, before:YYYY-MM-DD, after:YYYY-MM-DD. Example: 'deploy in:#eng-releases after:2026-01-01'.")
-  count int? @description("Results per page (1–100, default 20).")
-  page int? @description("Page number (1-based).")
-  sort SlackSearchSort? @description("`score` or `timestamp` (snake_case). `Score` / `Timestamp` also accepted.")
-  direction SlackSearchDirection? @description("`asc` or `desc` (snake_case). `Asc` / `Desc` also accepted.")
-  resolve_users SlackUserResolutionMode? @description("`none` or `resolve_users` (snake_case). PascalCase also accepted.")
-  auth SlackAuthPreference? @description("Token preference — most orgs require User for search.")
-}
-
-/// Slack tool — five operations for reading workspace conversations.
-/// ListConversations → find channel_ids.
-/// GetConversationHistory → read channel messages.
-/// GetThreadReplies → read a thread (requires thread_ts from a message).
-/// SearchMessages → full-text search (requires user token in most orgs).
-/// ResolveUsers → look up user display names from IDs.
-type SlackInput = GetThreadRepliesInput | GetConversationHistoryInput | SearchMessagesInput | ResolveUsersInput | ListConversationsInput
-
-enum SlackSourceKind {
-  Conversation @alias("conversation")
-  Message @alias("message")
-  ThreadReply @alias("thread_reply")
-  SearchMatch @alias("search_match")
-  User @alias("user")
-}
-
-class SlackSource {
-  kind SlackSourceKind
-  reference string
-  permalink string?
-  channel_id string?
-  message_ts string?
-  thread_ts string?
-}
-
-class SlackConversationSummary {
-  id string
-  name string?
-  kind SlackConversationKind
-  is_archived bool
-  is_member bool?
-  num_members int?
-}
-
-class SlackUserSummary {
-  id string
-  name string?
-  display_name string?
-  real_name string?
-  is_bot bool
-  is_deleted bool
-  email string?
-}
-
-class SlackMessageSummary {
-  channel_id string
-  ts string
-  thread_ts string?
-  user_id string?
-  user_name string?
-  text string
-  subtype string?
-  source_ref string
-  permalink string?
-}
-
-class SlackOutput {
-  conversations SlackConversationSummary[]
-  messages SlackMessageSummary[]
-  users SlackUserSummary[]
-  next_cursor string?
-  has_more bool
-  sources SlackSource[]
-  message string
-}
-// Domain types generated from JSON schemas
+// Domain types generated from the canonical tool schema graph
 class AgentEventSubscriptionDto {
-  schema_versions string[]
-  source_kinds string[]
-  source_keys string[]
-  source_key_prefixes string[]
+  schemaVersions string[]?
+  sourceKinds string[]?
+  sourceKeys string[]?
+  sourceKeyPrefixes string[]?
+  @@dynamic
 }
 
 class AgentCardDto {
   name string
   version string
-  content_hash string | null?
-  repository_version int | null?
-  agent_package string
-  agent_instance_id string
+  contentHash string | null?
+  repositoryVersion int | null?
+  agentPackage string
+  agentInstanceId string
   tools string[]
   description string | null?
   capabilities string[]
-  tags string[]
-  subscriptions AgentEventSubscriptionDto[]
+  tags string[]?
+  subscriptions AgentEventSubscriptionDto[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -329,30 +160,34 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverAgentsSendInput {
   query string | null?
-  required_capabilities string[] | null?
-  required_schema_versions string[] | null?
-  required_source_kinds string[] | null?
+  requiredCapabilities string[] | null?
+  requiredSchemaVersions string[] | null?
+  requiredSourceKinds string[] | null?
   limit int | null?
   offset int | null?
+  @@dynamic
 }
 
 class ToolDiscoveryRecordDto {
@@ -360,22 +195,26 @@ class ToolDiscoveryRecordDto {
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
   query string | null?
   limit int | null?
+  @@dynamic
 }
 
 class ConversationPart {
@@ -383,22 +222,25 @@ class ConversationPart {
   raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename string | null? @description("Attachment filename when this part refers to a file.")
-  media_type string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  mediaType string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  @@dynamic
 }
 
 class ConversationMessage {
   role string | null?
   parts ConversationPart[]
+  @@dynamic
 }
 
 class ConversationChunk {
   message ConversationMessage | null?
   task string | null?
-  status_update string | null?
-  artifact_update string | null?
+  statusUpdate string | null?
+  artifactUpdate string | null?
+  @@dynamic
 }
 
-enum InternalA2aNextOutputCompletion {
+enum InternalA2aCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
@@ -407,21 +249,192 @@ enum InternalA2aNextOutputCompletion {
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  completion InternalA2aCompletion | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class InternalA2aTarget {
   agent_package string
   agent_instance_id string
+  @@dynamic
 }
 
 class InternalA2aOpenInput {
   target InternalA2aTarget
+  @@dynamic
 }
 
 class InternalA2aSendInput {
   parts ConversationPart[]
+  @@dynamic
+}
+
+enum SlackHistoryOrder {
+  LatestFirst
+    @alias("latest_first")
+  OldestFirst
+    @alias("oldest_first")
+}
+
+enum SlackUserResolutionMode {
+  None
+    @alias("none")
+  ResolveUsers
+    @alias("resolve_users")
+}
+
+enum SlackAuthPreference {
+  Auto
+    @alias("auto")
+  Bot
+    @alias("bot")
+  User
+    @alias("user")
+}
+
+class GetThreadRepliesInput {
+  channel_id string @description("Slack channel ID containing the thread \u{2014} obtain from ListConversations.")
+  thread_ts string @description("Timestamp of the root message of the thread (Slack format: \'1609459200.000001\'). Use message.thread_ts or message.ts from a history/search result.")
+  cursor string | null? @description("Pagination cursor from a previous call\'s next_cursor.")
+  limit int | null? @description("Max replies to return (1\u{2013}1000, default 100).")
+  oldest string | null? @description("Return replies after this timestamp (Slack format: \'1609459200.000001\').")
+  latest string | null? @description("Return replies before this timestamp (Slack format: \'1609459200.000001\').")
+  inclusive bool | null? @description("Include messages exactly at oldest/latest boundaries.")
+  order SlackHistoryOrder | null? @description("Sort order: JSON string `latest_first` or `oldest_first` (snake_case). `LatestFirst` / `OldestFirst` also accepted.")
+  resolve_users SlackUserResolutionMode | null? @description("User enrichment: `none` or `resolve_users` (snake_case). Prefer snake_case; PascalCase (`None`, `ResolveUsers`) is tolerated.")
+  auth SlackAuthPreference | null? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
+}
+
+class GetConversationHistoryInput {
+  channel_id string @description("Slack channel ID (e.g. C01234ABCDE) \u{2014} obtain from ListConversations.")
+  cursor string | null? @description("Pagination cursor from a previous call\'s next_cursor.")
+  limit int | null? @description("Max messages to return (1\u{2013}1000, default 100).")
+  oldest string | null? @description("Return messages after this timestamp (Slack format: \'1609459200.000001\').")
+  latest string | null? @description("Return messages before this timestamp (Slack format: \'1609459200.000001\').")
+  inclusive bool | null? @description("Include messages exactly at oldest/latest boundaries.")
+  order SlackHistoryOrder | null? @description("Sort order: JSON string `latest_first` or `oldest_first` (snake_case). `LatestFirst` / `OldestFirst` also accepted.")
+  resolve_users SlackUserResolutionMode | null? @description("User enrichment: prefer snake_case `none` or `resolve_users`; PascalCase `None` / `ResolveUsers` also accepted.")
+  auth SlackAuthPreference | null? @description("Token: prefer snake_case `auto`, `bot`, or `user`; PascalCase also accepted.")
+}
+
+enum SlackSearchSort {
+  Score
+    @alias("score")
+  Timestamp
+    @alias("timestamp")
+}
+
+enum SlackSearchDirection {
+  Asc
+    @alias("asc")
+  Desc
+    @alias("desc")
+}
+
+class SearchMessagesInput {
+  query string @description("Search query. Supports modifiers: in:#channel, from:@user, before:YYYY-MM-DD, after:YYYY-MM-DD. Example: \'deploy in:#eng-releases after:2026-01-01\'.")
+  count int | null? @description("Results per page (1\u{2013}100, default 20).")
+  page int | null? @description("Page number (1-based).")
+  sort SlackSearchSort | null? @description("`score` or `timestamp` (snake_case). `Score` / `Timestamp` also accepted.")
+  direction SlackSearchDirection | null? @description("`asc` or `desc` (snake_case). `Asc` / `Desc` also accepted.")
+  resolve_users SlackUserResolutionMode | null? @description("`none` or `resolve_users` (snake_case). PascalCase also accepted.")
+  auth SlackAuthPreference | null? @description("Token preference \u{2014} most orgs require User for search.")
+}
+
+class ResolveUsersInput {
+  user_ids string[] @description("List of Slack user IDs to resolve (e.g. [\'U01234ABCDE\']).")
+  auth SlackAuthPreference | null? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
+}
+
+enum SlackConversationKind {
+  PublicChannel
+    @alias("public_channel")
+  PrivateChannel
+    @alias("private_channel")
+  Im
+    @alias("im")
+  Mpim
+    @alias("mpim")
+}
+
+class ListConversationsInput {
+  kinds SlackConversationKind[] @description("Conversation types to include. Pass empty list to include all types.")
+  cursor string | null? @description("Pagination cursor from a previous response\'s next_cursor.")
+  limit int | null? @description("Max conversations to return (1\u{2013}1000, default 100).")
+  exclude_archived bool | null? @description("Exclude archived conversations (default true).")
+  include_num_members bool | null? @description("Include member count in results.")
+  auth SlackAuthPreference | null? @description("Token: `auto`, `bot`, or `user` (snake_case). PascalCase also accepted.")
+}
+
+type SlackInput = GetThreadRepliesInput | GetConversationHistoryInput | SearchMessagesInput | ResolveUsersInput | ListConversationsInput
+
+class SlackConversationSummary {
+  id string
+  name string | null?
+  kind SlackConversationKind
+  is_archived bool
+  is_member bool | null?
+  num_members int | null?
+  @@dynamic
+}
+
+class SlackMessageSummary {
+  channel_id string
+  ts string
+  thread_ts string | null?
+  user_id string | null?
+  user_name string | null?
+  text string
+  subtype string | null?
+  source_ref string
+  permalink string | null?
+  @@dynamic
+}
+
+class SlackUserSummary {
+  id string
+  name string | null?
+  display_name string | null?
+  real_name string | null?
+  is_bot bool
+  is_deleted bool
+  email string | null?
+  @@dynamic
+}
+
+enum SlackSourceKind {
+  Conversation
+    @alias("conversation")
+  Message
+    @alias("message")
+  ThreadReply
+    @alias("thread_reply")
+  SearchMatch
+    @alias("search_match")
+  User
+    @alias("user")
+}
+
+class SlackSource {
+  kind SlackSourceKind
+  reference string
+  permalink string | null?
+  channel_id string | null?
+  message_ts string | null?
+  thread_ts string | null?
+  @@dynamic
+}
+
+class SlackOutput {
+  conversations SlackConversationSummary[]?
+  messages SlackMessageSummary[]?
+  users SlackUserSummary[]?
+  next_cursor string | null?
+  has_more bool
+  sources SlackSource[]?
+  message string
+  @@dynamic
 }
 
 /// Tool card for support/slack: metadata for polymorphic Open selection.
@@ -431,7 +444,7 @@ class SupportSlackToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "anyOf({ auth?: anyOf(enum(\"auto\" | \"bot\" | \"user\") | null), channel_id: string, cursor?: anyOf(string | null), inclusive?: anyOf(boolean | null), latest?: anyOf(string | null), limit?: anyOf(integer | null), oldest?: anyOf(string | null), order?: anyOf(enum(\"latest_first\" | \"oldest_first\") | null), resolve_users?: anyOf(enum(\"none\" | \"resolve_users\") | null), thread_ts: string } | { auth?: anyOf(enum(\"auto\" | \"bot\" | \"user\") | null), channel_id: string, cursor?: anyOf(string | null), inclusive?: anyOf(boolean | null), latest?: anyOf(string | null), limit?: anyOf(integer | null), oldest?: anyOf(string | null), order?: anyOf(enum(\"latest_first\" | \"oldest_first\") | null), resolve_users?: anyOf(enum(\"none\" | \"resolve_users\") | null) } | { auth?: anyOf(enum(\"auto\" | \"bot\" | \"user\") | null), count?: anyOf(integer | null), direction?: anyOf(enum(\"asc\" | \"desc\") | null), page?: anyOf(integer | null), query: string, resolve_users?: anyOf(enum(\"none\" | \"resolve_users\") | null), sort?: anyOf(enum(\"score\" | \"timestamp\") | null) } | { auth?: anyOf(enum(\"auto\" | \"bot\" | \"user\") | null), user_ids: string[] } | { auth?: anyOf(enum(\"auto\" | \"bot\" | \"user\") | null), cursor?: anyOf(string | null), exclude_archived?: anyOf(boolean | null), include_num_members?: anyOf(boolean | null), kinds: enum(\"im\" | \"mpim\" | \"private_channel\" | \"public_channel\")[], limit?: anyOf(integer | null) })"
+  input_summary "SlackInput"
   tags string[] @description("Tool tags: support, slack, read")
 }
 
@@ -479,7 +492,7 @@ class SystemDiscoverAgentsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), offset?: anyOf(integer | null), query?: anyOf(string | null), required_capabilities?: anyOf(string[] | null), required_schema_versions?: anyOf(string[] | null), required_source_kinds?: anyOf(string[] | null) }"
+  input_summary "DiscoverAgentsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -528,7 +541,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -577,7 +590,7 @@ class SystemInternalA2aToolCard {
   session_policy "MultiSend"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ parts: { filename?: anyOf(string | null), media_type?: anyOf(string | null), raw?: anyOf(string | null), text?: anyOf(string | null), url?: anyOf(string | null) }[] }"
+  input_summary "InternalA2aSendInput"
   tags string[] @description("Tool tags: system, a2a")
 }
 

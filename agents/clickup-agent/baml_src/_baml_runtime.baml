@@ -118,113 +118,102 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// List all teams/workspaces — no parameters needed.
+// Domain types generated from the canonical tool schema graph
 class ListTeamsInput {
 }
 
-/// List spaces in a team. Call ListTeams first to get the team_id.
 class ListSpacesInput {
-  team_id string @description("ClickUp team (workspace) ID — obtain from ListTeams.")
+  team_id string @description("ClickUp team (workspace) ID \u{2014} obtain from ListTeams.")
 }
 
-/// List task-lists in a space. Call ListSpaces first to get the space_id.
 class ListListsInput {
-  space_id string @description("ClickUp space ID — obtain from ListSpaces.")
+  space_id string @description("ClickUp space ID \u{2014} obtain from ListSpaces.")
 }
 
-/// List tasks in a list. Call ListLists first to get the list_id.
 class ListTasksInput {
-  list_id string @description("ClickUp list ID — obtain from ListLists.")
+  list_id string @description("ClickUp list ID \u{2014} obtain from ListLists.")
 }
 
-/// Get full details of a specific task (description, status, priority, assignees).
 class GetTaskInput {
-  task_id string @description("ClickUp task ID — obtain from ListTasks.")
+  task_id string @description("ClickUp task ID \u{2014} obtain from ListTasks.")
 }
 
-/// Create a new task in a list.
 class CreateTaskInput {
-  list_id string @description("ClickUp list ID where the task will be created — obtain from ListLists.")
+  list_id string @description("ClickUp list ID where the task will be created \u{2014} obtain from ListLists.")
   name string @description("Task title / name.")
-  description string? @description("Optional long-form task description (Markdown supported).")
-  priority int? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  description string | null? @description("Optional long-form task description (Markdown supported).")
+  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
-/// Update an existing task's status, description, or priority.
 class UpdateTaskInput {
-  task_id string @description("ClickUp task ID to update — obtain from ListTasks or GetTask.")
-  status string? @description("New task status string (e.g. 'in progress', 'complete').")
-  description string? @description("Updated task description (Markdown supported).")
-  priority int? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  task_id string @description("ClickUp task ID to update \u{2014} obtain from ListTasks or GetTask.")
+  status string | null? @description("New task status string (e.g. \'in progress\', \'complete\').")
+  description string | null? @description("Updated task description (Markdown supported).")
+  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
-/// Permanently delete a task. Confirm with the user before proceeding.
 class DeleteTaskInput {
-  task_id string @description("ClickUp task ID to delete — obtain from ListTasks.")
+  task_id string @description("ClickUp task ID to delete \u{2014} obtain from ListTasks.")
   confirm_delete bool @description("Must be true to proceed. Always confirm deletion with the user first.")
 }
 
-/// ClickUp tool — navigate teams → spaces → lists → tasks.
-/// ListTeams → ListSpaces → ListLists → ListTasks → GetTask/CreateTask/UpdateTask/DeleteTask.
-/// IDs must come from prior navigation results, not invented.
 type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | ListTasksInput | GetTaskInput | CreateTaskInput | UpdateTaskInput | DeleteTaskInput
 
-/// Summary of a single ClickUp task, projected from the API response.
 class ClickUpTaskSummary {
   id string
   name string
   status string
-  description string?
+  description string | null?
   url string
-  assignees string[]
-  priority string?
-  due_date string?
+  assignees string[]?
+  priority string | null?
+  due_date string | null?
+  @@dynamic
 }
 
-/// A generic item returned by navigation actions (teams, spaces, lists).
 class ClickUpItem {
   id string
   name string
   kind string @description("The kind of resource: team, space, or list.")
+  @@dynamic
 }
 
-/// Output returned by every ClickUp tool action.
-///
-/// Task actions populate `tasks`; navigation actions populate `items`.
 class ClickUpOutput {
-  tasks ClickUpTaskSummary[]
-  items ClickUpItem[] @description("Teams, spaces, or lists returned by navigation actions.")
+  tasks ClickUpTaskSummary[]?
+  items ClickUpItem[]? @description("Teams, spaces, or lists returned by navigation actions.")
   message string
+  @@dynamic
 }
-// Domain types generated from JSON schemas
+
 class AgentEventSubscriptionDto {
-  schema_versions string[]
-  source_kinds string[]
-  source_keys string[]
-  source_key_prefixes string[]
+  schemaVersions string[]?
+  sourceKinds string[]?
+  sourceKeys string[]?
+  sourceKeyPrefixes string[]?
+  @@dynamic
 }
 
 class AgentCardDto {
   name string
   version string
-  content_hash string | null?
-  repository_version int | null?
-  agent_package string
-  agent_instance_id string
+  contentHash string | null?
+  repositoryVersion int | null?
+  agentPackage string
+  agentInstanceId string
   tools string[]
   description string | null?
   capabilities string[]
-  tags string[]
-  subscriptions AgentEventSubscriptionDto[]
+  tags string[]?
+  subscriptions AgentEventSubscriptionDto[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -237,30 +226,34 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverAgentsSendInput {
   query string | null?
-  required_capabilities string[] | null?
-  required_schema_versions string[] | null?
-  required_source_kinds string[] | null?
+  requiredCapabilities string[] | null?
+  requiredSchemaVersions string[] | null?
+  requiredSourceKinds string[] | null?
   limit int | null?
   offset int | null?
+  @@dynamic
 }
 
 class ToolDiscoveryRecordDto {
@@ -268,22 +261,26 @@ class ToolDiscoveryRecordDto {
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
   query string | null?
   limit int | null?
+  @@dynamic
 }
 
 class ConversationPart {
@@ -291,22 +288,25 @@ class ConversationPart {
   raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename string | null? @description("Attachment filename when this part refers to a file.")
-  media_type string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  mediaType string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  @@dynamic
 }
 
 class ConversationMessage {
   role string | null?
   parts ConversationPart[]
+  @@dynamic
 }
 
 class ConversationChunk {
   message ConversationMessage | null?
   task string | null?
-  status_update string | null?
-  artifact_update string | null?
+  statusUpdate string | null?
+  artifactUpdate string | null?
+  @@dynamic
 }
 
-enum InternalA2aNextOutputCompletion {
+enum InternalA2aCompletion {
   DONE
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
@@ -315,21 +315,25 @@ enum InternalA2aNextOutputCompletion {
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aNextOutputCompletion | null?
-  history_context HistoryContextV1 | null?
+  completion InternalA2aCompletion | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class InternalA2aTarget {
   agent_package string
   agent_instance_id string
+  @@dynamic
 }
 
 class InternalA2aOpenInput {
   target InternalA2aTarget
+  @@dynamic
 }
 
 class InternalA2aSendInput {
   parts ConversationPart[]
+  @@dynamic
 }
 
 /// Tool card for support/clickup: metadata for polymorphic Open selection.
@@ -339,7 +343,7 @@ class SupportClickupToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "anyOf({  } | { team_id: string } | { space_id: string } | { list_id: string } | { task_id: string } | { description?: anyOf(string | null), list_id: string, name: string, priority?: anyOf(integer | null) } | { description?: anyOf(string | null), priority?: anyOf(integer | null), status?: anyOf(string | null), task_id: string } | { confirm_delete: boolean, task_id: string })"
+  input_summary "ClickUpInput"
   tags string[] @description("Tool tags: support, clickup")
 }
 
@@ -387,7 +391,7 @@ class SystemDiscoverAgentsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), offset?: anyOf(integer | null), query?: anyOf(string | null), required_capabilities?: anyOf(string[] | null), required_schema_versions?: anyOf(string[] | null), required_source_kinds?: anyOf(string[] | null) }"
+  input_summary "DiscoverAgentsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -436,7 +440,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -485,7 +489,7 @@ class SystemInternalA2aToolCard {
   session_policy "MultiSend"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ parts: { filename?: anyOf(string | null), media_type?: anyOf(string | null), raw?: anyOf(string | null), text?: anyOf(string | null), url?: anyOf(string | null) }[] }"
+  input_summary "InternalA2aSendInput"
   tags string[] @description("Tool tags: system, a2a")
 }
 

@@ -47,6 +47,14 @@ System-as-is: APIs, contracts, and current behavior.
 | [task-daemon-event-contract.md](reference/task-daemon-event-contract.md) | Wire envelope `host.source-records.v1` |
 | [slack-tool.md](reference/slack-tool.md) | Slack read-only tool reference |
 
+## Plans (`docs/plans/`)
+
+Completed implementation plans kept for design and migration history.
+
+| Doc | Purpose |
+|-----|---------|
+| [tool-schema-graph.md](plans/tool-schema-graph.md) | Canonical JSON Schema graph migration for generated tool DTOs |
+
 ## Runbooks (`docs/runbooks/`)
 
 Install, test, demo, and operate.

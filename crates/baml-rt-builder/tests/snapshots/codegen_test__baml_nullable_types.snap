@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 112
 expression: baml_output
 ---
 class NullableTest {
@@ -9,4 +10,5 @@ class NullableTest {
   nullable_array string[]?
   plain_int int
   plain_u8 int
+  @@dynamic
 }

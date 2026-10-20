@@ -27,11 +27,11 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use baml_rt_tools::{
-    SessionPlanFunctionsMap, StaticToolSnapshotCatalog, UnifiedStepExecutorFunctionsMap,
-    external_tool_cache,
+    SessionPlanFunctionsMap, UnifiedStepExecutorFunctionsMap, external_tool_cache,
     external_tools::{EXTERNAL_TOOLS_LOCKFILE_NAME, ExternalToolLockEntry, ExternalToolsLockfile},
     gather_coordination_fragments,
     tools::ToolFunctionMetadata,
@@ -46,12 +46,13 @@ use super::{
 use crate::builder::{
     baml_gen::{
         CATALOG_SIDECAR_FILE, GENERATED_BAML_PRELUDE_FILE, GeneratedSessionBaml,
-        purge_managed_generated_baml_files, render_baml_tool_interfaces_with_static_catalog,
+        purge_managed_generated_baml_files, render_baml_tool_interfaces_from_metadata,
         render_generated_session_baml_from_ir,
     },
     baml_signature_gen::{extract_baml_signatures, session_plan_functions_map},
     error::{BamlBuilderError, Result},
     selection_hint::render_selection_hint_for_type,
+    tool_schema_graph::ToolSchemaGraph,
     ts_gen::{load_manifest_tools, render_ts_declarations},
     types::{AgentDir, BuildDir},
 };
@@ -87,8 +88,9 @@ pub(super) struct WorkspaceReady {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    /// One immutable graph shared by every later codegen phase.
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
-    pub static_catalog: Option<StaticToolSnapshotCatalog>,
 }
 
 impl WorkspaceReady {
@@ -156,29 +158,22 @@ impl WorkspaceReady {
         } else {
             Vec::new()
         };
+        let tool_schema_graph = Arc::new(ToolSchemaGraph::from_tools(&tool_metadata)?);
         let unified_roots = load_unified_step_executors_authoring(&baml_src);
 
         Ok(Self {
             paths,
             tool_names,
             tool_metadata,
+            tool_schema_graph,
             unified_roots,
-            static_catalog,
         })
     }
 
     pub(super) fn emit_tool_interfaces_prelude(self) -> Result<PreludeWritten> {
-        let mcp_root = self.paths.build_dir.join("mcp");
-        let mcp_root = mcp_root.exists().then_some(mcp_root);
-        let external_cache_root = self.paths.build_dir.join("external-tools");
-        let external_cache_root = external_cache_root
-            .exists()
-            .then_some(self.paths.build_dir.as_path().to_path_buf());
-        let mut generated_baml = render_baml_tool_interfaces_with_static_catalog(
-            &self.tool_names,
-            mcp_root.as_deref(),
-            external_cache_root.as_deref(),
-            self.static_catalog,
+        let mut generated_baml = render_baml_tool_interfaces_from_metadata(
+            &self.tool_metadata,
+            &self.tool_schema_graph,
         )?;
         if !self.tool_metadata.is_empty()
             && let Some(coord_baml) = gather_coordination_fragments(&self.tool_metadata)?
@@ -196,6 +191,7 @@ impl WorkspaceReady {
             paths: self.paths,
             tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
+            tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
             generated_baml,
         })
@@ -208,6 +204,7 @@ pub(super) struct PreludeWritten {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub generated_baml: String,
 }
@@ -222,6 +219,7 @@ impl PreludeWritten {
             paths: self.paths,
             tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
+            tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
             generated_baml: self.generated_baml,
             runtime,
@@ -237,6 +235,7 @@ pub(super) struct CompiledFirstPass {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub generated_baml: String,
     pub runtime: BamlRuntime,
@@ -276,6 +275,7 @@ impl CompiledFirstPass {
             paths: self.paths,
             tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
+            tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
             generated_baml: self.generated_baml,
             runtime: self.runtime,
@@ -303,6 +303,7 @@ pub(super) struct PromptsNormalized {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub generated_baml: String,
     /// Pre-rewrite runtime; safe to feed to [`render_generated_session_baml_from_ir`] because
@@ -321,6 +322,7 @@ impl PromptsNormalized {
         let session_baml = render_generated_session_baml_from_ir(
             &self.runtime,
             &self.tool_metadata,
+            &self.tool_schema_graph,
             &self.unified_roots,
         )?;
 
@@ -352,6 +354,7 @@ impl PromptsNormalized {
             paths: self.paths,
             tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
+            tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
             ir_signature: self.ir_signature,
             session_plan_map: self.session_plan_map,
@@ -366,6 +369,7 @@ pub(super) struct SessionArtifactsEmitted {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub ir_signature: IRSignature,
     pub session_plan_map: SessionPlanFunctionsMap,
@@ -379,6 +383,7 @@ impl SessionArtifactsEmitted {
             paths: self.paths,
             tool_names: self.tool_names,
             tool_metadata: self.tool_metadata,
+            tool_schema_graph: self.tool_schema_graph,
             unified_roots: self.unified_roots,
             ir_signature: self.ir_signature,
             session_plan_map: self.session_plan_map,
@@ -397,6 +402,12 @@ pub(super) struct RuntimeFinalized {
     pub paths: CodegenPaths,
     pub tool_names: Vec<String>,
     pub tool_metadata: Vec<ToolFunctionMetadata>,
+    /// The graph built in `WorkspaceReady`, retained for graph-backed TypeScript codegen.
+    #[expect(
+        dead_code,
+        reason = "a follow-up TypeScript graph renderer will consume this handoff"
+    )]
+    pub tool_schema_graph: Arc<ToolSchemaGraph>,
     pub unified_roots: UnifiedStepExecutorFunctionsMap,
     pub ir_signature: IRSignature,
     pub session_plan_map: SessionPlanFunctionsMap,

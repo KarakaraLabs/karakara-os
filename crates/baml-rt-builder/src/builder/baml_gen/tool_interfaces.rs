@@ -4,32 +4,74 @@
 
 //! Template fragments merged into [`super::GENERATED_BAML_PRELUDE_FILE`] (prelude + per-tool cards).
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::path::Path;
 
 use baml_rt_tools::{
-    OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY, StaticToolSnapshotCatalog,
+    StaticToolSnapshotCatalog,
     external_tools::{
         build_builder_catalog, build_builder_catalog_with_mcp_root,
         build_builder_catalog_with_roots, build_builder_catalog_with_static_catalog,
     },
-    schema_allows_empty_or_optional_open_input,
     tool_catalog::resolve_manifest_tools_with_catalog,
     tools::ToolFunctionMetadata,
 };
 #[cfg(feature = "dev-tools")]
 use baml_tools_calculator as _;
-use serde_json::Value;
 
 use super::{
     escape::escape_baml_description, prelude::generated_tools_prelude, prompt_copy,
     writer::BamlWriter,
 };
-use crate::builder::{error::Result, schema_to_baml};
+use crate::builder::{
+    error::{BamlBuilderError, Result},
+    tool_schema_graph::{
+        OpenInputContract, ToolSchemaContract, ToolSchemaGraph,
+        baml::{render_schema_type_ref, render_tool_schema_baml},
+    },
+};
 
-/// Generate BAML tool interface file with FSM-aware prompting hints.
+/// Generate BAML tool interfaces from already-resolved metadata and its canonical schema graph.
+///
+/// This is the production entry point. It does not resolve a catalog, inspect raw JSON Schema, or
+/// read compatibility declarations such as `ToolFunctionMetadata::baml_decl`.
+pub fn render_baml_tool_interfaces_from_metadata(
+    tools: &[ToolFunctionMetadata],
+    graph: &ToolSchemaGraph,
+) -> Result<String> {
+    let mut w = BamlWriter::new();
+    w.push_block(&generated_tools_prelude());
+    let out = w.as_mut_string();
+
+    let domain_types = render_tool_schema_baml(graph)?;
+    if !domain_types.is_empty() {
+        out.push_str("// Domain types generated from the canonical tool schema graph\n");
+        out.push_str(&domain_types);
+        if !domain_types.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+
+    for tool in tools {
+        let contract = graph.tools.get(&tool.name.to_string()).ok_or_else(|| {
+            BamlBuilderError::InvalidArgument(format!(
+                "tool schema graph has no contract for resolved tool `{}`",
+                tool.name
+            ))
+        })?;
+        generate_tool_card_baml(out, tool, contract, graph)?;
+        out.push('\n');
+        generate_tool_baml_interface(out, tool, contract, graph)?;
+        out.push('\n');
+    }
+
+    Ok(w.into_string())
+}
+
+/// Compatibility entry point for callers that still start with manifest tool names.
+///
+/// The build pipeline resolves tools once in `WorkspaceReady` and calls
+/// [`render_baml_tool_interfaces_from_metadata`] directly. Keep this wrapper for tests and
+/// non-pipeline callers until they can provide resolved metadata.
 pub fn render_baml_tool_interfaces(tool_names: &[String]) -> Result<String> {
     render_baml_tool_interfaces_with_mcp_root(tool_names, None)
 }
@@ -79,99 +121,17 @@ pub fn render_baml_tool_interfaces_with_static_catalog(
             (None, None) => build_builder_catalog()?,
         },
     };
-    let tool_metadata = resolve_manifest_tools_with_catalog(&builder_catalog, tool_names)?;
-    let mut w = BamlWriter::new();
-    w.push_block(&generated_tools_prelude());
-    let out = w.as_mut_string();
-
-    // --- Domain type generation ---
-    let mut emitted_decl_types: HashSet<String> = HashSet::new();
-    let mut macro_decls = String::new();
-
-    for tool in &tool_metadata {
-        if let Some(decl) = &tool.baml_decl {
-            emitted_decl_types.insert(tool.input_type.name.clone());
-            emitted_decl_types.insert(tool.output_type.name.clone());
-            if tool.open_input_type.name != "()" {
-                emitted_decl_types.insert(tool.open_input_type.name.clone());
-            }
-
-            if !macro_decls.is_empty() {
-                macro_decls.push('\n');
-            }
-            macro_decls.push_str(decl);
-            macro_decls.push('\n');
-        }
-    }
-
-    if !macro_decls.is_empty() {
-        out.push_str("// Domain types generated from #[derive(BamlType)]\n");
-        out.push_str(&macro_decls);
-        if !macro_decls.ends_with('\n') {
-            out.push('\n');
-        }
-    }
-
-    let mut schemas = HashMap::new();
-    let mut type_names = HashMap::new();
-
-    for tool in &tool_metadata {
-        if tool.baml_decl.is_some() {
-            continue;
-        }
-
-        extract_nested_schemas(&tool.input_schema, &mut type_names);
-        extract_nested_schemas(&tool.output_schema, &mut type_names);
-        if tool.open_input_type.name != "()" {
-            extract_nested_schemas(&tool.open_input_schema, &mut type_names);
-        }
-
-        if !emitted_decl_types.contains(&tool.input_type.name) {
-            schemas.insert(tool.input_type.name.clone(), tool.input_schema.clone());
-            type_names.insert(tool.input_type.name.clone(), tool.input_type.name.clone());
-        }
-
-        if !emitted_decl_types.contains(&tool.output_type.name) {
-            schemas.insert(tool.output_type.name.clone(), tool.output_schema.clone());
-            type_names.insert(tool.output_type.name.clone(), tool.output_type.name.clone());
-        }
-
-        if tool.open_input_type.name != "()"
-            && !emitted_decl_types.contains(&tool.open_input_type.name)
-        {
-            schemas.insert(
-                tool.open_input_type.name.clone(),
-                tool.open_input_schema.clone(),
-            );
-            type_names.insert(
-                tool.open_input_type.name.clone(),
-                tool.open_input_type.name.clone(),
-            );
-        }
-    }
-
-    if !schemas.is_empty() {
-        let domain_types = schema_to_baml::generate_baml_types_from_schemas(&schemas, &type_names)?;
-        if !domain_types.is_empty() {
-            out.push_str("// Domain types generated from JSON schemas\n");
-            out.push_str(&domain_types);
-            if !domain_types.ends_with('\n') {
-                out.push('\n');
-            }
-        }
-    }
-
-    for tool in &tool_metadata {
-        generate_tool_card_baml(out, tool)?;
-        out.push('\n');
-        generate_tool_baml_interface(out, tool)?;
-        out.push('\n');
-    }
-
-    Ok(w.into_string())
+    let tools = resolve_manifest_tools_with_catalog(&builder_catalog, tool_names)?;
+    let graph = ToolSchemaGraph::from_tools(&tools)?;
+    render_baml_tool_interfaces_from_metadata(&tools, &graph)
 }
 
-fn generate_tool_card_baml(output: &mut String, tool: &ToolFunctionMetadata) -> Result<()> {
+fn generate_tool_card_baml(
+    output: &mut String,
+    tool: &ToolFunctionMetadata,
+    contract: &ToolSchemaContract,
+    graph: &ToolSchemaGraph,
+) -> Result<()> {
     use crate::builder::error::write_line;
 
     let class_name = &tool.class_name;
@@ -181,7 +141,7 @@ fn generate_tool_card_baml(output: &mut String, tool: &ToolFunctionMetadata) -> 
     let policy = format!("{:?}", tool.session_policy);
     let capability = format!("{:?}", tool.capability);
     let invocation_mode = baml_rt_tools::capability_invocation_mode(tool.capability);
-    let input_summary = summarize_input_schema(&tool.input_schema);
+    let input_summary = render_schema_type_ref(graph, &contract.input);
 
     write_line(
         output,
@@ -211,187 +171,28 @@ fn generate_tool_card_baml(output: &mut String, tool: &ToolFunctionMetadata) -> 
     Ok(())
 }
 
-fn summarize_input_schema(schema: &Value) -> String {
-    let mut visited_refs = HashSet::new();
-    summarize_schema_shape(schema, schema, &mut visited_refs)
-}
-
-fn summarize_schema_shape(
-    schema: &Value,
-    root_schema: &Value,
-    visited_refs: &mut HashSet<String>,
-) -> String {
-    let Some(obj) = schema.as_object() else {
-        return "any".to_string();
-    };
-    if let Some(ref_path) = obj.get("$ref").and_then(Value::as_str) {
-        return summarize_ref_schema(ref_path, root_schema, visited_refs);
-    }
-    if obj
-        .get(OPAQUE_JSON_SCHEMA_MARKER_KEY)
-        .and_then(Value::as_str)
-        .is_some_and(|marker| marker == OPAQUE_JSON_BAML_TYPE)
-    {
-        return OPAQUE_JSON_BAML_TYPE.to_string();
-    }
-    if let Some(const_value) = obj.get("const") {
-        return summarize_const_value(const_value);
-    }
-    if let Some(one_of) = obj.get("oneOf").and_then(Value::as_array) {
-        return summarize_union_schema("oneOf", one_of, root_schema, visited_refs);
-    }
-    if let Some(any_of) = obj.get("anyOf").and_then(Value::as_array) {
-        return summarize_union_schema("anyOf", any_of, root_schema, visited_refs);
-    };
-    if let Some(enum_values) = obj.get("enum").and_then(Value::as_array) {
-        return summarize_enum_values(enum_values);
-    }
-    if let Some(props) = obj.get("properties").and_then(Value::as_object) {
-        return summarize_object_schema(props, obj, root_schema, visited_refs);
-    }
-    if let Some(items) = obj.get("items") {
-        return format!(
-            "{}[]",
-            summarize_schema_shape(items, root_schema, visited_refs)
-        );
-    }
-    if let Some(additional_properties) = obj.get("additionalProperties") {
-        return format!(
-            "map<string, {}>",
-            summarize_schema_shape(additional_properties, root_schema, visited_refs)
-        );
-    }
-    if let Some(type_array) = obj.get("type").and_then(Value::as_array) {
-        let mut parts = type_array
-            .iter()
-            .filter_map(Value::as_str)
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        parts.sort();
-        parts.dedup();
-        return if parts.is_empty() {
-            "any".to_string()
-        } else {
-            parts.join(" | ")
-        };
-    }
-    obj.get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("any")
-        .to_string()
-}
-
-fn summarize_object_schema(
-    props: &serde_json::Map<String, Value>,
-    schema_obj: &serde_json::Map<String, Value>,
-    root_schema: &Value,
-    visited_refs: &mut HashSet<String>,
-) -> String {
-    let required: HashSet<&str> = schema_obj
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    let mut parts: Vec<String> = Vec::new();
-    let mut sorted_keys: Vec<&String> = props.keys().collect();
-    sorted_keys.sort();
-    for key in sorted_keys {
-        let prop = &props[key];
-        let ty = summarize_schema_shape(prop, root_schema, visited_refs);
-        let optional = if required.contains(key.as_str()) {
-            ""
-        } else {
-            "?"
-        };
-        parts.push(format!("{key}{optional}: {ty}"));
-    }
-    format!("{{ {} }}", parts.join(", "))
-}
-
-fn summarize_union_schema(
-    kind: &str,
-    variants: &[Value],
-    root_schema: &Value,
-    visited_refs: &mut HashSet<String>,
-) -> String {
-    let parts = variants
-        .iter()
-        .map(|variant| summarize_schema_shape(variant, root_schema, visited_refs))
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        "any".to_string()
-    } else {
-        format!("{kind}({})", parts.join(" | "))
-    }
-}
-
-fn summarize_ref_schema(
-    ref_path: &str,
-    root_schema: &Value,
-    visited_refs: &mut HashSet<String>,
-) -> String {
-    if !ref_path.starts_with('#') {
-        return summarize_ref_name(ref_path);
-    }
-    if !visited_refs.insert(ref_path.to_string()) {
-        return summarize_ref_name(ref_path);
-    }
-    let summary = root_schema
-        .pointer(ref_path.trim_start_matches('#'))
-        .map(|resolved| summarize_schema_shape(resolved, root_schema, visited_refs))
-        .unwrap_or_else(|| summarize_ref_name(ref_path));
-    visited_refs.remove(ref_path);
-    summary
-}
-
-fn summarize_ref_name(ref_path: &str) -> String {
-    ref_path
-        .rsplit('/')
-        .next()
-        .filter(|segment| !segment.is_empty())
-        .unwrap_or("$ref")
-        .to_string()
-}
-
-fn summarize_const_value(value: &Value) -> String {
-    match value {
-        Value::String(value) => format!("\"{value}\""),
-        Value::Number(value) => value.to_string(),
-        Value::Bool(value) => value.to_string(),
-        Value::Null => "null".to_string(),
-        _ => "const".to_string(),
-    }
-}
-
-fn summarize_enum_values(values: &[Value]) -> String {
-    let mut rendered = values.iter().map(summarize_const_value).collect::<Vec<_>>();
-    rendered.sort();
-    rendered.dedup();
-    if rendered.is_empty() {
-        "enum".to_string()
-    } else {
-        format!("enum({})", rendered.join(" | "))
-    }
-}
-
-fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata) -> Result<()> {
+fn generate_tool_baml_interface(
+    output: &mut String,
+    tool: &ToolFunctionMetadata,
+    contract: &ToolSchemaContract,
+    graph: &ToolSchemaGraph,
+) -> Result<()> {
     use crate::builder::error::write_line;
 
     let class_name = &tool.class_name;
-    let open_input_type_name = &tool.open_input_type.name;
-    let input_type_name = &tool.input_type.name;
+    let input_type = render_schema_type_ref(graph, &contract.input);
 
-    let open_step_name = format!("{}OpenStep", class_name);
-    let send_step_name = format!("{}SendStep", class_name);
-    let search_read_step_name = format!("{}SearchReadStep", class_name);
-    let page_read_step_name = format!("{}PageReadStep", class_name);
-    let finish_step_name = format!("{}FinishStep", class_name);
-    let abort_step_name = format!("{}AbortStep", class_name);
-    let step_union_name = format!("{}SessionStep", class_name);
-    let plan_type_name = format!("{}SessionPlan", class_name);
+    let open_step_name = format!("{class_name}OpenStep");
+    let send_step_name = format!("{class_name}SendStep");
+    let search_read_step_name = format!("{class_name}SearchReadStep");
+    let page_read_step_name = format!("{class_name}PageReadStep");
+    let finish_step_name = format!("{class_name}FinishStep");
+    let abort_step_name = format!("{class_name}AbortStep");
+    let step_union_name = format!("{class_name}SessionStep");
+    let plan_type_name = format!("{class_name}SessionPlan");
     let access_note = tool
         .access
-        .map(|access| format!(" Access: {}.", access))
+        .map(|access| format!(" Access: {access}."))
         .unwrap_or_default();
 
     let tool_name = tool.name.to_string();
@@ -410,56 +211,46 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
         prompt_copy::STEP_DESC_DEFAULT
     };
 
-    write_line(output, &format!("class {} {{", open_step_name))?;
+    write_line(output, &format!("class {open_step_name} {{"))?;
     write_line(output, "  op \"Open\"")?;
     write_line(
         output,
         &format!("  tool_name \"{tool_name}\" @description(\"Tool to open\")"),
     )?;
-    let open_schema_has_properties = tool
-        .open_input_schema
-        .get("properties")
-        .and_then(|p| p.as_object())
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
-    if open_input_type_name != "()"
-        && open_input_type_name != "null"
-        && open_input_type_name != "void"
-        && open_schema_has_properties
-    {
-        let open_is_optional = schema_allows_empty_or_optional_open_input(&tool.open_input_schema);
-        let optional_suffix = if open_is_optional { "?" } else { "" };
-        let initial_input_desc = if open_is_optional {
-            "Optional open payload."
+    if let OpenInputContract::Present { ty, requirement } = &contract.open_input {
+        let open_type = render_schema_type_ref(graph, ty);
+        let optional_suffix = if matches!(
+            requirement,
+            crate::builder::tool_schema_graph::OpenInputRequirement::Optional
+        ) {
+            "?"
         } else {
+            ""
+        };
+        let initial_input_desc = if optional_suffix.is_empty() {
             "Required open payload."
+        } else {
+            "Optional open payload."
         };
         write_line(
             output,
             &format!(
-                "  initial_input {}{} @description(\"{}\")",
-                open_input_type_name, optional_suffix, initial_input_desc
+                "  initial_input {open_type}{optional_suffix} @description(\"{initial_input_desc}\")"
             ),
         )?;
     }
     write_line(output, "}")?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", send_step_name))?;
+    write_line(output, &format!("class {send_step_name} {{"))?;
     write_line(output, "  op \"Send\"")?;
-    // Literal `tool_name`, symmetric to OpenStep: pins the tool on polymorphic-entry Sends
-    // (no open session, no Open hop) so the runtime resolves via `selected_tool` instead of
-    // guessing from the input shape. Constrained decode auto-fills it; the model never types it.
     write_line(
         output,
         &format!("  tool_name \"{tool_name}\" @description(\"Tool this Send targets\")"),
     )?;
     write_line(
         output,
-        &format!(
-            "  input {} @description(\"{}\")",
-            input_type_name, send_input_desc
-        ),
+        &format!("  input {input_type} @description(\"{send_input_desc}\")"),
     )?;
     write_line(
         output,
@@ -471,7 +262,7 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
     write_line(output, "}")?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", search_read_step_name))?;
+    write_line(output, &format!("class {search_read_step_name} {{"))?;
     write_line(output, "  op \"SearchRead\"")?;
     write_line(
         output,
@@ -483,7 +274,7 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
     write_line(output, "}")?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", page_read_step_name))?;
+    write_line(output, &format!("class {page_read_step_name} {{"))?;
     write_line(output, "  op \"PageRead\"")?;
     write_line(
         output,
@@ -495,12 +286,12 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
     write_line(output, "}")?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", finish_step_name))?;
+    write_line(output, &format!("class {finish_step_name} {{"))?;
     write_line(output, "  op \"Finish\"")?;
     write_line(output, "}")?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", abort_step_name))?;
+    write_line(output, &format!("class {abort_step_name} {{"))?;
     write_line(output, "  op \"Abort\"")?;
     write_line(output, "}")?;
     write_line(output, "")?;
@@ -508,25 +299,15 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
     write_line(
         output,
         &format!(
-            "type {} = {} | {} | {} | {} | {} | {}",
-            step_union_name,
-            open_step_name,
-            send_step_name,
-            search_read_step_name,
-            page_read_step_name,
-            finish_step_name,
-            abort_step_name
+            "type {step_union_name} = {open_step_name} | {send_step_name} | {search_read_step_name} | {page_read_step_name} | {finish_step_name} | {abort_step_name}",
         ),
     )?;
     write_line(output, "")?;
 
-    write_line(output, &format!("class {} {{", plan_type_name))?;
+    write_line(output, &format!("class {plan_type_name} {{"))?;
     write_line(
         output,
-        &format!(
-            "  step {} @description(\"{}{}\")",
-            step_union_name, step_desc, access_note
-        ),
+        &format!("  step {step_union_name} @description(\"{step_desc}{access_note}\")",),
     )?;
     write_line(
         output,
@@ -538,61 +319,4 @@ fn generate_tool_baml_interface(output: &mut String, tool: &ToolFunctionMetadata
     write_line(output, "}")?;
 
     Ok(())
-}
-
-pub(crate) fn extract_nested_schemas(schema: &Value, type_names: &mut HashMap<String, String>) {
-    if let Some(schema_obj) = schema.as_object() {
-        if let Some(defs) = schema_obj.get("$defs").and_then(|v| v.as_object()) {
-            for def_name in defs.keys() {
-                type_names.insert(def_name.clone(), def_name.clone());
-            }
-        }
-
-        if let Some(defs) = schema_obj.get("definitions").and_then(|v| v.as_object()) {
-            for def_name in defs.keys() {
-                type_names.insert(def_name.clone(), def_name.clone());
-            }
-        }
-
-        for value in schema_obj.values() {
-            extract_nested_schemas(value, type_names);
-        }
-    } else if let Some(schema_array) = schema.as_array() {
-        for item in schema_array {
-            extract_nested_schemas(item, type_names);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::summarize_input_schema;
-
-    #[test]
-    fn summarize_input_schema_resolves_local_refs() {
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "payload": { "$ref": "#/$defs/Payload" }
-            },
-            "required": ["payload"],
-            "$defs": {
-                "Payload": {
-                    "type": "object",
-                    "properties": {
-                        "count": { "type": "integer" },
-                        "kind": { "type": "string" }
-                    },
-                    "required": ["count"]
-                }
-            }
-        });
-
-        assert_eq!(
-            summarize_input_schema(&schema),
-            "{ payload: { count: integer, kind?: string } }"
-        );
-    }
 }

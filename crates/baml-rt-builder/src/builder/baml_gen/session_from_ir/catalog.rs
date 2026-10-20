@@ -11,17 +11,17 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use baml_rt_tools::{
-    schema_allows_empty_or_optional_open_input,
-    tools::{ToolCapability, ToolFunctionMetadata},
-};
+use baml_rt_tools::tools::{ToolCapability, ToolFunctionMetadata};
 use baml_types::{
     EvaluationContext, LiteralValue,
     ir_type::{TypeNonStreaming, UnionTypeViewGeneric},
 };
 use internal_baml_core::ir::{ir_hasher::IRSignature, repr::IntermediateRepr};
 
-use crate::builder::baml_gen::escape::escape_baml_description;
+use crate::builder::{
+    baml_gen::escape::escape_baml_description,
+    tool_schema_graph::{OpenInputContract, ToolSchemaGraph, baml::render_schema_type_ref},
+};
 
 /// Historical synthetic catalog function name retained for rewrite-policy compatibility.
 pub const CATALOG_FUNCTION_NAME: &str = "AgentToolSchemaCatalog__bamlrt";
@@ -55,6 +55,7 @@ pub fn collect_catalog_types(
     ir_sig: &IRSignature,
     ir: &IntermediateRepr,
     tool_metadata: &[ToolFunctionMetadata],
+    graph: &ToolSchemaGraph,
     _unified_roots: &baml_rt_tools::UnifiedStepExecutorFunctionsMap,
 ) -> CatalogPlan {
     if tool_metadata.is_empty() {
@@ -83,15 +84,23 @@ pub fn collect_catalog_types(
         for step in catalog_operation_type_names(tool) {
             collect_named_type(&step, ir_sig, &mut type_names);
         }
-        if has_open_input(tool) {
-            collect_named_type(&tool.open_input_type.name, ir_sig, &mut type_names);
+        let Some(contract) = graph.tools.get(&tool.name.to_string()) else {
+            continue;
+        };
+        if let OpenInputContract::Present { ty, .. } = &contract.open_input {
+            collect_named_type(&render_schema_type_ref(graph, ty), ir_sig, &mut type_names);
         }
-        collect_named_type(&tool.input_type.name, ir_sig, &mut type_names);
+        collect_named_type(
+            &render_schema_type_ref(graph, &contract.input),
+            ir_sig,
+            &mut type_names,
+        );
     }
 
     let type_names: Vec<String> = type_names.into_iter().collect();
     let descriptions = collect_catalog_descriptions(ir);
-    let rendered_text = render_catalog_text(ir_sig, &sorted_tools, &type_names, &descriptions);
+    let rendered_text =
+        render_catalog_text(ir_sig, &sorted_tools, graph, &type_names, &descriptions);
     CatalogPlan {
         type_names,
         rendered_text,
@@ -101,6 +110,7 @@ pub fn collect_catalog_types(
 fn render_catalog_text(
     ir_sig: &IRSignature,
     tool_metadata: &[&ToolFunctionMetadata],
+    graph: &ToolSchemaGraph,
     type_names: &[String],
     descriptions: &CatalogDescriptions,
 ) -> String {
@@ -121,15 +131,22 @@ fn render_catalog_text(
         out.push_str("  purpose: ");
         out.push_str(&single_line_description(&tool.description));
         out.push('\n');
+        let contract = graph.tools.get(&tool.name.to_string());
         out.push_str("  open: ");
-        out.push_str(if has_open_input(tool) {
-            tool.open_input_type.name.as_str()
-        } else {
-            "None"
-        });
+        out.push_str(
+            match contract.map(|contract| &contract.open_input) {
+                Some(OpenInputContract::Present { ty, .. }) => render_schema_type_ref(graph, ty),
+                _ => "None".to_string(),
+            }
+            .as_str(),
+        );
         out.push('\n');
         out.push_str("  send: ");
-        out.push_str(&tool.input_type.name);
+        out.push_str(
+            &contract
+                .map(|contract| render_schema_type_ref(graph, &contract.input))
+                .unwrap_or_else(|| "<missing graph contract>".to_string()),
+        );
         out.push('\n');
         out.push_str("  capability: ");
         out.push_str(&format!("{:?}", tool.capability));
@@ -172,20 +189,6 @@ fn catalog_operation_type_names(tool: &ToolFunctionMetadata) -> Vec<String> {
     .into_iter()
     .map(|suffix| format!("{class_name}{suffix}"))
     .collect()
-}
-
-fn has_open_input(tool: &ToolFunctionMetadata) -> bool {
-    let name = tool.open_input_type.name.as_str();
-    if matches!(name, "()" | "null" | "void") {
-        return false;
-    }
-    !schema_allows_empty_or_optional_open_input(&tool.open_input_schema)
-        || tool
-            .open_input_schema
-            .get("properties")
-            .and_then(|value| value.as_object())
-            .map(|props| !props.is_empty())
-            .unwrap_or(false)
 }
 
 fn single_line_description(text: &str) -> String {

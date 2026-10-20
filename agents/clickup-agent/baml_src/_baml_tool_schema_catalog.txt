@@ -67,11 +67,11 @@ type ConversationPart = {
   raw?: string @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url?: string @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename?: string @description("Attachment filename when this part refers to a file.")
-  media_type?: string @description("MIME type for this part, for example text/plain or image/png.")
+  mediaType?: string @description("MIME type for this part, for example text/plain or image/png.")
 }
 
 type CreateTaskInput = {
-  list_id: string @description("ClickUp list ID where the task will be created — obtain from ListLists.")
+  list_id: string @description("ClickUp list ID where the task will be created \\u{2014} obtain from ListLists.")
   name: string @description("Task title / name.")
   description?: string @description("Optional long-form task description (Markdown supported).")
   priority?: int @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
@@ -84,7 +84,7 @@ type DataPart = {
 }
 
 type DeleteTaskInput = {
-  task_id: string @description("ClickUp task ID to delete — obtain from ListTasks.")
+  task_id: string @description("ClickUp task ID to delete \\u{2014} obtain from ListTasks.")
   confirm_delete: bool @description("Must be true to proceed. Always confirm deletion with the user first.")
 }
 
@@ -94,9 +94,9 @@ type DiscoverAgentsOpenInput = {
 
 type DiscoverAgentsSendInput = {
   query?: string
-  required_capabilities?: string[]
-  required_schema_versions?: string[]
-  required_source_kinds?: string[]
+  requiredCapabilities?: string[]
+  requiredSchemaVersions?: string[]
+  requiredSourceKinds?: string[]
   limit?: int
   offset?: int
 }
@@ -111,7 +111,7 @@ type DiscoverToolsSendInput = {
 }
 
 type GetTaskInput = {
-  task_id: string @description("ClickUp task ID — obtain from ListTasks.")
+  task_id: string @description("ClickUp task ID \\u{2014} obtain from ListTasks.")
 }
 
 type InternalA2aOpenInput = {
@@ -128,15 +128,15 @@ type InternalA2aTarget = {
 }
 
 type ListListsInput = {
-  space_id: string @description("ClickUp space ID — obtain from ListSpaces.")
+  space_id: string @description("ClickUp space ID \\u{2014} obtain from ListSpaces.")
 }
 
 type ListSpacesInput = {
-  team_id: string @description("ClickUp team (workspace) ID — obtain from ListTeams.")
+  team_id: string @description("ClickUp team (workspace) ID \\u{2014} obtain from ListTeams.")
 }
 
 type ListTasksInput = {
-  list_id: string @description("ClickUp list ID — obtain from ListLists.")
+  list_id: string @description("ClickUp list ID \\u{2014} obtain from ListLists.")
 }
 
 type ListTeamsInput = {
@@ -272,7 +272,7 @@ type TextPart = {
 }
 
 type UpdateTaskInput = {
-  task_id: string @description("ClickUp task ID to update — obtain from ListTasks or GetTask.")
+  task_id: string @description("ClickUp task ID to update \\u{2014} obtain from ListTasks or GetTask.")
   status?: string @description("New task status string (e.g. 'in progress', 'complete').")
   description?: string @description("Updated task description (Markdown supported).")
   priority?: int @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")

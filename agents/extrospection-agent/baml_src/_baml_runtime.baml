@@ -118,34 +118,36 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from JSON schemas
+// Domain types generated from the canonical tool schema graph
 class AgentEventSubscriptionDto {
-  schema_versions string[]
-  source_kinds string[]
-  source_keys string[]
-  source_key_prefixes string[]
+  schemaVersions string[]?
+  sourceKinds string[]?
+  sourceKeys string[]?
+  sourceKeyPrefixes string[]?
+  @@dynamic
 }
 
 class AgentCardDto {
   name string
   version string
-  content_hash string | null?
-  repository_version int | null?
-  agent_package string
-  agent_instance_id string
+  contentHash string | null?
+  repositoryVersion int | null?
+  agentPackage string
+  agentInstanceId string
   tools string[]
   description string | null?
   capabilities string[]
-  tags string[]
-  subscriptions AgentEventSubscriptionDto[]
+  tags string[]?
+  subscriptions AgentEventSubscriptionDto[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -158,38 +160,42 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverAgentsSendInput {
   query string | null?
-  required_capabilities string[] | null?
-  required_schema_versions string[] | null?
-  required_source_kinds string[] | null?
+  requiredCapabilities string[] | null?
+  requiredSchemaVersions string[] | null?
+  requiredSourceKinds string[] | null?
   limit int | null?
   offset int | null?
+  @@dynamic
 }
 
-enum SessionReadResultDtoMode {
+enum SessionReadMode {
   RetrieveRef
     @alias("retrieve_ref")
 }
 
-enum SessionReadResultDtoProjection {
+enum ProvenanceReadProjectionDto {
   Identity
     @alias("identity")
   Summary
@@ -199,9 +205,10 @@ enum SessionReadResultDtoProjection {
 }
 
 class ProvenanceArchiveSummaryDto {
-  archive_ref string
-  payload_count int
-  payload_sources string[]
+  archiveRef string
+  payloadCount int
+  payloadSources string[]
+  @@dynamic
 }
 
 class ProvenancePayloadLlmCallDto {
@@ -209,6 +216,7 @@ class ProvenancePayloadLlmCallDto {
   activity_ref string
   prompt_json string
   source string
+  @@dynamic
 }
 
 class ProvenancePayloadLlmResultDto {
@@ -216,6 +224,7 @@ class ProvenancePayloadLlmResultDto {
   activity_ref string
   result_json string
   source string
+  @@dynamic
 }
 
 class ProvenancePayloadToolCallDto {
@@ -225,6 +234,7 @@ class ProvenancePayloadToolCallDto {
   phase string | null?
   args_json string
   source string
+  @@dynamic
 }
 
 class ProvenancePayloadToolResultDto {
@@ -232,74 +242,77 @@ class ProvenancePayloadToolResultDto {
   activity_ref string
   result_json string
   source string
+  @@dynamic
 }
 
 class ProvenanceArchiveRecordDto {
-  archive_ref string
+  archiveRef string
   payloads ProvenancePayloadLlmCallDto | ProvenancePayloadLlmResultDto | ProvenancePayloadToolCallDto | ProvenancePayloadToolResultDto[]
+  @@dynamic
 }
 
 class SessionReadResultDto {
-  mode SessionReadResultDtoMode
-  ref_id string
-  projection SessionReadResultDtoProjection
+  mode SessionReadMode
+  refId string
+  projection ProvenanceReadProjectionDto
   refs string[]
-  archive_summary ProvenanceArchiveSummaryDto | null?
-  archive_record ProvenanceArchiveRecordDto | null?
+  archiveSummary ProvenanceArchiveSummaryDto | null?
+  archiveRecord ProvenanceArchiveRecordDto | null?
+  @@dynamic
 }
 
 class ProvenanceRetrievalBudgetDto {
-  calls_used int
-  calls_cap int
-  bytes_used int
-  bytes_cap int
-  items_used int
-  items_cap int
+  callsUsed int
+  callsCap int
+  bytesUsed int
+  bytesCap int
+  itemsUsed int
+  itemsCap int
+  @@dynamic
 }
 
 class ProvenanceQueryNextOutput {
-  payload_json string | null?
-  read_result SessionReadResultDto | null?
-  retrieval_budget ProvenanceRetrievalBudgetDto | null?
-  budget_exhausted bool | null?
+  payloadJson string | null?
+  readResult SessionReadResultDto | null?
+  retrievalBudget ProvenanceRetrievalBudgetDto | null?
+  budgetExhausted bool | null?
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class ProvenanceQueryOpenInput {
   reason string | null?
-}
-
-enum SessionReadEnvelopeMode {
-  RetrieveRef
-    @alias("retrieve_ref")
+  @@dynamic
 }
 
 class SessionReadEnvelope {
-  mode SessionReadEnvelopeMode | null?
-  ref_id string
+  mode SessionReadMode | null?
+  refId string
   projection string | null?
-  budget_hint int | null?
+  budgetHint int | null?
+  @@dynamic
 }
 
 class ProvenanceQuerySendInput {
   read SessionReadEnvelope | null?
   resource string
-  context_id string | null?
-  task_id string | null?
-  agent_id string | null?
+  contextId string | null?
+  taskId string | null?
+  agentId string | null?
   provider string | null?
   model string | null?
-  tool_name string | null?
-  baml_prompt string | null?
-  payload_text string | null?
-  group_by string[] | null?
-  sort_by string | null?
-  sort_dir string | null?
+  toolName string | null?
+  bamlPrompt string | null?
+  payloadText string | null?
+  groupBy string[] | null?
+  sortBy string | null?
+  sortDir string | null?
   outcome string | null?
-  page_size int | null?
+  pageSize int | null?
   cursor string | null?
-  top_k int | null?
+  topK int | null?
+  @@dynamic
 }
 
 /// Tool card for system/extrospection: metadata for polymorphic Open selection.
@@ -309,7 +322,7 @@ class SystemExtrospectionToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ agent_id?: anyOf(string | null), baml_prompt?: anyOf(string | null), context_id?: anyOf(string | null), cursor?: anyOf(string | null), group_by?: anyOf(string[] | null), model?: anyOf(string | null), outcome?: anyOf(string | null), page_size?: anyOf(integer | null), payload_text?: anyOf(string | null), provider?: anyOf(string | null), read?: anyOf({ budget_hint?: anyOf(integer | null), mode?: anyOf(enum(\"retrieve_ref\") | null), projection?: anyOf(string | null), ref_id: string } | null), resource: string, sort_by?: anyOf(string | null), sort_dir?: anyOf(string | null), task_id?: anyOf(string | null), tool_name?: anyOf(string | null), top_k?: anyOf(integer | null) }"
+  input_summary "ProvenanceQuerySendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 
@@ -358,7 +371,7 @@ class SystemDiscoverAgentsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), offset?: anyOf(integer | null), query?: anyOf(string | null), required_capabilities?: anyOf(string[] | null), required_schema_versions?: anyOf(string[] | null), required_source_kinds?: anyOf(string[] | null) }"
+  input_summary "DiscoverAgentsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 

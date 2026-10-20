@@ -56,9 +56,9 @@ type DiscoverAgentsOpenInput = {
 
 type DiscoverAgentsSendInput = {
   query?: string
-  required_capabilities?: string[]
-  required_schema_versions?: string[]
-  required_source_kinds?: string[]
+  requiredCapabilities?: string[]
+  requiredSchemaVersions?: string[]
+  requiredSourceKinds?: string[]
   limit?: int
   offset?: int
 }
@@ -70,21 +70,21 @@ type ProvenanceQueryOpenInput = {
 type ProvenanceQuerySendInput = {
   read?: SessionReadEnvelope
   resource: string
-  context_id?: string
-  task_id?: string
-  agent_id?: string
+  contextId?: string
+  taskId?: string
+  agentId?: string
   provider?: string
   model?: string
-  tool_name?: string
-  baml_prompt?: string
-  payload_text?: string
-  group_by?: string[]
-  sort_by?: string
-  sort_dir?: string
+  toolName?: string
+  bamlPrompt?: string
+  payloadText?: string
+  groupBy?: string[]
+  sortBy?: string
+  sortDir?: string
   outcome?: string
-  page_size?: int
+  pageSize?: int
   cursor?: string
-  top_k?: int
+  topK?: int
 }
 
 type ReadOnlyFinishStep = {
@@ -97,13 +97,13 @@ type ReplyMediaType = "TextPlain" | "TextMarkdown" | "ApplicationJson" | "TextCs
 type ReplyPart = (TextPart | DataPart)
 
 type SessionReadEnvelope = {
-  mode?: SessionReadEnvelopeMode
-  ref_id: string
+  mode?: SessionReadMode
+  refId: string
   projection?: string
-  budget_hint?: int
+  budgetHint?: int
 }
 
-type SessionReadEnvelopeMode = "RetrieveRef"
+type SessionReadMode = "RetrieveRef"
 
 type StructuredReply = {
   parts: (TextPart | DataPart)[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")

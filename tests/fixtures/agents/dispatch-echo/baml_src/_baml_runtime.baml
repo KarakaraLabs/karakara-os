@@ -118,68 +118,73 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from JSON schemas
-enum CallbackToolInputVariant1Continuation {
+// Domain types generated from the canonical tool schema graph
+enum CallbackContinuationMode {
   Detached
     @alias("detached")
   ResumeCurrentTask
     @alias("resume_current_task")
 }
 
-class CallbackToolInputVariant1 {
-  after_ms int @description("Delay before the callback event is emitted, in milliseconds.")
-  source_key string @description("Stable event source key for subscription matching, for example `coordinator-agent:follow-up`.")
+class CallbackScheduleInput {
+  afterMs int @description("Delay before the callback event is emitted, in milliseconds.")
+  sourceKey string @description("Stable event source key for subscription matching, for example `coordinator-agent:follow-up`.")
   payload OpaqueJson @description("Opaque JSON payload delivered back through onDispatch.")
-  dedupe_key string | null? @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
-  continuation CallbackToolInputVariant1Continuation | null? @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
+  dedupeKey string | null? @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
+  continuation CallbackContinuationMode | null? @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
   op string
+  @@dynamic
 }
 
-class CallbackToolInputVariant2 {
-  callback_id string | null? @description("Exact callback id to cancel.")
-  source_key string | null? @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
-  dedupe_key string | null? @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
+class CallbackCancelInput {
+  callbackId string | null? @description("Exact callback id to cancel.")
+  sourceKey string | null? @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
+  dedupeKey string | null? @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
   op string
+  @@dynamic
 }
 
-type CallbackToolInput = CallbackToolInputVariant1 | CallbackToolInputVariant2
+type CallbackToolInput = CallbackScheduleInput | CallbackCancelInput
 
-class CallbackToolOutputVariant1 {
-  callback_id string
-  source_key string
-  scheduled_for_unix_ms int
+class CallbackScheduledOutput {
+  callbackId string
+  sourceKey string
+  scheduledForUnixMs int
   deduped bool
-  dispatch_context_id string | null?
-  dispatch_task_id string | null?
-  scheduling_context_id string | null?
-  scheduling_task_id string | null?
+  dispatchContextId string | null?
+  dispatchTaskId string | null?
+  schedulingContextId string | null?
+  schedulingTaskId string | null?
   outcome string
+  @@dynamic
 }
 
-class CallbackToolOutputVariant2 {
+class CallbackCancelledOutput {
   cancelled bool
-  callback_id string | null?
-  source_key string | null?
-  dedupe_key string | null?
+  callbackId string | null?
+  sourceKey string | null?
+  dedupeKey string | null?
   outcome string
+  @@dynamic
 }
 
-type CallbackToolOutput = CallbackToolOutputVariant1 | CallbackToolOutputVariant2
+type CallbackToolOutput = CallbackScheduledOutput | CallbackCancelledOutput
 
 class ToolDiscoveryRecordDto {
   name string
   bundle string
   description string
   tags string[]
-  event_sources string[]
+  eventSources string[]?
+  @@dynamic
 }
 
-enum HistoryContextV1Op {
+enum HistoryContextSessionOp {
   SearchRead
   PageRead
 }
 
-enum HistoryContextV1Status {
+enum HistoryContextStatus {
   Done
     @alias("done")
   Streaming
@@ -192,26 +197,30 @@ enum HistoryContextV1Status {
 
 class HistoryContextV1 {
   hop int
-  op HistoryContextV1Op
-  status HistoryContextV1Status
-  truncated bool
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
   cursor string | null?
   payload map<string, OpaqueJson> | null?
+  @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  history_context HistoryContextV1 | null?
+  historyContext HistoryContextV1 | null?
+  @@dynamic
 }
 
 class DiscoverToolsOpenInput {
   reason string | null?
+  @@dynamic
 }
 
 class DiscoverToolsSendInput {
   query string | null?
   limit int | null?
+  @@dynamic
 }
 
 /// Tool card for system/callback: metadata for polymorphic Open selection.
@@ -221,7 +230,7 @@ class SystemCallbackToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "oneOf({ after_ms: integer, continuation?: anyOf(enum(\"detached\" | \"resume_current_task\") | null), dedupe_key?: anyOf(string | null), op: \"schedule\", payload: OpaqueJson, source_key: string } | { callback_id?: anyOf(string | null), dedupe_key?: anyOf(string | null), op: \"cancel\", source_key?: anyOf(string | null) })"
+  input_summary "CallbackToolInput"
   tags string[] @description("Tool tags: system, callback, scheduler")
 }
 
@@ -269,7 +278,7 @@ class SystemDiscoverToolsToolCard {
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
-  input_summary "{ limit?: anyOf(integer | null), query?: anyOf(string | null) }"
+  input_summary "DiscoverToolsSendInput"
   tags string[] @description("Tool tags: system, discovery")
 }
 

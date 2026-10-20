@@ -72,6 +72,12 @@ const content = await ReadFile("/path/to/file.txt")
 const result = await WriteFile("/output.txt", processedContent)
 ```
 
+## Generated tool DTO schemas
+
+The builder generates Open, Send, and output DTO BAML from the three JSON Schema values in resolved `ToolFunctionMetadata`. Static tools, external tools, and MCP tools follow the same path. A static tool's `baml_decl`, `ToolTypeSpec.ts_decl`, and `extra_ts_decls` still travel in catalog records for compatibility, but builder DTO generation does not read them.
+
+The schema graph supports primitives, literals, homogeneous enums, arrays, typed maps, fixed objects, local `$defs` or `definitions` references, nullable values, `oneOf`, `anyOf`, `vec_or_one`, tagged object unions, and `OpaqueJson`. The builder rejects external `$ref` values, boolean schemas, unresolved local references, empty or unsupported objects, and other shapes it cannot represent in BAML. Use `OpaqueJson` when a tool accepts arbitrary JSON rather than publishing an unrepresentable schema.
+
 ## External Tool Development
 
 ### Tool Manifest

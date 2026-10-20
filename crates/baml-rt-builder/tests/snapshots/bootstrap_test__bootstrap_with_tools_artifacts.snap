@@ -85,7 +85,7 @@ operation: MathOperation;
 right: number;
  }
 
-export type MathOperation = "Add" | "Subtract" | "Multiply" | "Divide";
+export type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3";
 
 export interface SupportCalculateAbortStep { op: "Abort";
  }
@@ -704,34 +704,37 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// A binary arithmetic expression: left OP right.
-/// Provide integer operands and choose one of the four arithmetic operations.
+// Domain types generated from the canonical tool schema graph
+enum MathOperation {
+  Variant0
+    @alias("+")
+  Variant1
+    @alias("-")
+  Variant2
+    @alias("*")
+  Variant3
+    @alias("/")
+}
+
 class Expression {
   left int @description("Left-hand integer operand.")
   operation MathOperation @description("Arithmetic operation to apply.")
   right int @description("Right-hand integer operand. Must not be 0 when operation is Divide.")
+  @@dynamic
 }
 
-/// Arithmetic operation for a binary expression.
-/// Accepted as the variant name (e.g. 'Add') or its symbolic alias ('+', '-', '*', '/').
-enum MathOperation {
-  Add @alias("+")
-  Subtract @alias("-")
-  Multiply @alias("*")
-  Divide @alias("/")
-}
-
-/// Input to the calculator tool. Construct an Expression and submit it to evaluate.
 class CalculatorInput {
   expression Expression @description("The binary expression to evaluate.")
+  @@dynamic
 }
 
 class CalculatorOutput {
   expression string
   result float
   formatted string
+  @@dynamic
 }
+
 /// Tool card for support/calculate: metadata for polymorphic Open selection.
 class SupportCalculateToolCard {
   tool_name "support/calculate"
@@ -739,7 +742,7 @@ class SupportCalculateToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "{ expression: { left: integer, operation: enum(\"*\" | \"+\" | \"-\" | \"/\"), right: integer } }"
+  input_summary "CalculatorInput"
   tags string[] @description("Tool tags: support, calculate")
 }
 
@@ -816,7 +819,7 @@ Decide whether to use a tool and produce a session plan.
 Return exactly one JSON object of type `ArchivePageReadStep | ArchiveSearchReadStep | ReadOnlyFinishStep | SupportCalculateSendStep`.
 
 Use `op` as the discriminator: "PageRead" | "ReadOnlyFinish" | "SearchRead" | "Send".
-SupportCalculateSendStep Send: set `input.expression.operation` to exactly one JSON string token: "Add" | "Divide" | "Multiply" | "Subtract" — never an object or sentence.
+SupportCalculateSendStep Send: set `input.expression.operation` to exactly one JSON string token: "Variant0" | "Variant1" | "Variant2" | "Variant3" — never an object or sentence.
 Do not add text before or after the JSON object.
 
 Phase policy:
@@ -854,7 +857,7 @@ Decide whether to use a tool and produce a session plan.
 Return exactly one JSON object of type `SupportCalculateAbortStep | SupportCalculateFinishStep | SupportCalculatePageReadStep | SupportCalculateSearchReadStep | SupportCalculateSendStep`.
 
 Use `op` as the discriminator: "Abort" | "Finish" | "PageRead" | "SearchRead" | "Send".
-SupportCalculateSendStep Send: set `input.expression.operation` to exactly one JSON string token: "Add" | "Divide" | "Multiply" | "Subtract" — never an object or sentence.
+SupportCalculateSendStep Send: set `input.expression.operation` to exactly one JSON string token: "Variant0" | "Variant1" | "Variant2" | "Variant3" — never an object or sentence.
 Do not add text before or after the JSON object.
 
 Phase policy:
@@ -922,7 +925,7 @@ type Expression = {
   right: int @description("Right-hand integer operand. Must not be 0 when operation is Divide.")
 }
 
-type MathOperation = "Add" | "Subtract" | "Multiply" | "Divide"
+type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3"
 
 type ReadOnlyFinishStep = {
   op: "ReadOnlyFinish"

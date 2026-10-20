@@ -145,8 +145,8 @@ fn test_system_callback_tool_baml_interfaces() {
         "Expected callback payloads to use the explicit OpaqueJson transport type"
     );
     assert!(
-        baml_output.contains("input_summary \"oneOf("),
-        "Expected callback tool cards to summarize tagged-union inputs"
+        baml_output.contains("input_summary \"CallbackToolInput\""),
+        "Expected callback tool cards to reference the graph input root"
     );
     assert!(
         baml_output.contains("op string"),

@@ -1,11 +1,13 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 356
 expression: baml_output
 ---
 class Expression {
   left int
   operation MathOperation
   right int
+  @@dynamic
 }
 
 enum MathOperation {

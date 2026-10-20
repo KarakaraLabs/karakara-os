@@ -79,6 +79,7 @@ pub use session_from_ir::{
     SessionPlanIrInspector, render_generated_session_baml_from_ir,
 };
 pub use tool_interfaces::{
-    render_baml_tool_interfaces, render_baml_tool_interfaces_with_mcp_root,
-    render_baml_tool_interfaces_with_roots, render_baml_tool_interfaces_with_static_catalog,
+    render_baml_tool_interfaces, render_baml_tool_interfaces_from_metadata,
+    render_baml_tool_interfaces_with_mcp_root, render_baml_tool_interfaces_with_roots,
+    render_baml_tool_interfaces_with_static_catalog,
 };

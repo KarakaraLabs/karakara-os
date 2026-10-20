@@ -41,7 +41,7 @@ type ConversationPart = {
   raw?: string @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url?: string @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename?: string @description("Attachment filename when this part refers to a file.")
-  media_type?: string @description("MIME type for this part, for example text/plain or image/png.")
+  mediaType?: string @description("MIME type for this part, for example text/plain or image/png.")
 }
 
 type DataPart = {

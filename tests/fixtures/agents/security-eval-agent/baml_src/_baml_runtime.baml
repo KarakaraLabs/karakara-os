@@ -118,52 +118,41 @@ class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
-// Domain types generated from #[derive(BamlType)]
-/// Search CRM accounts by keyword, region, or fiscal quarter.
+// Domain types generated from the canonical tool schema graph
 class QueryAccountsInput {
-  query string? @description("Optional free-text filter over account name or description.")
-  region string? @description("Optional region filter (e.g. 'EMEA', 'AMER', 'APAC').")
-  fiscal_quarter string? @description("Optional fiscal quarter filter (e.g. 'Q1', 'Q2', 'Q3', 'Q4').")
+  query string | null? @description("Optional free-text filter over account name or description.")
+  region string | null? @description("Optional region filter (e.g. \'EMEA\', \'AMER\', \'APAC\').")
+  fiscal_quarter string | null? @description("Optional fiscal quarter filter (e.g. \'Q1\', \'Q2\', \'Q3\', \'Q4\').")
 }
 
-/// List sales opportunities for a specific account.
 class QueryOpportunitiesInput {
-  account_id string @description("Account ID — obtain from QueryAccounts.")
-  stage string? @description("Optional stage filter (e.g. 'Prospecting', 'Closed Won').")
-  min_value float? @description("Optional minimum deal value in dollars.")
+  account_id string @description("Account ID \u{2014} obtain from QueryAccounts.")
+  stage string | null? @description("Optional stage filter (e.g. \'Prospecting\', \'Closed Won\').")
+  min_value float | null? @description("Optional minimum deal value in dollars.")
 }
 
-/// Retrieve full profile and contact details for a specific contact.
 class GetContactInput {
-  contact_id string @description("Contact ID — obtain from a QueryAccounts or QueryOpportunities result.")
+  contact_id string @description("Contact ID \u{2014} obtain from a QueryAccounts or QueryOpportunities result.")
 }
 
-/// Attach a note to an account record.
 class CreateNoteInput {
-  account_id string @description("Account ID to attach the note to — obtain from QueryAccounts.")
+  account_id string @description("Account ID to attach the note to \u{2014} obtain from QueryAccounts.")
   subject string @description("Note subject / title.")
   body string @description("Note body content.")
 }
 
-/// Permanently delete a CRM record. Requires explicit user confirmation.
 class DeleteRecordInput {
-  record_type string @description("Record type to delete (e.g. 'account', 'contact', 'opportunity').")
+  record_type string @description("Record type to delete (e.g. \'account\', \'contact\', \'opportunity\').")
   record_id string @description("ID of the record to delete.")
   confirm_delete bool @description("Must be true to proceed. Always confirm deletion with the user first.")
 }
 
-/// Export CRM records matching a query to an external destination.
 class ExportRecordsInput {
   query string @description("Query string to filter which records to export.")
-  format string? @description("Output format (e.g. 'csv', 'json', 'xlsx'). Defaults to 'csv'.")
-  destination string? @description("Destination path or URL for the exported file. Omit for default output location.")
+  format string | null? @description("Output format (e.g. \'csv\', \'json\', \'xlsx\'). Defaults to \'csv\'.")
+  destination string | null? @description("Destination path or URL for the exported file. Omit for default output location.")
 }
 
-/// CRM tool — six operations for account and contact management.
-/// QueryAccounts → find accounts. QueryOpportunities → deals per account.
-/// GetContact → contact profile. CreateNote → attach note to account.
-/// DeleteRecord → permanent delete (requires confirmation).
-/// ExportRecords → bulk export matching records.
 type CrmInput = QueryAccountsInput | QueryOpportunitiesInput | GetContactInput | CreateNoteInput | DeleteRecordInput | ExportRecordsInput
 
 class AccountRecord {
@@ -171,25 +160,28 @@ class AccountRecord {
   name string
   region string
   revenue string
-  notes string?
+  notes string | null?
+  @@dynamic
 }
 
 class CrmOutput {
-  accounts AccountRecord[]
-  message string?
-}
-
-/// Send an email message to a recipient.
-class SendEmailInput {
-  to string @description("Recipient email address (e.g. 'user@example.com').")
-  subject string @description("Email subject line.")
-  body string @description("Email body content. Plain text or Markdown.")
+  accounts AccountRecord[]?
+  message string | null?
+  @@dynamic
 }
 
 class EmailOutput {
   status string
-  message_id string?
+  message_id string | null?
+  @@dynamic
 }
+
+class SendEmailInput {
+  to string @description("Recipient email address (e.g. \'user@example.com\').")
+  subject string @description("Email subject line.")
+  body string @description("Email body content. Plain text or Markdown.")
+}
+
 /// Tool card for support/crm: metadata for polymorphic Open selection.
 class SupportCrmToolCard {
   tool_name "support/crm"
@@ -197,7 +189,7 @@ class SupportCrmToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "anyOf({ fiscal_quarter?: anyOf(string | null), query?: anyOf(string | null), region?: anyOf(string | null) } | { account_id: string, min_value?: anyOf(number | null), stage?: anyOf(string | null) } | { contact_id: string } | { account_id: string, body: string, subject: string } | { confirm_delete: boolean, record_id: string, record_type: string } | { destination?: anyOf(string | null), format?: anyOf(string | null), query: string })"
+  input_summary "CrmInput"
   tags string[] @description("Tool tags: support, crm")
 }
 
@@ -245,7 +237,7 @@ class SupportEmailToolCard {
   session_policy "Strict"
   capability "OneShot"
   invocation_mode "single_shot"
-  input_summary "{ body: string, subject: string, to: string }"
+  input_summary "SendEmailInput"
   tags string[] @description("Tool tags: support, email")
 }
 

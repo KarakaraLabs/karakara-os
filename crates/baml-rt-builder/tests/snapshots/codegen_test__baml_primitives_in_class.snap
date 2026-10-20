@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 552
 expression: baml_output
 ---
 class PrimitiveTest {
@@ -7,4 +8,5 @@ class PrimitiveTest {
   float_field float
   string_field string
   bool_field bool
+  @@dynamic
 }
