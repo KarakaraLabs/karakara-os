@@ -1,0 +1,66 @@
+---
+source: crates/baml-rt-builder/tests/tool_schema_graph_typescript_test.rs
+expression: project_surface(&surface)
+---
+== declarations ==
+Address deps=[]
+export interface Address {
+  city: string;
+  lines: string[];
+  [key: string]: JsonValue | undefined;
+}
+
+NestedRequest deps=[Address, RequestKind]
+export interface NestedRequest {
+  address: Address;
+  kind: RequestKind;
+  [key: string]: JsonValue | undefined;
+}
+
+RepresentativeToolInput deps=[Address, NestedRequest, RepresentativeToolInputContentAlt0, RepresentativeToolInputContentAlt1, RepresentativeToolInputContentAlt2]
+export interface RepresentativeToolInput {
+  request: NestedRequest;
+  required_nullable: string | null;
+  optional_note?: string;
+  labels: Record<string, string>;
+  addresses: Address[];
+  content?: RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[];
+  opaque_payload: JsonValue;
+  [key: string]: JsonValue | undefined;
+}
+
+RepresentativeToolInputContentAlt0 deps=[]
+export interface RepresentativeToolInputContentAlt0 {
+  kind: "text";
+  text: string;
+  [key: string]: JsonValue | undefined;
+}
+
+RepresentativeToolInputContentAlt1 deps=[]
+export interface RepresentativeToolInputContentAlt1 {
+  kind: "image_url";
+  url: string;
+  [key: string]: JsonValue | undefined;
+}
+
+RepresentativeToolInputContentAlt2 deps=[]
+export interface RepresentativeToolInputContentAlt2 {
+  kind: "image_base64";
+  media_type: string;
+  data: string;
+  [key: string]: JsonValue | undefined;
+}
+
+RepresentativeToolOutput deps=[]
+export interface RepresentativeToolOutput {
+  accepted: boolean;
+}
+
+RequestKind deps=[]
+export type RequestKind = "create" | "update";
+
+== tools ==
+graph/representative
+  open_input: <absent>
+  input: RepresentativeToolInput
+  output: RepresentativeToolOutput
