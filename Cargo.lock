@@ -1503,6 +1503,8 @@ dependencies = [
  "baml-derive 0.2.2",
  "baml-derive-core",
  "insta",
+ "jsonschema",
+ "serde",
  "serde_json",
 ]
 

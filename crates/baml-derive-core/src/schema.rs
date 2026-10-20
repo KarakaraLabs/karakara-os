@@ -17,16 +17,35 @@ use serde_json::Value;
 ///
 /// | Rust form | JSON Schema |
 /// |---|---|
-/// | Struct with named fields | `{"type":"object","properties":{…},"required":[…]}` |
-/// | Unit enum | `{"type":"string","enum":["A","B",…]}` |
-/// | Newtype union enum (`#[baml(union)]`) | `{"anyOf":[{…},{…}]}` |
+/// | Struct with named fields | `{"type":"object","title":…,"properties":{…},"required":[…]}` |
+/// | Unit enum | `{"type":"string","title":…,"enum":["A","B",…]}` |
+/// | Newtype union enum (`#[baml(union)]`) | `{"title":…,"anyOf":[{…},{…}]}` |
 ///
-/// # Attribute interaction
+/// # Serde wire contract
 ///
-/// - `#[baml(skip)]` suppresses a field from the schema `properties` entirely.
-/// - `Option<T>` fields are excluded from `required`; all others are required.
-/// - User-defined types appearing as field types must themselves implement
-///   `JsonSchemaType` (guaranteed when they also derive `BamlType`).
+/// The derived schema describes the JSON input wire shape, so it honors the supported
+/// serde attributes:
+///
+/// - container `#[serde(rename_all = "...")]` and field `#[serde(rename = "...")]`
+///   choose `properties` keys;
+/// - `Option<T>` and `#[serde(default)]` fields are omitted from `required`;
+/// - `#[serde(deny_unknown_fields)]` emits `"additionalProperties": false`;
+/// - `#[serde(skip)]` / `#[serde(skip_deserializing)]` remove a field from `properties`;
+/// - unit enum wire values follow `#[serde(rename)]` / `#[serde(rename_all)]`.
+///
+/// `#[serde(alias = "...")]` spellings stay accepted by serde but are not enumerated in
+/// the schema. The schema lists the canonical wire spelling, which is also what generated
+/// BAML emits, so the model never sees a spelling the constrained decoder will not produce.
+///
+/// `#[baml(skip)]` suppresses a field from the schema `properties` entirely.
+/// User-defined types appearing as field types must themselves implement
+/// `JsonSchemaType` (guaranteed when they also derive `BamlType`).
+///
+/// # Unsupported serde forms
+///
+/// `#[serde(flatten)]`, internally or adjacently tagged enums, untagged non-union
+/// enums, asymmetric renames, and custom deserializers without an explicit BAML wire
+/// annotation fail the derive. Implement [`JsonSchemaType`] manually for those shapes.
 pub trait JsonSchemaType: Send + Sync + 'static {
     /// Return an inline JSON Schema value for this type.
     ///

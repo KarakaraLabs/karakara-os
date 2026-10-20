@@ -55,6 +55,14 @@ use syn::{DeriveInput, parse_macro_input};
 /// - `#[baml(alias = "...")]` — adds `@alias("...")` in BAML (BAML only)
 /// - `#[baml(description = "...")]` — adds `@description("...")` in BAML (BAML only)
 /// - `#[baml(skip)]` — omits the variant from **both** BAML and TypeScript output
+///
+/// # Serde wire attributes
+///
+/// The generated `JsonSchemaType` follows the supported serde input contract:
+/// container `rename_all`, field `rename`, `Option<T>` / `default` omission,
+/// `deny_unknown_fields`, and `skip`. Unsupported forms (`flatten`, tagged or
+/// untagged non-union enums, asymmetric renames, custom deserializers without a
+/// BAML wire annotation) fail the derive. See `JsonSchemaType` for details.
 #[proc_macro_derive(BamlType, attributes(baml))]
 pub fn derive_baml_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

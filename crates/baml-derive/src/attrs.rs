@@ -40,6 +40,41 @@ pub(crate) struct FieldAttrs {
     pub vec_or_one: bool,
 }
 
+/// Container-level `#[serde(...)]` attributes that change the JSON wire shape.
+#[derive(Debug, Default)]
+pub(crate) struct SerdeContainerWire {
+    /// `#[serde(rename_all = "...")]` applied to struct fields or enum variants.
+    pub rename_all: Option<String>,
+    /// `#[serde(deny_unknown_fields)]` → `"additionalProperties": false`.
+    pub deny_unknown_fields: bool,
+    /// Container-level `#[serde(default)]` accepts omitted fields.
+    pub default: bool,
+    /// `#[serde(untagged)]`.
+    pub untagged: bool,
+    /// `#[serde(tag = "...")]` (internally tagged).
+    pub tag: Option<String>,
+    /// `#[serde(content = "...")]` (adjacently tagged with `tag`).
+    pub content: Option<String>,
+}
+
+/// Field-level `#[serde(...)]` attributes that change the JSON wire shape.
+#[derive(Debug, Default)]
+pub(crate) struct SerdeFieldWire {
+    /// Input wire name from `#[serde(rename = "...")]` or the `deserialize` side of an
+    /// asymmetric rename.
+    pub rename: Option<String>,
+    /// `#[serde(default)]` or `#[serde(default = "...")]` accepts an omitted field.
+    pub default: bool,
+    /// `#[serde(skip)]` or `#[serde(skip_deserializing)]` removes the field from input.
+    pub skip: bool,
+    /// `#[serde(flatten)]` inlines another object; the derive cannot model it faithfully.
+    pub flatten: bool,
+    /// `#[serde(with = "...")]` or `#[serde(deserialize_with = "...")]`.
+    pub custom_deserializer: bool,
+    /// `#[serde(rename(serialize = ..., deserialize = ...))]` with differing names.
+    pub asymmetric_rename: bool,
+}
+
 /// Variant-level attributes from `#[baml(...)]`.
 #[derive(Debug, Default)]
 pub(crate) struct VariantAttrs {
@@ -207,14 +242,199 @@ fn parse_serde_nested_string(attrs: &[Attribute], key: &str) -> Option<String> {
     None
 }
 
-/// `#[serde(rename_all = "...")]` on an enum (container).
-pub(crate) fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<String> {
-    parse_serde_nested_string(attrs, "rename_all")
+/// Parse container-level `#[serde(...)]` attributes that affect the generated schema.
+pub(crate) fn parse_serde_container_wire(attrs: &[Attribute]) -> syn::Result<SerdeContainerWire> {
+    let mut result = SerdeContainerWire::default();
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_all") {
+                if meta.input.peek(syn::Token![=]) {
+                    result.rename_all = Some(parse_string_value(&meta)?);
+                } else {
+                    // `rename_all(serialize = ..., deserialize = ...)`: the input-side rule is
+                    // the only one that affects an input schema, so ignore the split form.
+                    consume_unrecognized(&meta)?;
+                }
+                return Ok(());
+            }
+            if meta.path.is_ident("deny_unknown_fields") {
+                result.deny_unknown_fields = true;
+                return Ok(());
+            }
+            if meta.path.is_ident("default") {
+                result.default = true;
+                consume_optional_value(&meta)?;
+                return Ok(());
+            }
+            if meta.path.is_ident("untagged") {
+                result.untagged = true;
+                return Ok(());
+            }
+            if meta.path.is_ident("tag") {
+                result.tag = Some(parse_string_value(&meta)?);
+                return Ok(());
+            }
+            if meta.path.is_ident("content") {
+                result.content = Some(parse_string_value(&meta)?);
+                return Ok(());
+            }
+            consume_unrecognized(&meta)
+        })?;
+    }
+
+    Ok(result)
+}
+
+/// Parse field-level `#[serde(...)]` attributes that affect the generated schema.
+pub(crate) fn parse_serde_field_wire(attrs: &[Attribute]) -> syn::Result<SerdeFieldWire> {
+    let mut result = SerdeFieldWire::default();
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                if meta.input.peek(syn::token::Paren) {
+                    let (rename, asymmetric) = parse_split_rename(&meta)?;
+                    result.rename = rename;
+                    result.asymmetric_rename |= asymmetric;
+                } else {
+                    result.rename = Some(parse_string_value(&meta)?);
+                }
+                return Ok(());
+            }
+            if meta.path.is_ident("alias") {
+                // Alias spellings stay accepted by serde but are not enumerated in the
+                // schema; the schema lists the canonical wire name. Consume and continue.
+                let _ = parse_string_value(&meta)?;
+                return Ok(());
+            }
+            if meta.path.is_ident("default") {
+                result.default = true;
+                consume_optional_value(&meta)?;
+                return Ok(());
+            }
+            if meta.path.is_ident("skip") || meta.path.is_ident("skip_deserializing") {
+                result.skip = true;
+                return Ok(());
+            }
+            if meta.path.is_ident("flatten") {
+                result.flatten = true;
+                return Ok(());
+            }
+            if meta.path.is_ident("with") || meta.path.is_ident("deserialize_with") {
+                result.custom_deserializer = true;
+                consume_optional_value(&meta)?;
+                return Ok(());
+            }
+            consume_unrecognized(&meta)
+        })?;
+    }
+
+    Ok(result)
+}
+
+/// Parse `rename(serialize = "...", deserialize = "...")`.
+///
+/// Returns the input-side name and whether the two sides disagree.
+fn parse_split_rename(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+) -> syn::Result<(Option<String>, bool)> {
+    let content;
+    syn::parenthesized!(content in meta.input);
+
+    let mut serialize = None;
+    let mut deserialize = None;
+    while !content.is_empty() {
+        let key: syn::Ident = content.parse()?;
+        content.parse::<syn::Token![=]>()?;
+        let value: syn::LitStr = content.parse()?;
+        match key.to_string().as_str() {
+            "serialize" => serialize = Some(value.value()),
+            "deserialize" => deserialize = Some(value.value()),
+            _ => {}
+        }
+        if content.peek(syn::Token![,]) {
+            content.parse::<syn::Token![,]>()?;
+        }
+    }
+
+    let asymmetric = match (&serialize, &deserialize) {
+        (Some(serialize), Some(deserialize)) => serialize != deserialize,
+        // A one-sided rename is asymmetric: the input and output spellings differ.
+        (Some(_), None) | (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    Ok((deserialize.or(serialize), asymmetric))
+}
+
+/// Consume an optional `= <expr>` value so nested serde parsing can continue.
+fn consume_optional_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    if meta.input.peek(syn::Token![=]) {
+        meta.value()?.parse::<syn::Expr>()?;
+    }
+    Ok(())
+}
+
+/// Consume an unrecognized serde attribute, including `= value` and `( ... )` forms.
+fn consume_unrecognized(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    if meta.input.peek(syn::Token![=]) {
+        meta.value()?.parse::<syn::Expr>()?;
+    } else if meta.input.peek(syn::token::Paren) {
+        let content;
+        syn::parenthesized!(content in meta.input);
+        let _: proc_macro2::TokenStream = content.parse()?;
+    }
+    Ok(())
 }
 
 /// `#[serde(rename = "...")]` on a unit enum variant.
 pub(crate) fn parse_serde_variant_rename(attrs: &[Attribute]) -> Option<String> {
     parse_serde_nested_string(attrs, "rename")
+}
+
+/// Apply Serde's `rename_all` rules to a snake_case Rust struct field identifier.
+pub(crate) fn serde_rename_all_field(ident: &str, rule: &str) -> String {
+    match rule {
+        "lowercase" => ident.to_lowercase(),
+        "UPPERCASE" => ident.to_uppercase(),
+        "PascalCase" => snake_to_pascal(ident),
+        "camelCase" => snake_to_camel(ident),
+        "snake_case" => ident.to_string(),
+        "SCREAMING_SNAKE_CASE" => ident.to_uppercase(),
+        "kebab-case" => ident.replace('_', "-"),
+        "SCREAMING-KEBAB-CASE" => ident.to_uppercase().replace('_', "-"),
+        _ => ident.to_string(),
+    }
+}
+
+fn snake_to_pascal(ident: &str) -> String {
+    ident
+        .split('_')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+fn snake_to_camel(ident: &str) -> String {
+    let pascal = snake_to_pascal(ident);
+    let mut chars = pascal.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 /// Apply Serde's `rename_all` rules to a Rust enum variant identifier (Serde 1.x container attr).
