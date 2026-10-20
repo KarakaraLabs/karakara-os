@@ -179,26 +179,26 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class DiscoverToolsOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class DiscoverToolsSendInput {
-  query string | null?
-  limit int | null?
+  query (string | null)?
+  limit (int | null)?
   @@dynamic
 }
 

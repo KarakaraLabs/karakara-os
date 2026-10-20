@@ -8,7 +8,7 @@ use super::{
     AdditionalProperties, SchemaDeclaration, SchemaDeclarationKind, SchemaEnum, SchemaEnumVariant,
     SchemaLiteral, SchemaObject, SchemaTypeRef, ToolSchemaGraph,
 };
-use crate::builder::error::{Result, write_line};
+use crate::builder::error::{BamlBuilderError, Result, write_line};
 
 /// Render every declaration in the graph as BAML, once each, in deterministic lowering order.
 pub fn render_tool_schema_baml(graph: &ToolSchemaGraph) -> Result<String> {
@@ -49,23 +49,32 @@ fn render_class(
         let rendered_ty = render_schema_type_ref(graph, &field.ty);
         let type_str = if field.required {
             rendered_ty
+        } else if matches!(&field.ty, SchemaTypeRef::Union(_)) {
+            format!("({rendered_ty})?")
         } else {
             format!("{rendered_ty}?")
         };
+        // Wire names are not always legal BAML identifiers; fall back to the shaped identifier
+        // and preserve the wire spelling with `@alias`.
+        let ident = &field.preferred_identifier;
+        let alias = (ident.as_str() != field.wire_name)
+            .then(|| format!(" @alias(\"{}\")", escape_baml_string(&field.wire_name)));
+        let alias = alias.unwrap_or_default();
         let description = field
             .description
             .as_deref()
-            .map(|s| format!("@description(\"{}\")", escape_baml_string(s)));
-        match description {
-            Some(desc) => write_line(
-                output,
-                &format!("  {} {} {desc}", field.wire_name, type_str),
-            )?,
-            None => write_line(output, &format!("  {} {type_str}", field.wire_name))?,
-        }
+            .map(|s| format!(" @description(\"{}\")", escape_baml_string(s)))
+            .unwrap_or_default();
+        write_line(output, &format!("  {ident} {type_str}{alias}{description}"))?;
     }
-    if matches!(obj.additional_properties, AdditionalProperties::AllowedAny) {
-        write_line(output, "  @@dynamic")?;
+    match &obj.additional_properties {
+        AdditionalProperties::AllowedAny => write_line(output, "  @@dynamic")?,
+        AdditionalProperties::Forbidden => {}
+        AdditionalProperties::Typed(_) => {
+            return Err(BamlBuilderError::InvalidArgument(format!(
+                "class `{class_name}` mixes fixed fields with typed additional properties, which generated BAML cannot represent"
+            )));
+        }
     }
     write_line(output, "}")
 }
@@ -89,7 +98,10 @@ fn render_enum_variant(output: &mut String, variant: &SchemaEnumVariant) -> Resu
         SchemaLiteral::String(wire) => {
             write_line(output, &format!("  {name}{description}"))?;
             if wire != name {
-                write_line(output, &format!("    @alias(\"{wire}\")"))?;
+                write_line(
+                    output,
+                    &format!("    @alias(\"{}\")", escape_baml_string(wire)),
+                )?;
             }
         }
         SchemaLiteral::Integer(wire) => {
@@ -118,7 +130,7 @@ pub fn render_schema_type_ref(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> St
         SchemaTypeRef::Null => "null".to_string(),
         SchemaTypeRef::JsonValue => "OpaqueJson".to_string(),
         SchemaTypeRef::Literal(l) => render_literal(l),
-        SchemaTypeRef::Array(inner) => format!("{}[]", render_schema_type_ref(graph, inner)),
+        SchemaTypeRef::Array(inner) => render_array_suffix(graph, inner),
         SchemaTypeRef::Map(inner) => {
             format!("map<string, {}>", render_schema_type_ref(graph, inner))
         }
@@ -133,15 +145,27 @@ pub fn render_schema_type_ref(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> St
             .collect::<Vec<_>>()
             .join(" | "),
         SchemaTypeRef::VecOrOne(inner) => {
-            let rendered = render_schema_type_ref(graph, inner);
-            format!("({rendered} | {rendered}[])")
+            let scalar = render_schema_type_ref(graph, inner);
+            let list = render_array_suffix(graph, inner);
+            format!("({scalar} | {list})")
         }
+    }
+}
+
+/// Render an array of `inner`, parenthesizing a union element type so `[]` does not bind to
+/// only its last arm (`A | B[]` parses as `A | (B[])`).
+fn render_array_suffix(graph: &ToolSchemaGraph, inner: &SchemaTypeRef) -> String {
+    let rendered = render_schema_type_ref(graph, inner);
+    if matches!(inner, SchemaTypeRef::Union(_)) {
+        format!("({rendered})[]")
+    } else {
+        format!("{rendered}[]")
     }
 }
 
 fn render_literal(lit: &SchemaLiteral) -> String {
     match lit {
-        SchemaLiteral::String(s) => format!("\"{s}\""),
+        SchemaLiteral::String(s) => format!("\"{}\"", escape_baml_string(s)),
         SchemaLiteral::Integer(n) => n.to_string(),
         SchemaLiteral::Number(n) => n.clone(),
         SchemaLiteral::Boolean(b) => b.to_string(),

@@ -119,9 +119,56 @@ class ReadOnlyFinishStep {
   reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
 }
 // Domain types generated from the canonical tool schema graph
-class ClaudeToolNextOutputEvents {
+class ClaudeToolNextOutputEventsAlt0 {
   kind string
   text string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt1 {
+  kind string
+  thinking string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt2 {
+  kind string
+  id string
+  name string
+  input string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt3 {
+  kind string
+  tool_use_id string
+  content string?
+  is_error bool?
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt4 {
+  kind string
+  subtype string
+  cwd string
+  model string
+  data string?
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt5 {
+  kind string
+  event string
+  @@dynamic
+}
+
+class ClaudeToolNextOutputEventsAlt6 {
+  kind string
+  subtype string
+  is_error bool
+  num_turns int
+  total_cost_usd float?
+  result string?
   @@dynamic
 }
 
@@ -153,32 +200,45 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class ClaudeToolNextOutput {
-  events ClaudeToolNextOutputEvents[]
-  completion ClaudeCompletion | null?
-  historyContext HistoryContextV1 | null?
+  events (ClaudeToolNextOutputEventsAlt0 | ClaudeToolNextOutputEventsAlt1 | ClaudeToolNextOutputEventsAlt2 | ClaudeToolNextOutputEventsAlt3 | ClaudeToolNextOutputEventsAlt4 | ClaudeToolNextOutputEventsAlt5 | ClaudeToolNextOutputEventsAlt6)[]
+  completion (ClaudeCompletion | null)?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class ClaudeToolOpenInput {
-  workspace string | null?
+  workspace (string | null)?
   @@dynamic
 }
 
-class ClaudeToolSendInputContent {
+class ClaudeToolSendInputContentAlt0 {
   kind string
   text string
   @@dynamic
 }
 
+class ClaudeToolSendInputContentAlt1 {
+  kind string
+  url string
+  @@dynamic
+}
+
+class ClaudeToolSendInputContentAlt2 {
+  kind string
+  media_type string
+  data string
+  @@dynamic
+}
+
 class ClaudeToolSendInput {
-  prompt string | null?
-  content (ClaudeToolSendInputContent | ClaudeToolSendInputContent[]) | null?
+  prompt (string | null)?
+  content ((ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[]) | null)?
   @@dynamic
 }
 

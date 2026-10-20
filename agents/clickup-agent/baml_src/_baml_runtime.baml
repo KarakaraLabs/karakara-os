@@ -141,15 +141,15 @@ class GetTaskInput {
 class CreateTaskInput {
   list_id string @description("ClickUp list ID where the task will be created \u{2014} obtain from ListLists.")
   name string @description("Task title / name.")
-  description string | null? @description("Optional long-form task description (Markdown supported).")
-  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  description (string | null)? @description("Optional long-form task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
 class UpdateTaskInput {
   task_id string @description("ClickUp task ID to update \u{2014} obtain from ListTasks or GetTask.")
-  status string | null? @description("New task status string (e.g. \'in progress\', \'complete\').")
-  description string | null? @description("Updated task description (Markdown supported).")
-  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  status (string | null)? @description("New task status string (e.g. \'in progress\', \'complete\').")
+  description (string | null)? @description("Updated task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
 class DeleteTaskInput {
@@ -163,11 +163,11 @@ class ClickUpTaskSummary {
   id string
   name string
   status string
-  description string | null?
+  description (string | null)?
   url string
   assignees string[]?
-  priority string | null?
-  due_date string | null?
+  priority (string | null)?
+  due_date (string | null)?
   @@dynamic
 }
 
@@ -196,12 +196,12 @@ class AgentEventSubscriptionDto {
 class AgentCardDto {
   name string
   version string
-  contentHash string | null?
-  repositoryVersion int | null?
+  contentHash (string | null)?
+  repositoryVersion (int | null)?
   agentPackage string
   agentInstanceId string
   tools string[]
-  description string | null?
+  description (string | null)?
   capabilities string[]
   tags string[]?
   subscriptions AgentEventSubscriptionDto[]?
@@ -229,30 +229,30 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class DiscoverAgentsSendInput {
-  query string | null?
-  requiredCapabilities string[] | null?
-  requiredSchemaVersions string[] | null?
-  requiredSourceKinds string[] | null?
-  limit int | null?
-  offset int | null?
+  query (string | null)?
+  requiredCapabilities (string[] | null)?
+  requiredSchemaVersions (string[] | null)?
+  requiredSourceKinds (string[] | null)?
+  limit (int | null)?
+  offset (int | null)?
   @@dynamic
 }
 
@@ -268,41 +268,41 @@ class ToolDiscoveryRecordDto {
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class DiscoverToolsOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class DiscoverToolsSendInput {
-  query string | null?
-  limit int | null?
+  query (string | null)?
+  limit (int | null)?
   @@dynamic
 }
 
 class ConversationPart {
-  text string | null? @description("Plain text content for this conversation part.")
-  raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
-  url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
-  filename string | null? @description("Attachment filename when this part refers to a file.")
-  mediaType string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  text (string | null)? @description("Plain text content for this conversation part.")
+  raw (string | null)? @description("Raw provider-native content when plain text would be lossy or unavailable.")
+  url (string | null)? @description("Remote URL for this part when the content points to a web or attachment resource.")
+  filename (string | null)? @description("Attachment filename when this part refers to a file.")
+  mediaType (string | null)? @description("MIME type for this part, for example text/plain or image/png.")
   @@dynamic
 }
 
 class ConversationMessage {
-  role string | null?
+  role (string | null)?
   parts ConversationPart[]
   @@dynamic
 }
 
 class ConversationChunk {
-  message ConversationMessage | null?
-  task string | null?
-  statusUpdate string | null?
-  artifactUpdate string | null?
+  message (ConversationMessage | null)?
+  task (string | null)?
+  statusUpdate (string | null)?
+  artifactUpdate (string | null)?
   @@dynamic
 }
 
@@ -315,8 +315,8 @@ enum InternalA2aCompletion {
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aCompletion | null?
-  historyContext HistoryContextV1 | null?
+  completion (InternalA2aCompletion | null)?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 

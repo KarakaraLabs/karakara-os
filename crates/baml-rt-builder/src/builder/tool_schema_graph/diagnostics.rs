@@ -39,9 +39,12 @@ pub(crate) fn unsupported_json_schema(
 
 /// A root/declaration schema had no recognizable discriminator (matches the historical
 /// "unsupported schema format" path).
-pub(crate) fn unsupported_named_schema(type_name: &str) -> BamlBuilderError {
+pub(crate) fn unsupported_named_schema(
+    type_name: &str,
+    location: &SchemaLocation,
+) -> BamlBuilderError {
     BamlBuilderError::InvalidArgument(format!(
-        "Cannot generate BAML type for {type_name}: unsupported schema format"
+        "cannot generate BAML type for `{type_name}` at {location}: unsupported schema format"
     ))
 }
 

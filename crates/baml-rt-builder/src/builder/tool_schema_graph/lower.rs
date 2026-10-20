@@ -23,38 +23,49 @@ use super::{
     SchemaLocation, SchemaObject, SchemaTypeId, SchemaTypeRef, ToolSchemaContract, ToolSchemaGraph,
     ToolSchemaRole,
     diagnostics::{external_reference, unsupported_json_schema, unsupported_named_schema},
-    names::{enum_variant_identifier, to_pascal_case},
+    names::{
+        enum_variant_identifier, is_reserved_symbol, is_valid_identifier, sanitize_identifier,
+        to_pascal_case,
+    },
 };
 use crate::builder::error::{BamlBuilderError, Result};
 
-/// A named schema discovered before lowering: a public root or a `$defs`/`definitions` entry.
+/// Document-scoped identity for a schema root or local definition.
+///
+/// A local `$ref` is resolved against its own schema document. The emitted symbol is deliberately
+/// not part of this key because separate documents may define the same final pointer segment.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SchemaKey {
+    document: String,
+    pointer: String,
+}
+
+/// A named schema discovered before lowering: a public root or a root `$defs`/`definitions` entry.
 struct NamedSchema {
-    /// Registry key used by `$ref` (root schema name or def key).
-    schema_name: String,
+    key: SchemaKey,
     /// Requested emitted symbol.
     symbol: String,
     schema: Value,
     location: SchemaLocation,
     /// Pre-allocated id (assigned in sorted order before lowering).
     id: SchemaTypeId,
+    /// Public roots keep their requested name; conflicting public roots are a hard error.
+    is_public_root: bool,
 }
 
 /// Per-tool root information used to build [`ToolSchemaContract`]s after lowering.
 struct ToolRootPlan {
     tool_name: String,
     class_name: String,
-    open_input_schema_name: Option<String>,
+    open_input_key: Option<SchemaKey>,
     open_input_requirement: OpenInputRequirement,
-    input_schema_name: String,
-    output_schema_name: String,
+    input_key: SchemaKey,
+    output_key: SchemaKey,
 }
 
 pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<ToolSchemaGraph> {
     let builder = GraphBuilder::new();
-
-    // Collect roots across tools. Two tools may contribute the same root *schema name*; we key by
-    // (name, schema) and keep the first, matching the single-registry semantics of the builder.
-    let mut named: BTreeMap<String, NamedSchema> = BTreeMap::new();
+    let mut named: BTreeMap<SchemaKey, NamedSchema> = BTreeMap::new();
     let mut tool_plans: Vec<ToolRootPlan> = Vec::new();
 
     for tool in metadata {
@@ -63,33 +74,36 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
             role: Some(role),
             json_pointer: String::new(),
         };
+        let document = |role: ToolSchemaRole| format!("tool:{}:{}", tool.name, role.as_str());
 
         let open_unit = tool.open_input_type.name == "()";
-        let mut open_schema_name = None;
-        if !open_unit {
-            let name = tool.open_input_type.name.clone();
-            insert_root(
+        let open_input_key = if open_unit {
+            None
+        } else {
+            Some(insert_document(
                 &mut named,
-                name.clone(),
-                name.clone(),
+                document(ToolSchemaRole::OpenInput),
+                tool.open_input_type.name.clone(),
                 tool.open_input_schema.clone(),
                 location(ToolSchemaRole::OpenInput),
-            )?;
-            open_schema_name = Some(name);
-        }
-        insert_root(
+                None,
+            )?)
+        };
+        let input_key = insert_document(
             &mut named,
-            tool.input_type.name.clone(),
+            document(ToolSchemaRole::Input),
             tool.input_type.name.clone(),
             tool.input_schema.clone(),
             location(ToolSchemaRole::Input),
+            None,
         )?;
-        insert_root(
+        let output_key = insert_document(
             &mut named,
-            tool.output_type.name.clone(),
+            document(ToolSchemaRole::Output),
             tool.output_type.name.clone(),
             tool.output_schema.clone(),
             location(ToolSchemaRole::Output),
+            None,
         )?;
 
         let requirement =
@@ -102,44 +116,14 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
         tool_plans.push(ToolRootPlan {
             tool_name: tool.name.to_string(),
             class_name: tool.class_name.clone(),
-            open_input_schema_name: open_schema_name,
+            open_input_key,
             open_input_requirement: requirement,
-            input_schema_name: tool.input_type.name.clone(),
-            output_schema_name: tool.output_type.name.clone(),
+            input_key,
+            output_key,
         });
     }
 
     builder.lower_all(named, &tool_plans)
-}
-
-fn insert_root(
-    named: &mut BTreeMap<String, NamedSchema>,
-    schema_name: String,
-    symbol: String,
-    schema: Value,
-    location: SchemaLocation,
-) -> Result<()> {
-    if let Some(existing) = named.get(&schema_name) {
-        if existing.schema == schema {
-            return Ok(());
-        }
-        return Err(BamlBuilderError::InvalidArgument(format!(
-            "conflicting schema roots named `{schema_name}` at {} and {}",
-            existing.location, location
-        )));
-    }
-    // Id is a placeholder; assigned in `lower_all`.
-    named.insert(
-        schema_name.clone(),
-        NamedSchema {
-            schema_name,
-            symbol,
-            schema,
-            location,
-            id: SchemaTypeId::new(0),
-        },
-    );
-    Ok(())
 }
 
 pub(crate) fn build_from_root_schemas(
@@ -147,9 +131,8 @@ pub(crate) fn build_from_root_schemas(
     type_names: &HashMap<String, String>,
 ) -> Result<ToolSchemaGraph> {
     let builder = GraphBuilder::new();
-    let mut named: BTreeMap<String, NamedSchema> = BTreeMap::new();
+    let mut named: BTreeMap<SchemaKey, NamedSchema> = BTreeMap::new();
 
-    // Roots, in deterministic order (sorted by requested symbol).
     let mut root_names: Vec<String> = schemas.keys().cloned().collect();
     root_names.sort();
     for name in &root_names {
@@ -157,80 +140,154 @@ pub(crate) fn build_from_root_schemas(
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.clone());
-        named.insert(
-            name.clone(),
-            NamedSchema {
-                schema_name: name.clone(),
-                symbol,
-                schema: schemas[name].clone(),
-                location: SchemaLocation {
-                    tool_name: None,
-                    role: None,
-                    json_pointer: String::new(),
-                },
-                id: SchemaTypeId::new(0),
+        insert_document(
+            &mut named,
+            format!("compat:{name}"),
+            symbol,
+            schemas[name].clone(),
+            SchemaLocation {
+                tool_name: None,
+                role: None,
+                json_pointer: String::new(),
             },
-        );
-    }
-
-    // Collect `$defs`/`definitions` recursively; roots shadow defs (existing behavior).
-    let mut defs: BTreeMap<String, Value> = BTreeMap::new();
-    for name in &root_names {
-        extract_defs(&schemas[name], &mut defs);
-    }
-    for (def_name, def_schema) in defs {
-        if named.contains_key(&def_name) {
-            continue;
-        }
-        let symbol = type_names
-            .get(&def_name)
-            .cloned()
-            .unwrap_or_else(|| def_name.clone());
-        named.insert(
-            def_name.clone(),
-            NamedSchema {
-                schema_name: def_name.clone(),
-                symbol,
-                schema: def_schema,
-                location: SchemaLocation {
-                    tool_name: None,
-                    role: None,
-                    json_pointer: format!("/$defs/{def_name}"),
-                },
-                id: SchemaTypeId::new(0),
-            },
-        );
+            Some(type_names),
+        )?;
     }
 
     builder.lower_all(named, &[])
 }
 
-fn extract_defs(schema: &Value, defs: &mut BTreeMap<String, Value>) {
-    if let Some(obj) = schema.as_object() {
-        if let Some(d) = obj.get("$defs").and_then(Value::as_object) {
-            for (k, v) in d {
-                defs.insert(k.clone(), v.clone());
+/// Register one schema document and its root-level local definitions.
+fn insert_document(
+    named: &mut BTreeMap<SchemaKey, NamedSchema>,
+    document: String,
+    root_symbol: String,
+    schema: Value,
+    location: SchemaLocation,
+    definition_type_names: Option<&HashMap<String, String>>,
+) -> Result<SchemaKey> {
+    let root_key = SchemaKey {
+        document: document.clone(),
+        pointer: String::new(),
+    };
+    if named.contains_key(&root_key) {
+        return Err(BamlBuilderError::InvalidArgument(format!(
+            "internal: duplicate schema document `{document}`"
+        )));
+    }
+
+    named.insert(
+        root_key.clone(),
+        NamedSchema {
+            key: root_key.clone(),
+            symbol: root_symbol,
+            schema: schema.clone(),
+            location: location.clone(),
+            id: SchemaTypeId::new(0),
+            is_public_root: true,
+        },
+    );
+
+    collect_named_definitions(
+        named,
+        &document,
+        &schema,
+        "",
+        &location,
+        definition_type_names,
+    );
+
+    Ok(root_key)
+}
+
+fn collect_named_definitions(
+    named: &mut BTreeMap<SchemaKey, NamedSchema>,
+    document: &str,
+    schema: &Value,
+    pointer: &str,
+    root_location: &SchemaLocation,
+    definition_type_names: Option<&HashMap<String, String>>,
+) {
+    match schema {
+        Value::Object(object) => {
+            for (keyword, child) in object {
+                let child_pointer = format!("{pointer}/{}", super::escape_json_pointer(keyword));
+                if (keyword == "$defs" || keyword == "definitions")
+                    && let Some(definitions) = child.as_object()
+                {
+                    for (name, definition) in definitions {
+                        let definition_pointer =
+                            format!("{child_pointer}/{}", super::escape_json_pointer(name));
+                        let key = SchemaKey {
+                            document: document.to_string(),
+                            pointer: definition_pointer.clone(),
+                        };
+                        let requested_symbol = definition_type_names
+                            .and_then(|names| names.get(name))
+                            .cloned()
+                            .unwrap_or_else(|| name.clone());
+                        let symbol = if is_valid_identifier(&requested_symbol) {
+                            requested_symbol
+                        } else {
+                            sanitize_identifier(&requested_symbol)
+                        };
+                        named.entry(key.clone()).or_insert_with(|| NamedSchema {
+                            key,
+                            symbol,
+                            schema: definition.clone(),
+                            location: SchemaLocation {
+                                tool_name: root_location.tool_name.clone(),
+                                role: root_location.role,
+                                json_pointer: definition_pointer.clone(),
+                            },
+                            id: SchemaTypeId::new(0),
+                            is_public_root: false,
+                        });
+                        collect_named_definitions(
+                            named,
+                            document,
+                            definition,
+                            &definition_pointer,
+                            root_location,
+                            definition_type_names,
+                        );
+                    }
+                } else {
+                    collect_named_definitions(
+                        named,
+                        document,
+                        child,
+                        &child_pointer,
+                        root_location,
+                        definition_type_names,
+                    );
+                }
             }
         }
-        if let Some(d) = obj.get("definitions").and_then(Value::as_object) {
-            for (k, v) in d {
-                defs.insert(k.clone(), v.clone());
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_named_definitions(
+                    named,
+                    document,
+                    item,
+                    &format!("{pointer}/{index}"),
+                    root_location,
+                    definition_type_names,
+                );
             }
         }
-        for value in obj.values() {
-            extract_defs(value, defs);
-        }
-    } else if let Some(arr) = schema.as_array() {
-        for item in arr {
-            extract_defs(item, defs);
-        }
+        _ => {}
     }
 }
 
 struct GraphBuilder {
     declarations: BTreeMap<SchemaTypeId, SchemaDeclaration>,
     symbols: BTreeMap<String, SchemaTypeId>,
-    name_to_id: BTreeMap<String, SchemaTypeId>,
+    key_to_id: BTreeMap<SchemaKey, SchemaTypeId>,
+    /// Pre-allocated ids that deduplicated into an existing declaration.
+    id_aliases: BTreeMap<SchemaTypeId, SchemaTypeId>,
+    /// Symbols claimed by public roots; nested declarations must never take one.
+    root_symbols: BTreeSet<String>,
     next_id: u32,
     next_order: u32,
 }
@@ -240,7 +297,9 @@ impl GraphBuilder {
         Self {
             declarations: BTreeMap::new(),
             symbols: BTreeMap::new(),
-            name_to_id: BTreeMap::new(),
+            key_to_id: BTreeMap::new(),
+            id_aliases: BTreeMap::new(),
+            root_symbols: BTreeSet::new(),
             next_id: 0,
             next_order: 0,
         }
@@ -254,39 +313,64 @@ impl GraphBuilder {
 
     fn lower_all(
         mut self,
-        mut named: BTreeMap<String, NamedSchema>,
+        mut named: BTreeMap<SchemaKey, NamedSchema>,
         tool_plans: &[ToolRootPlan],
     ) -> Result<ToolSchemaGraph> {
-        // Assign ids to named schemas in sorted-by-symbol order (deterministic).
-        let mut names: Vec<String> = named.keys().cloned().collect();
-        names.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol));
-        for name in &names {
+        // Assign ids by requested symbol and then document-scoped key. This makes allocation stable
+        // while allowing the same `$defs` key to exist independently in several root documents.
+        let mut keys: Vec<SchemaKey> = named.keys().cloned().collect();
+        keys.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol).then_with(|| a.cmp(b)));
+        for key in &keys {
             let id = self.alloc_id();
-            named.get_mut(name).unwrap().id = id;
-            self.name_to_id.insert(name.clone(), id);
+            named.get_mut(key).unwrap().id = id;
+            // Pre-register every exact pointer so forward and recursive `$ref`s resolve.
+            self.key_to_id.insert(key.clone(), id);
         }
 
-        // Lower named schemas in the same sorted order.
-        for name in &names {
-            let n = named.get(name).unwrap();
-            if self.symbols.contains_key(&n.symbol) {
-                // A nested inline declaration claimed this symbol first; point `$ref`s at it.
-                let existing = self.symbols[&n.symbol];
-                self.name_to_id.insert(n.schema_name.clone(), existing);
-                continue;
+        // Reserve and validate public symbols before nested lowering can claim one.
+        for key in &keys {
+            let n = &named[key];
+            if n.is_public_root {
+                if is_reserved_symbol(&n.symbol) || !is_valid_identifier(&n.symbol) {
+                    return Err(BamlBuilderError::InvalidArgument(format!(
+                        "public root `{}` at {} is not a valid generated BAML symbol or is reserved",
+                        n.symbol, n.location
+                    )));
+                }
+                self.root_symbols.insert(n.symbol.clone());
             }
-            self.lower_named(n)?;
         }
 
-        // Build per-tool contracts.
+        // Public roots keep priority over definitions with the same preferred symbol.
+        let mut ordered: Vec<SchemaKey> = keys
+            .iter()
+            .filter(|key| named[*key].is_public_root)
+            .cloned()
+            .collect();
+        ordered.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol).then_with(|| a.cmp(b)));
+        let mut definitions: Vec<SchemaKey> = keys
+            .iter()
+            .filter(|key| !named[*key].is_public_root)
+            .cloned()
+            .collect();
+        definitions.sort_by(|a, b| named[a].symbol.cmp(&named[b].symbol).then_with(|| a.cmp(b)));
+        ordered.extend(definitions);
+
+        for key in &ordered {
+            let n = named.get(key).unwrap();
+            let id = self.lower_named(n)?;
+            self.key_to_id.insert(n.key.clone(), id);
+        }
+        self.remap_deduplicated_references();
+
         let mut tools = BTreeMap::new();
         for plan in tool_plans {
-            let input = self.named_ref(&plan.input_schema_name)?;
-            let output = self.named_ref(&plan.output_schema_name)?;
-            let open_input = match &plan.open_input_schema_name {
+            let input = self.named_ref(&plan.input_key)?;
+            let output = self.named_ref(&plan.output_key)?;
+            let open_input = match &plan.open_input_key {
                 None => OpenInputContract::Absent,
-                Some(name) => OpenInputContract::Present {
-                    ty: self.named_ref(name)?,
+                Some(key) => OpenInputContract::Present {
+                    ty: self.named_ref(key)?,
                     requirement: plan.open_input_requirement,
                 },
             };
@@ -309,35 +393,50 @@ impl GraphBuilder {
         })
     }
 
-    fn named_ref(&self, schema_name: &str) -> Result<SchemaTypeRef> {
-        self.name_to_id
-            .get(schema_name)
+    fn named_ref(&self, key: &SchemaKey) -> Result<SchemaTypeRef> {
+        self.key_to_id
+            .get(key)
             .map(|id| SchemaTypeRef::Named(*id))
             .ok_or_else(|| {
                 BamlBuilderError::InvalidArgument(format!(
-                    "internal: no declaration lowered for schema root `{schema_name}`"
+                    "internal: no declaration lowered for schema document `{}` pointer `{}`",
+                    key.document, key.pointer
                 ))
             })
     }
 
     fn lower_named(&mut self, n: &NamedSchema) -> Result<SchemaTypeId> {
-        let kind = self.compute_kind(&n.symbol, &n.schema, &n.location)?;
-        self.register(self.new_declaration(n.id, n.symbol.clone(), kind, &n.location))
+        let kind = self.compute_kind(&n.symbol, &n.schema, &n.key.document, &n.location)?;
+        self.register(
+            self.new_declaration(n.id, n.symbol.clone(), kind, &n.location),
+            n.is_public_root,
+        )
     }
 
     /// Lower an inline declaration discovered during field traversal (title or parent+field name).
+    ///
+    /// Inline declarations may deduplicate: a second occurrence with the same preferred symbol and
+    /// identical fingerprint reuses the first declaration instead of allocating a new id (so no
+    /// other reference can be left pointing at a dangling pre-allocated id).
     fn lower_inline(
         &mut self,
         name: &str,
         schema: &Value,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaTypeId> {
-        if let Some(existing) = self.symbols.get(name) {
-            return Ok(*existing);
+        let kind = self.compute_kind(name, schema, document, location)?;
+        let fingerprint = fingerprint_of_kind(&kind);
+        if let Some(existing_id) = self.symbols.get(name)
+            && self.declarations[existing_id].fingerprint == fingerprint
+        {
+            return Ok(*existing_id);
         }
         let id = self.alloc_id();
-        let kind = self.compute_kind(name, schema, location)?;
-        self.register(self.new_declaration(id, name.to_string(), kind, location))
+        self.register(
+            self.new_declaration(id, name.to_string(), kind, location),
+            false,
+        )
     }
 
     /// Build a declaration (dependencies and fingerprint) with an unassigned render order.
@@ -362,13 +461,115 @@ impl GraphBuilder {
         }
     }
 
-    fn register(&mut self, mut decl: SchemaDeclaration) -> Result<SchemaTypeId> {
-        self.symbols.insert(decl.symbol.clone(), decl.id);
+    /// Register a declaration, resolving symbol collisions deterministically.
+    ///
+    /// Public roots keep their requested name (a conflict is a hard error); shared/nested
+    /// declarations are qualified with their owning tool and schema path when their preferred
+    /// symbol is reserved, claimed by a root, or already taken by an incompatible declaration.
+    /// Inline deduplication is handled by [`Self::lower_inline`] before an id is allocated.
+    fn register(
+        &mut self,
+        mut decl: SchemaDeclaration,
+        is_public_root: bool,
+    ) -> Result<SchemaTypeId> {
+        let preferred = decl.preferred_symbol.clone();
+        let fingerprint = decl.fingerprint.clone();
+
+        let symbol = if is_public_root {
+            if is_reserved_symbol(&preferred) || !is_valid_identifier(&preferred) {
+                return Err(BamlBuilderError::InvalidArgument(format!(
+                    "public root `{preferred}` at {} is not a valid generated BAML symbol or is reserved",
+                    decl.source
+                )));
+            }
+            if let Some(existing_id) = self.symbols.get(&preferred) {
+                let existing = &self.declarations[existing_id];
+                if existing.fingerprint == fingerprint {
+                    self.id_aliases.insert(decl.id, *existing_id);
+                    return Ok(*existing_id);
+                }
+                return Err(BamlBuilderError::InvalidArgument(format!(
+                    "conflicting public roots named `{preferred}` at {} and {}",
+                    existing.source, decl.source
+                )));
+            }
+            preferred
+        } else if let Some(existing_id) = self.symbols.get(&preferred)
+            && self.declarations[existing_id].fingerprint == fingerprint
+        {
+            self.id_aliases.insert(decl.id, *existing_id);
+            return Ok(*existing_id);
+        } else if is_reserved_symbol(&preferred)
+            || self.root_symbols.contains(&preferred)
+            || self.symbols.contains_key(&preferred)
+        {
+            self.qualify_symbol(&preferred, &decl.source, &fingerprint)?
+        } else {
+            preferred
+        };
+
+        if is_reserved_symbol(&symbol) {
+            return Err(BamlBuilderError::InvalidArgument(format!(
+                "declaration `{symbol}` at {} collides with a reserved generated BAML symbol",
+                decl.source
+            )));
+        }
+
+        decl.symbol = symbol.clone();
         decl.order = self.next_order;
         self.next_order += 1;
         let id = decl.id;
+        self.symbols.insert(symbol, id);
         self.declarations.insert(id, decl);
         Ok(id)
+    }
+
+    fn remap_deduplicated_references(&mut self) {
+        if self.id_aliases.is_empty() {
+            return;
+        }
+        let aliases = self.id_aliases.clone();
+        for declaration in self.declarations.values_mut() {
+            rewrite_kind_ids(&mut declaration.kind, &aliases);
+            declaration.dependencies = collect_dependencies(&declaration.kind);
+            declaration.fingerprint = fingerprint_of_kind(&declaration.kind);
+        }
+    }
+
+    /// Choose a unique, deterministic symbol for a nested declaration whose preferred symbol is
+    /// reserved, claimed by a root, or already taken by an incompatible declaration.
+    fn qualify_symbol(
+        &self,
+        preferred: &str,
+        source: &SchemaLocation,
+        fingerprint: &str,
+    ) -> Result<String> {
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(tool) = &source.tool_name {
+            candidates.push(format!("{preferred}{}", tool_qualifier(tool)));
+        }
+        let path = path_qualifier(&source.json_pointer);
+        if !path.is_empty() {
+            match &source.tool_name {
+                Some(tool) => {
+                    candidates.push(format!("{preferred}{}{}", tool_qualifier(tool), path))
+                }
+                None => candidates.push(format!("{preferred}{path}")),
+            }
+        }
+        candidates.push(format!("{preferred}{}", short_digest(fingerprint)));
+
+        for candidate in candidates {
+            if !is_reserved_symbol(&candidate)
+                && !self.root_symbols.contains(&candidate)
+                && !self.symbols.contains_key(&candidate)
+            {
+                return Ok(candidate);
+            }
+        }
+        Err(BamlBuilderError::InvalidArgument(format!(
+            "could not allocate a unique symbol for `{preferred}` at {source}"
+        )))
     }
 
     /// Compute the declaration kind for a schema with a known symbol. Mirrors the historical
@@ -377,10 +578,15 @@ impl GraphBuilder {
         &mut self,
         symbol: &str,
         schema: &Value,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaDeclarationKind> {
         let obj = schema.as_object().ok_or_else(|| {
-            BamlBuilderError::InvalidArgument(format!("Schema for {symbol} must be an object"))
+            unsupported_json_schema(
+                format!("schema for `{symbol}` must be an object"),
+                schema,
+                location,
+            )
         })?;
 
         if is_opaque_marker(obj) {
@@ -404,17 +610,22 @@ impl GraphBuilder {
                     self.build_const_enum(one_of, schema, location)?,
                 ));
             }
-            return self.build_root_union(symbol, one_of, location);
+            return self.build_root_union(symbol, "oneOf", one_of, document, location);
         }
 
         if let Some(any_of) = obj.get("anyOf").and_then(Value::as_array) {
-            return self.build_root_union(symbol, any_of, location);
+            return self.build_root_union(symbol, "anyOf", any_of, document, location);
         }
 
         if obj.get("type").and_then(Value::as_str) == Some("object") {
             if is_map_schema(obj) {
                 let value = obj.get("additionalProperties").unwrap();
-                let value_type = self.lower_type_ref(value, Some((symbol, "Value")), location)?;
+                let value_type = self.lower_type_ref(
+                    value,
+                    Some((symbol, "Value")),
+                    document,
+                    &location.child("additionalProperties"),
+                )?;
                 return Ok(SchemaDeclarationKind::Alias(SchemaTypeRef::Map(Box::new(
                     value_type,
                 ))));
@@ -426,7 +637,7 @@ impl GraphBuilder {
                     location,
                 ));
             }
-            return self.build_object_class(symbol, obj, location);
+            return self.build_object_class(symbol, obj, document, location);
         }
 
         if obj.contains_key("properties") {
@@ -437,10 +648,10 @@ impl GraphBuilder {
                     location,
                 ));
             }
-            return self.build_object_class(symbol, obj, location);
+            return self.build_object_class(symbol, obj, document, location);
         }
 
-        Err(unsupported_named_schema(symbol))
+        Err(unsupported_named_schema(symbol, location))
     }
 
     fn build_flat_enum(
@@ -457,9 +668,10 @@ impl GraphBuilder {
             ));
         }
         let mut variants = Vec::new();
+        let mut identifiers = BTreeSet::new();
         for (index, value) in values.iter().enumerate() {
             if let Some(s) = value.as_str() {
-                let name = enum_variant_identifier(s, index);
+                let name = unique_identifier(enum_variant_identifier(s, index), &mut identifiers);
                 variants.push(SchemaEnumVariant {
                     wire_value: SchemaLiteral::String(s.to_string()),
                     preferred_identifier: name,
@@ -468,7 +680,10 @@ impl GraphBuilder {
             } else if let Some(n) = value.as_i64() {
                 variants.push(SchemaEnumVariant {
                     wire_value: SchemaLiteral::Integer(n),
-                    preferred_identifier: format!("Variant{n}"),
+                    preferred_identifier: unique_identifier(
+                        format!("Variant{n}"),
+                        &mut identifiers,
+                    ),
                     description: None,
                 });
             } else {
@@ -492,6 +707,7 @@ impl GraphBuilder {
         location: &SchemaLocation,
     ) -> Result<SchemaEnum> {
         let mut variants = Vec::new();
+        let mut identifiers = BTreeSet::new();
         for (index, variant) in one_of.iter().enumerate() {
             let obj = variant.as_object().ok_or_else(|| {
                 unsupported_json_schema("non-object `const` enum variant", schema, location)
@@ -499,7 +715,8 @@ impl GraphBuilder {
             let const_val = obj.get("const").and_then(Value::as_str).ok_or_else(|| {
                 unsupported_json_schema("non-string `const` enum variant", schema, location)
             })?;
-            let name = enum_variant_identifier(const_val, index);
+            let name =
+                unique_identifier(enum_variant_identifier(const_val, index), &mut identifiers);
             let description = obj
                 .get("description")
                 .and_then(Value::as_str)
@@ -521,12 +738,15 @@ impl GraphBuilder {
     fn build_root_union(
         &mut self,
         symbol: &str,
+        variants_key: &str,
         variants: &[Value],
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaDeclarationKind> {
         let alt_names: Vec<String> = (0..variants.len()).map(|i| format!("Alt{i}")).collect();
         let mut arms = Vec::new();
         for (idx, variant) in variants.iter().enumerate() {
+            let variant_location = location.child(variants_key).index(idx);
             let is_object_like = variant.as_object().is_some_and(|o| {
                 o.contains_key("properties")
                     || o.get("type").and_then(Value::as_str) == Some("object")
@@ -536,10 +756,15 @@ impl GraphBuilder {
                     .as_object()
                     .and_then(|obj| nested_name(obj, Some((symbol, &alt_names[idx]))).ok())
                     .unwrap_or_else(|| format!("{symbol}Variant{}", idx + 1));
-                let id = self.lower_inline(&variant_name, variant, location)?;
+                let id = self.lower_inline(&variant_name, variant, document, &variant_location)?;
                 arms.push(SchemaTypeRef::Named(id));
             } else {
-                let r = self.lower_type_ref(variant, Some((symbol, &alt_names[idx])), location)?;
+                let r = self.lower_type_ref(
+                    variant,
+                    Some((symbol, &alt_names[idx])),
+                    document,
+                    &variant_location,
+                )?;
                 arms.push(r);
             }
         }
@@ -550,6 +775,7 @@ impl GraphBuilder {
         &mut self,
         class_name: &str,
         obj: &serde_json::Map<String, Value>,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaDeclarationKind> {
         let properties = obj.get("properties").and_then(Value::as_object);
@@ -563,7 +789,10 @@ impl GraphBuilder {
         if properties.is_empty() {
             return Ok(SchemaDeclarationKind::Object(SchemaObject {
                 fields: Vec::new(),
-                additional_properties: lower_additional_properties(obj),
+                additional_properties: lower_additional_properties(
+                    obj,
+                    &location.child("additionalProperties"),
+                )?,
                 description: None,
             }));
         }
@@ -571,10 +800,12 @@ impl GraphBuilder {
         // Pre-emit nested inline declarations (in field order) before this class, matching the
         // historical renderer.
         for (prop_name, prop_schema) in properties {
+            let prop_location = location.child("properties").child(prop_name);
             self.preemit_inline(
                 prop_schema,
                 Some((class_name, prop_name.as_str())),
-                location,
+                document,
+                &prop_location,
             )?;
         }
 
@@ -585,20 +816,29 @@ impl GraphBuilder {
             .unwrap_or_default();
 
         let mut fields = Vec::new();
+        let mut field_identifiers = BTreeSet::new();
         for (prop_name, prop_schema) in properties {
+            let prop_location = location.child("properties").child(prop_name);
             let ty = self.lower_type_ref(
                 prop_schema,
                 Some((class_name, prop_name.as_str())),
-                location,
+                document,
+                &prop_location,
             )?;
             let description = prop_schema
                 .as_object()
                 .and_then(|o| o.get("description"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            let identifier = if is_valid_identifier(prop_name) {
+                prop_name.clone()
+            } else {
+                sanitize_identifier(prop_name)
+            };
+            let identifier = unique_identifier(identifier, &mut field_identifiers);
             fields.push(SchemaField {
                 wire_name: prop_name.clone(),
-                preferred_identifier: prop_name.clone(),
+                preferred_identifier: identifier,
                 ty,
                 required: required.contains(prop_name.as_str()),
                 description,
@@ -607,7 +847,10 @@ impl GraphBuilder {
 
         Ok(SchemaDeclarationKind::Object(SchemaObject {
             fields,
-            additional_properties: lower_additional_properties(obj),
+            additional_properties: lower_additional_properties(
+                obj,
+                &location.child("additionalProperties"),
+            )?,
             description: None,
         }))
     }
@@ -618,6 +861,7 @@ impl GraphBuilder {
         &mut self,
         schema: &Value,
         hint: Option<(&str, &str)>,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<()> {
         if schema.is_boolean() {
@@ -631,14 +875,19 @@ impl GraphBuilder {
         }
         if is_map_schema(obj) {
             if let Some(value_schema) = obj.get("additionalProperties") {
-                self.preemit_inline(value_schema, hint, location)?;
+                self.preemit_inline(
+                    value_schema,
+                    hint,
+                    document,
+                    &location.child("additionalProperties"),
+                )?;
             }
             return Ok(());
         }
         if is_inline_object_schema(obj) {
             let nested_name = nested_name(obj, hint)?;
             if !self.symbols.contains_key(&nested_name) {
-                self.lower_inline(&nested_name, schema, location)?;
+                self.lower_inline(&nested_name, schema, document, location)?;
             }
             return Ok(());
         }
@@ -648,7 +897,7 @@ impl GraphBuilder {
         {
             let nested_name = nested_name(obj, hint)?;
             if !self.symbols.contains_key(&nested_name) {
-                self.lower_inline(&nested_name, schema, location)?;
+                self.lower_inline(&nested_name, schema, document, location)?;
             }
             return Ok(());
         }
@@ -657,10 +906,10 @@ impl GraphBuilder {
                 match value {
                     Value::String(s) if s == "array" => {
                         if let Some(items) = obj.get("items") {
-                            self.preemit_inline(items, hint, location)?;
+                            self.preemit_inline(items, hint, document, &location.child("items"))?;
                         }
                     }
-                    Value::Object(_) => self.preemit_inline(value, hint, location)?,
+                    Value::Object(_) => self.preemit_inline(value, hint, document, location)?,
                     _ => {}
                 }
             }
@@ -669,17 +918,50 @@ impl GraphBuilder {
         if obj.get("type").and_then(Value::as_str) == Some("array")
             && let Some(items) = obj.get("items")
         {
-            self.preemit_inline(items, hint, location)?;
+            self.preemit_inline(items, hint, document, &location.child("items"))?;
             return Ok(());
         }
         if let Some(any_of) = obj.get("anyOf").and_then(Value::as_array) {
-            for variant in any_of {
-                self.preemit_inline(variant, hint, location)?;
+            if let Some((index, other)) = nullable_other(any_of) {
+                self.preemit_inline(other, hint, document, &location.child("anyOf").index(index))?;
+            } else {
+                let base_name =
+                    hint.map(|(parent, field)| format!("{parent}{}", to_pascal_case(field)));
+                for (idx, variant) in any_of.iter().enumerate() {
+                    let alt = format!("Alt{idx}");
+                    let variant_hint = base_name.as_deref().map(|base| (base, alt.as_str()));
+                    self.preemit_inline(
+                        variant,
+                        variant_hint,
+                        document,
+                        &location.child("anyOf").index(idx),
+                    )?;
+                }
             }
         }
         if let Some(one_of) = obj.get("oneOf").and_then(Value::as_array) {
-            for variant in one_of {
-                self.preemit_inline(variant, hint, location)?;
+            if let Some(items) = vec_or_one_item(one_of) {
+                self.preemit_inline(
+                    items,
+                    hint,
+                    document,
+                    &location.child("oneOf").index(1).child("items"),
+                )?;
+            } else if let Some((index, other)) = nullable_other(one_of) {
+                self.preemit_inline(other, hint, document, &location.child("oneOf").index(index))?;
+            } else {
+                let base_name =
+                    hint.map(|(parent, field)| format!("{parent}{}", to_pascal_case(field)));
+                for (idx, variant) in one_of.iter().enumerate() {
+                    let alt = format!("Alt{idx}");
+                    let variant_hint = base_name.as_deref().map(|base| (base, alt.as_str()));
+                    self.preemit_inline(
+                        variant,
+                        variant_hint,
+                        document,
+                        &location.child("oneOf").index(idx),
+                    )?;
+                }
             }
         }
         Ok(())
@@ -690,6 +972,7 @@ impl GraphBuilder {
         &mut self,
         schema: &Value,
         hint: Option<(&str, &str)>,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaTypeRef> {
         if schema.is_boolean() {
@@ -699,101 +982,137 @@ impl GraphBuilder {
                 location,
             ));
         }
-        let obj = schema.as_object().ok_or_else(|| {
-            BamlBuilderError::InvalidArgument("Schema must be an object".to_string())
-        })?;
+        let obj = schema
+            .as_object()
+            .ok_or_else(|| unsupported_json_schema("schema must be an object", schema, location))?;
 
         if is_opaque_marker(obj) {
             return Ok(SchemaTypeRef::JsonValue);
         }
 
         if let Some(ref_path) = obj.get("$ref").and_then(Value::as_str) {
-            return self.lower_ref(ref_path, location);
+            return self.lower_ref(ref_path, document, location);
         }
 
         // Inline object with properties.
         if is_inline_object_schema(obj) {
             let nested_name = nested_name(obj, hint)?;
-            let id = self.lower_inline(&nested_name, schema, location)?;
+            let id = self.lower_inline(&nested_name, schema, document, location)?;
             return Ok(SchemaTypeRef::Named(id));
         }
 
         if is_map_schema(obj) {
             let value_type = if let Some(value_schema) = obj.get("additionalProperties") {
-                self.lower_type_ref(value_schema, hint, location)?
+                self.lower_type_ref(
+                    value_schema,
+                    hint,
+                    document,
+                    &location.child("additionalProperties"),
+                )?
             } else {
                 SchemaTypeRef::String
             };
             return Ok(SchemaTypeRef::Map(Box::new(value_type)));
         }
 
-        // Nullable `type: ["T", "null"]` and other type arrays.
+        // `type: ["T", "null"]` and other type arrays. Nullability is preserved: `null` is a
+        // first-class union arm, never collapsed into the scalar type.
         if let Some(Value::Array(type_array)) = obj.get("type") {
             let mut mapped = Vec::new();
-            for value in type_array {
+            for (index, value) in type_array.iter().enumerate() {
+                let type_location = location.child("type").index(index);
                 match value {
                     Value::String(type_str) => {
-                        if type_str == "null" {
-                            continue;
-                        }
-                        mapped.push(self.primitive_type_ref(type_str, obj, hint, location)?);
+                        mapped.push(self.primitive_type_ref(
+                            type_str,
+                            obj,
+                            hint,
+                            document,
+                            &type_location,
+                        )?);
                     }
-                    Value::Object(_) => mapped.push(self.lower_type_ref(value, hint, location)?),
+                    Value::Object(_) => {
+                        mapped.push(self.lower_type_ref(value, hint, document, &type_location)?)
+                    }
                     other => {
                         return Err(unsupported_json_schema(
                             "non-string entry inside `type` array",
                             other,
-                            location,
+                            &type_location,
                         ));
                     }
                 }
             }
-            if mapped.is_empty() {
-                return Ok(SchemaTypeRef::Null);
-            }
-            if mapped.len() == 1 {
-                return Ok(mapped.remove(0));
-            }
-            return Ok(SchemaTypeRef::Union(mapped));
+            return Ok(normalize_union(mapped));
         }
 
         if let Some(any_of) = obj.get("anyOf").and_then(Value::as_array) {
-            let mut types = Vec::new();
-            for variant in any_of {
-                types.push(self.lower_type_ref(variant, hint, location)?);
+            // Nullable wrapper `anyOf: [T, null]` keeps T's name and adds a `Null` arm.
+            if let Some((index, other)) = nullable_other(any_of) {
+                let t = self.lower_type_ref(
+                    other,
+                    hint,
+                    document,
+                    &location.child("anyOf").index(index),
+                )?;
+                return Ok(normalize_union(vec![t, SchemaTypeRef::Null]));
             }
-            return Ok(SchemaTypeRef::Union(types));
+            let base_name =
+                hint.map(|(parent, field)| format!("{parent}{}", to_pascal_case(field)));
+            let mut types = Vec::new();
+            for (idx, variant) in any_of.iter().enumerate() {
+                let alt = format!("Alt{idx}");
+                let variant_hint = base_name.as_deref().map(|base| (base, alt.as_str()));
+                types.push(self.lower_type_ref(
+                    variant,
+                    variant_hint,
+                    document,
+                    &location.child("anyOf").index(idx),
+                )?);
+            }
+            return Ok(normalize_union(types));
         }
 
         if let Some(one_of) = obj.get("oneOf").and_then(Value::as_array) {
             // vec_or_one wire shape: `T | T[]` where the array item equals the scalar arm.
-            if one_of.len() == 2
-                && let Some(second) = one_of[1].as_object()
-                && second.get("type").and_then(Value::as_str) == Some("array")
-                && let Some(items) = second.get("items")
-                && items == &one_of[0]
-            {
-                let t = self.lower_type_ref(items, hint, location)?;
+            if let Some(items) = vec_or_one_item(one_of) {
+                let t = self.lower_type_ref(
+                    items,
+                    hint,
+                    document,
+                    &location.child("oneOf").index(1).child("items"),
+                )?;
                 return Ok(SchemaTypeRef::VecOrOne(Box::new(t)));
             }
+            // Nullable wrapper `oneOf: [T, null]` keeps T's name and adds a `Null` arm.
+            if let Some((index, other)) = nullable_other(one_of) {
+                let t = self.lower_type_ref(
+                    other,
+                    hint,
+                    document,
+                    &location.child("oneOf").index(index),
+                )?;
+                return Ok(normalize_union(vec![t, SchemaTypeRef::Null]));
+            }
+            let base_name =
+                hint.map(|(parent, field)| format!("{parent}{}", to_pascal_case(field)));
             let mut types = Vec::new();
-            for variant in one_of {
-                types.push(self.lower_type_ref(variant, hint, location)?);
+            for (idx, variant) in one_of.iter().enumerate() {
+                let alt = format!("Alt{idx}");
+                let variant_hint = base_name.as_deref().map(|base| (base, alt.as_str()));
+                types.push(self.lower_type_ref(
+                    variant,
+                    variant_hint,
+                    document,
+                    &location.child("oneOf").index(idx),
+                )?);
             }
-            let mut seen = BTreeSet::new();
-            let mut deduped: Vec<SchemaTypeRef> = Vec::new();
-            for t in types {
-                let key = type_ref_key(&t);
-                if seen.insert(key) {
-                    deduped.push(t);
-                }
-            }
-            return Ok(SchemaTypeRef::Union(deduped));
+            return Ok(normalize_union(types));
         }
 
         // Effective scalar type string (single `type` value).
         if let Some(type_str) = obj.get("type").and_then(Value::as_str) {
-            return self.primitive_type_ref(type_str, obj, hint, location);
+            return self.primitive_type_ref(type_str, obj, hint, document, location);
         }
 
         if obj.contains_key("enum") {
@@ -816,6 +1135,7 @@ impl GraphBuilder {
         type_str: &str,
         obj: &serde_json::Map<String, Value>,
         hint: Option<(&str, &str)>,
+        document: &str,
         location: &SchemaLocation,
     ) -> Result<SchemaTypeRef> {
         match type_str {
@@ -824,8 +1144,12 @@ impl GraphBuilder {
                     && !enum_array.is_empty()
                 {
                     let nested_name = nested_name(obj, hint)?;
-                    let id =
-                        self.lower_inline(&nested_name, &Value::Object(obj.clone()), location)?;
+                    let id = self.lower_inline(
+                        &nested_name,
+                        &Value::Object(obj.clone()),
+                        document,
+                        location,
+                    )?;
                     return Ok(SchemaTypeRef::Named(id));
                 }
                 Ok(SchemaTypeRef::String)
@@ -836,7 +1160,8 @@ impl GraphBuilder {
             "null" => Ok(SchemaTypeRef::Null),
             "array" => {
                 if let Some(items) = obj.get("items") {
-                    let item_type = self.lower_type_ref(items, hint, location)?;
+                    let item_type =
+                        self.lower_type_ref(items, hint, document, &location.child("items"))?;
                     Ok(SchemaTypeRef::Array(Box::new(item_type)))
                 } else {
                     Err(unsupported_json_schema(
@@ -849,14 +1174,23 @@ impl GraphBuilder {
             "object" => {
                 if is_inline_object_schema(obj) {
                     let nested_name = nested_name(obj, hint)?;
-                    let id =
-                        self.lower_inline(&nested_name, &Value::Object(obj.clone()), location)?;
+                    let id = self.lower_inline(
+                        &nested_name,
+                        &Value::Object(obj.clone()),
+                        document,
+                        location,
+                    )?;
                     return Ok(SchemaTypeRef::Named(id));
                 }
                 if is_map_schema(obj)
                     && let Some(value_schema) = obj.get("additionalProperties")
                 {
-                    let value_type = self.lower_type_ref(value_schema, hint, location)?;
+                    let value_type = self.lower_type_ref(
+                        value_schema,
+                        hint,
+                        document,
+                        &location.child("additionalProperties"),
+                    )?;
                     return Ok(SchemaTypeRef::Map(Box::new(value_type)));
                 }
                 Err(unsupported_json_schema(
@@ -873,17 +1207,107 @@ impl GraphBuilder {
         }
     }
 
-    fn lower_ref(&self, ref_path: &str, location: &SchemaLocation) -> Result<SchemaTypeRef> {
+    fn lower_ref(
+        &self,
+        ref_path: &str,
+        document: &str,
+        location: &SchemaLocation,
+    ) -> Result<SchemaTypeRef> {
         if !ref_path.starts_with('#') {
             return Err(external_reference(ref_path, location));
         }
-        let name = ref_path.split('/').next_back().filter(|s| !s.is_empty());
-        match name.and_then(|n| self.name_to_id.get(n)) {
-            Some(id) => Ok(SchemaTypeRef::Named(*id)),
-            None => Err(BamlBuilderError::InvalidArgument(format!(
-                "unresolved local JSON Schema reference `{ref_path}` at {location}"
-            ))),
+
+        let pointer = canonical_local_definition_pointer(ref_path).ok_or_else(|| {
+            BamlBuilderError::InvalidArgument(format!(
+                "unresolved local JSON Schema reference `{ref_path}` at {location}; only `#/$defs/...` and `#/definitions/...` are supported"
+            ))
+        })?;
+        let key = SchemaKey {
+            document: document.to_string(),
+            pointer,
+        };
+        self.key_to_id
+            .get(&key)
+            .copied()
+            .map(SchemaTypeRef::Named)
+            .ok_or_else(|| {
+                BamlBuilderError::InvalidArgument(format!(
+                    "unresolved local JSON Schema reference `{ref_path}` at {location}"
+                ))
+            })
+    }
+}
+
+fn canonical_local_definition_pointer(reference: &str) -> Option<String> {
+    let body = reference.strip_prefix('#')?;
+    let raw_segments: Vec<&str> = body.split('/').collect();
+    if raw_segments.len() < 3
+        || !raw_segments[0].is_empty()
+        || (raw_segments[1] != "$defs" && raw_segments[1] != "definitions")
+    {
+        return None;
+    }
+
+    let mut pointer = format!("/{}", raw_segments[1]);
+    for raw_segment in &raw_segments[2..] {
+        let segment = decode_json_pointer_segment(raw_segment)?;
+        pointer.push('/');
+        pointer.push_str(&super::escape_json_pointer(&segment));
+    }
+    Some(pointer)
+}
+
+fn decode_json_pointer_segment(segment: &str) -> Option<String> {
+    let mut decoded = String::with_capacity(segment.len());
+    let mut chars = segment.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '~' {
+            decoded.push(ch);
+            continue;
         }
+        match chars.next()? {
+            '0' => decoded.push('~'),
+            '1' => decoded.push('/'),
+            _ => return None,
+        }
+    }
+    Some(decoded)
+}
+
+fn is_null_schema(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|o| o.get("type").and_then(Value::as_str) == Some("null"))
+}
+
+/// When `arms` is a nullable wrapper `[T, null]` (in either order), return T's index and value.
+fn nullable_other(arms: &[Value]) -> Option<(usize, &Value)> {
+    if arms.len() != 2 {
+        return None;
+    }
+    if is_null_schema(&arms[0]) {
+        Some((1, &arms[1]))
+    } else if is_null_schema(&arms[1]) {
+        Some((0, &arms[0]))
+    } else {
+        None
+    }
+}
+
+/// When `one_of` is the `vec_or_one` wire shape `[T, { type: "array", items: T }]`, return `T`.
+fn vec_or_one_item(one_of: &[Value]) -> Option<&Value> {
+    if one_of.len() != 2 {
+        return None;
+    }
+    let second = one_of[1].as_object()?;
+    if second.get("type").and_then(Value::as_str) != Some("array") {
+        return None;
+    }
+    let items = second.get("items")?;
+    if items == &one_of[0] {
+        Some(items)
+    } else {
+        None
     }
 }
 
@@ -902,36 +1326,161 @@ fn is_inline_object_schema(obj: &serde_json::Map<String, Value>) -> bool {
 
 fn is_map_schema(obj: &serde_json::Map<String, Value>) -> bool {
     obj.get("type").and_then(Value::as_str) == Some("object")
-        && obj.get("additionalProperties").is_some()
+        && obj
+            .get("additionalProperties")
+            .is_some_and(Value::is_object)
         && !is_inline_object_schema(obj)
 }
 
-fn lower_additional_properties(obj: &serde_json::Map<String, Value>) -> AdditionalProperties {
+/// Resolve the additional-properties policy for a fixed object. A typed
+/// `additionalProperties` schema alongside fixed fields is not representable in generated BAML,
+/// so it is rejected rather than silently widened to a closed object.
+fn lower_additional_properties(
+    obj: &serde_json::Map<String, Value>,
+    location: &SchemaLocation,
+) -> Result<AdditionalProperties> {
     match obj.get("additionalProperties") {
-        None | Some(Value::Bool(true)) => AdditionalProperties::AllowedAny,
-        Some(Value::Bool(false)) => AdditionalProperties::Forbidden,
-        Some(Value::Object(_)) | Some(Value::Array(_)) => {
-            // Mixed fixed-fields + typed additional-properties is not representable in the current
-            // BAML renderer; model it as a typed map without lowering the inner schema.
-            AdditionalProperties::Typed(Box::new(SchemaTypeRef::JsonValue))
-        }
-        Some(_) => AdditionalProperties::AllowedAny,
+        None | Some(Value::Bool(true)) => Ok(AdditionalProperties::AllowedAny),
+        Some(Value::Bool(false)) => Ok(AdditionalProperties::Forbidden),
+        Some(schema @ Value::Object(_)) => Err(unsupported_json_schema(
+            "fixed objects with a typed `additionalProperties` schema cannot be represented in generated BAML; use a pure map schema or `OpaqueJson`",
+            schema,
+            location,
+        )),
+        Some(other) => Err(unsupported_json_schema(
+            "unsupported `additionalProperties` value",
+            other,
+            location,
+        )),
     }
 }
 
 /// Stable name for an inline object/enum: explicit `title` else parent + PascalCase field.
+fn unique_identifier(base: String, used: &mut BTreeSet<String>) -> String {
+    if used.insert(base.clone()) {
+        return base;
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}_{suffix}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
 fn nested_name(obj: &serde_json::Map<String, Value>, hint: Option<(&str, &str)>) -> Result<String> {
     if let Some(title) = obj.get("title").and_then(Value::as_str)
-        && !title.is_empty()
+        && is_valid_identifier(title)
+        && !is_reserved_symbol(title)
     {
         return Ok(title.to_string());
     }
     let Some((parent, field)) = hint else {
         return Err(BamlBuilderError::InvalidArgument(
-            "inline schema has no title and no parent/field hint for a generated name".to_string(),
+            "inline schema has no valid title and no parent/field hint for a generated name"
+                .to_string(),
         ));
     };
-    Ok(format!("{parent}{}", to_pascal_case(field)))
+    let candidate = format!("{parent}{}", to_pascal_case(field));
+    Ok(if is_valid_identifier(&candidate) {
+        candidate
+    } else {
+        sanitize_identifier(&candidate)
+    })
+}
+
+/// Stable identifier suffix derived from a qualified tool name (`support/calculate` ->
+/// `SupportCalculate`).
+fn tool_qualifier(tool: &baml_rt_tools::tools::ToolName) -> String {
+    let mut out = String::new();
+    let mut capitalize = true;
+    for ch in tool.to_string().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if capitalize {
+                out.extend(ch.to_uppercase());
+                capitalize = false;
+            } else {
+                out.push(ch);
+            }
+        } else {
+            capitalize = true;
+        }
+    }
+    out
+}
+
+/// Stable identifier suffix derived from a JSON pointer path (`/$defs/Foo` -> `DefsFoo`).
+fn path_qualifier(json_pointer: &str) -> String {
+    if json_pointer.is_empty() {
+        return String::new();
+    }
+    let cleaned: String = json_pointer
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    to_pascal_case(&cleaned)
+}
+
+/// Short deterministic digest of a fingerprint, used as a final symbol-qualification fallback.
+fn short_digest(s: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in s.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let full = format!("{hash:016x}");
+    full[..8].to_string()
+}
+
+fn canonical_id(
+    mut id: SchemaTypeId,
+    aliases: &BTreeMap<SchemaTypeId, SchemaTypeId>,
+) -> SchemaTypeId {
+    while let Some(next) = aliases.get(&id) {
+        id = *next;
+    }
+    id
+}
+
+fn rewrite_kind_ids(
+    kind: &mut SchemaDeclarationKind,
+    aliases: &BTreeMap<SchemaTypeId, SchemaTypeId>,
+) {
+    match kind {
+        SchemaDeclarationKind::Object(object) => {
+            for field in &mut object.fields {
+                rewrite_type_ref_ids(&mut field.ty, aliases);
+            }
+            if let AdditionalProperties::Typed(value) = &mut object.additional_properties {
+                rewrite_type_ref_ids(value, aliases);
+            }
+        }
+        SchemaDeclarationKind::Enum(_) => {}
+        SchemaDeclarationKind::Alias(ty) => rewrite_type_ref_ids(ty, aliases),
+    }
+}
+
+fn rewrite_type_ref_ids(ty: &mut SchemaTypeRef, aliases: &BTreeMap<SchemaTypeId, SchemaTypeId>) {
+    match ty {
+        SchemaTypeRef::Named(id) => *id = canonical_id(*id, aliases),
+        SchemaTypeRef::Array(inner)
+        | SchemaTypeRef::Map(inner)
+        | SchemaTypeRef::VecOrOne(inner) => rewrite_type_ref_ids(inner, aliases),
+        SchemaTypeRef::Union(arms) => {
+            for arm in arms {
+                rewrite_type_ref_ids(arm, aliases);
+            }
+        }
+        SchemaTypeRef::String
+        | SchemaTypeRef::Integer
+        | SchemaTypeRef::Number
+        | SchemaTypeRef::Boolean
+        | SchemaTypeRef::Null
+        | SchemaTypeRef::JsonValue
+        | SchemaTypeRef::Literal(_) => {}
+    }
 }
 
 /// Collect referenced declaration ids from a declaration kind.
@@ -1025,7 +1574,21 @@ fn type_ref_fingerprint(ty: &SchemaTypeRef) -> String {
     }
 }
 
-/// Canonical key for deduplicating union arms.
-fn type_ref_key(ty: &SchemaTypeRef) -> String {
-    type_ref_fingerprint(ty)
+/// Flatten and deduplicate union arms without dropping `Null`.
+fn normalize_union(types: Vec<SchemaTypeRef>) -> SchemaTypeRef {
+    let mut flattened = Vec::new();
+    for ty in types {
+        match ty {
+            SchemaTypeRef::Union(arms) => flattened.extend(arms),
+            other => flattened.push(other),
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    flattened.retain(|ty| seen.insert(type_ref_fingerprint(ty)));
+    match flattened.len() {
+        0 => SchemaTypeRef::Null,
+        1 => flattened.remove(0),
+        _ => SchemaTypeRef::Union(flattened),
+    }
 }

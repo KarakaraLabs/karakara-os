@@ -120,15 +120,15 @@ class ReadOnlyFinishStep {
 }
 // Domain types generated from the canonical tool schema graph
 class QueryAccountsInput {
-  query string | null? @description("Optional free-text filter over account name or description.")
-  region string | null? @description("Optional region filter (e.g. \'EMEA\', \'AMER\', \'APAC\').")
-  fiscal_quarter string | null? @description("Optional fiscal quarter filter (e.g. \'Q1\', \'Q2\', \'Q3\', \'Q4\').")
+  query (string | null)? @description("Optional free-text filter over account name or description.")
+  region (string | null)? @description("Optional region filter (e.g. \'EMEA\', \'AMER\', \'APAC\').")
+  fiscal_quarter (string | null)? @description("Optional fiscal quarter filter (e.g. \'Q1\', \'Q2\', \'Q3\', \'Q4\').")
 }
 
 class QueryOpportunitiesInput {
   account_id string @description("Account ID \u{2014} obtain from QueryAccounts.")
-  stage string | null? @description("Optional stage filter (e.g. \'Prospecting\', \'Closed Won\').")
-  min_value float | null? @description("Optional minimum deal value in dollars.")
+  stage (string | null)? @description("Optional stage filter (e.g. \'Prospecting\', \'Closed Won\').")
+  min_value (float | null)? @description("Optional minimum deal value in dollars.")
 }
 
 class GetContactInput {
@@ -149,8 +149,8 @@ class DeleteRecordInput {
 
 class ExportRecordsInput {
   query string @description("Query string to filter which records to export.")
-  format string | null? @description("Output format (e.g. \'csv\', \'json\', \'xlsx\'). Defaults to \'csv\'.")
-  destination string | null? @description("Destination path or URL for the exported file. Omit for default output location.")
+  format (string | null)? @description("Output format (e.g. \'csv\', \'json\', \'xlsx\'). Defaults to \'csv\'.")
+  destination (string | null)? @description("Destination path or URL for the exported file. Omit for default output location.")
 }
 
 type CrmInput = QueryAccountsInput | QueryOpportunitiesInput | GetContactInput | CreateNoteInput | DeleteRecordInput | ExportRecordsInput
@@ -160,19 +160,19 @@ class AccountRecord {
   name string
   region string
   revenue string
-  notes string | null?
+  notes (string | null)?
   @@dynamic
 }
 
 class CrmOutput {
   accounts AccountRecord[]?
-  message string | null?
+  message (string | null)?
   @@dynamic
 }
 
 class EmailOutput {
   status string
-  message_id string | null?
+  message_id (string | null)?
   @@dynamic
 }
 

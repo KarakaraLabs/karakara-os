@@ -1,6 +1,5 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
-assertion_line: 37
 expression: baml_output
 ---
 // Auto-generated tool interfaces
@@ -146,15 +145,15 @@ class GetTaskInput {
 class CreateTaskInput {
   list_id string @description("ClickUp list ID where the task will be created \u{2014} obtain from ListLists.")
   name string @description("Task title / name.")
-  description string | null? @description("Optional long-form task description (Markdown supported).")
-  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  description (string | null)? @description("Optional long-form task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
 class UpdateTaskInput {
   task_id string @description("ClickUp task ID to update \u{2014} obtain from ListTasks or GetTask.")
-  status string | null? @description("New task status string (e.g. \'in progress\', \'complete\').")
-  description string | null? @description("Updated task description (Markdown supported).")
-  priority int | null? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
+  status (string | null)? @description("New task status string (e.g. \'in progress\', \'complete\').")
+  description (string | null)? @description("Updated task description (Markdown supported).")
+  priority (int | null)? @description("ClickUp priority: 1 = urgent, 2 = high, 3 = normal, 4 = low.")
 }
 
 class DeleteTaskInput {
@@ -168,11 +167,11 @@ class ClickUpTaskSummary {
   id string
   name string
   status string
-  description string | null?
+  description (string | null)?
   url string
   assignees string[]?
-  priority string | null?
-  due_date string | null?
+  priority (string | null)?
+  due_date (string | null)?
   @@dynamic
 }
 

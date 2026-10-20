@@ -130,12 +130,12 @@ class AgentEventSubscriptionDto {
 class AgentCardDto {
   name string
   version string
-  contentHash string | null?
-  repositoryVersion int | null?
+  contentHash (string | null)?
+  repositoryVersion (int | null)?
   agentPackage string
   agentInstanceId string
   tools string[]
-  description string | null?
+  description (string | null)?
   capabilities string[]
   tags string[]?
   subscriptions AgentEventSubscriptionDto[]?
@@ -163,30 +163,30 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class DiscoverAgentsNextOutput {
   agents AgentCardDto[]
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class DiscoverAgentsOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class DiscoverAgentsSendInput {
-  query string | null?
-  requiredCapabilities string[] | null?
-  requiredSchemaVersions string[] | null?
-  requiredSourceKinds string[] | null?
-  limit int | null?
-  offset int | null?
+  query (string | null)?
+  requiredCapabilities (string[] | null)?
+  requiredSchemaVersions (string[] | null)?
+  requiredSourceKinds (string[] | null)?
+  limit (int | null)?
+  offset (int | null)?
   @@dynamic
 }
 
@@ -230,8 +230,8 @@ class ProvenancePayloadLlmResultDto {
 class ProvenancePayloadToolCallDto {
   payload_ref string
   activity_ref string
-  tool_name string | null?
-  phase string | null?
+  tool_name (string | null)?
+  phase (string | null)?
   args_json string
   source string
   @@dynamic
@@ -247,7 +247,7 @@ class ProvenancePayloadToolResultDto {
 
 class ProvenanceArchiveRecordDto {
   archiveRef string
-  payloads ProvenancePayloadLlmCallDto | ProvenancePayloadLlmResultDto | ProvenancePayloadToolCallDto | ProvenancePayloadToolResultDto[]
+  payloads (ProvenancePayloadLlmCallDto | ProvenancePayloadLlmResultDto | ProvenancePayloadToolCallDto | ProvenancePayloadToolResultDto)[]
   @@dynamic
 }
 
@@ -256,8 +256,8 @@ class SessionReadResultDto {
   refId string
   projection ProvenanceReadProjectionDto
   refs string[]
-  archiveSummary ProvenanceArchiveSummaryDto | null?
-  archiveRecord ProvenanceArchiveRecordDto | null?
+  archiveSummary (ProvenanceArchiveSummaryDto | null)?
+  archiveRecord (ProvenanceArchiveRecordDto | null)?
   @@dynamic
 }
 
@@ -272,46 +272,46 @@ class ProvenanceRetrievalBudgetDto {
 }
 
 class ProvenanceQueryNextOutput {
-  payloadJson string | null?
-  readResult SessionReadResultDto | null?
-  retrievalBudget ProvenanceRetrievalBudgetDto | null?
-  budgetExhausted bool | null?
+  payloadJson (string | null)?
+  readResult (SessionReadResultDto | null)?
+  retrievalBudget (ProvenanceRetrievalBudgetDto | null)?
+  budgetExhausted (bool | null)?
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class ProvenanceQueryOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class SessionReadEnvelope {
-  mode SessionReadMode | null?
+  mode (SessionReadMode | null)?
   refId string
-  projection string | null?
-  budgetHint int | null?
+  projection (string | null)?
+  budgetHint (int | null)?
   @@dynamic
 }
 
 class ProvenanceQuerySendInput {
-  read SessionReadEnvelope | null?
+  read (SessionReadEnvelope | null)?
   resource string
-  contextId string | null?
-  taskId string | null?
-  agentId string | null?
-  provider string | null?
-  model string | null?
-  toolName string | null?
-  bamlPrompt string | null?
-  payloadText string | null?
-  groupBy string[] | null?
-  sortBy string | null?
-  sortDir string | null?
-  outcome string | null?
-  pageSize int | null?
-  cursor string | null?
-  topK int | null?
+  contextId (string | null)?
+  taskId (string | null)?
+  agentId (string | null)?
+  provider (string | null)?
+  model (string | null)?
+  toolName (string | null)?
+  bamlPrompt (string | null)?
+  payloadText (string | null)?
+  groupBy (string[] | null)?
+  sortBy (string | null)?
+  sortDir (string | null)?
+  outcome (string | null)?
+  pageSize (int | null)?
+  cursor (string | null)?
+  topK (int | null)?
   @@dynamic
 }
 

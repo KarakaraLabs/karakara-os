@@ -120,25 +120,25 @@ class ReadOnlyFinishStep {
 }
 // Domain types generated from the canonical tool schema graph
 class ConversationPart {
-  text string | null? @description("Plain text content for this conversation part.")
-  raw string | null? @description("Raw provider-native content when plain text would be lossy or unavailable.")
-  url string | null? @description("Remote URL for this part when the content points to a web or attachment resource.")
-  filename string | null? @description("Attachment filename when this part refers to a file.")
-  mediaType string | null? @description("MIME type for this part, for example text/plain or image/png.")
+  text (string | null)? @description("Plain text content for this conversation part.")
+  raw (string | null)? @description("Raw provider-native content when plain text would be lossy or unavailable.")
+  url (string | null)? @description("Remote URL for this part when the content points to a web or attachment resource.")
+  filename (string | null)? @description("Attachment filename when this part refers to a file.")
+  mediaType (string | null)? @description("MIME type for this part, for example text/plain or image/png.")
   @@dynamic
 }
 
 class ConversationMessage {
-  role string | null?
+  role (string | null)?
   parts ConversationPart[]
   @@dynamic
 }
 
 class ConversationChunk {
-  message ConversationMessage | null?
-  task string | null?
-  statusUpdate string | null?
-  artifactUpdate string | null?
+  message (ConversationMessage | null)?
+  task (string | null)?
+  statusUpdate (string | null)?
+  artifactUpdate (string | null)?
   @@dynamic
 }
 
@@ -170,15 +170,15 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
-  completion InternalA2aCompletion | null?
-  historyContext HistoryContextV1 | null?
+  completion (InternalA2aCompletion | null)?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 

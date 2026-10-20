@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-builder/tests/codegen_test.rs
+assertion_line: 254
 expression: ts_output
 ---
 /**
@@ -41,7 +42,7 @@ operation: MathOperation;
 right: number;
  }
 
-export type MathOperation = "Add" | "Subtract" | "Multiply" | "Divide";
+export type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3";
 
 export interface ReadOnlyFinishStep { op: "ReadOnlyFinish";
 reply: StructuredReply;

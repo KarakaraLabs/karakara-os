@@ -255,9 +255,16 @@ pub(crate) fn parse_serde_container_wire(attrs: &[Attribute]) -> syn::Result<Ser
                 if meta.input.peek(syn::Token![=]) {
                     result.rename_all = Some(parse_string_value(&meta)?);
                 } else {
-                    // `rename_all(serialize = ..., deserialize = ...)`: the input-side rule is
-                    // the only one that affects an input schema, so ignore the split form.
-                    consume_unrecognized(&meta)?;
+                    // `rename_all(serialize = ..., deserialize = ...)`: only the symmetric form is
+                    // representable by one JsonSchemaType. A differing input/output rule would
+                    // silently emit the wrong input wire names, so reject it.
+                    let (rename, asymmetric) = parse_split_rename(&meta)?;
+                    if asymmetric {
+                        return Err(meta.error(
+                            "asymmetric `rename_all(serialize = ..., deserialize = ...)` cannot be represented by one JsonSchemaType; implement JsonSchemaType manually",
+                        ));
+                    }
+                    result.rename_all = rename;
                 }
                 return Ok(());
             }
@@ -469,4 +476,27 @@ fn to_snake_case(ident: &str) -> String {
         out.extend(ch.to_lowercase());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_serde_container_wire;
+
+    #[test]
+    fn rejects_asymmetric_container_rename_all() {
+        let attr: syn::Attribute = syn::parse_quote!(
+            #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+        );
+        let error = parse_serde_container_wire(&[attr]).expect_err("asymmetric rename_all");
+        assert!(error.to_string().contains("asymmetric `rename_all"));
+    }
+
+    #[test]
+    fn accepts_symmetric_container_rename_all() {
+        let attr: syn::Attribute = syn::parse_quote!(
+            #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+        );
+        let parsed = parse_serde_container_wire(&[attr]).expect("symmetric rename_all");
+        assert_eq!(parsed.rename_all.as_deref(), Some("camelCase"));
+    }
 }

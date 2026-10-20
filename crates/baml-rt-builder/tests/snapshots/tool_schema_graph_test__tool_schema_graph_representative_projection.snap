@@ -13,19 +13,28 @@ NestedRequest (1) fp=object[address:true:ref:0,kind:true:ref:3,ap:AllowedAny]
   field kind: RequestKind required=true
   deps [Address, RequestKind]
 
-RepresentativeToolInput (2) fp=object[request:true:ref:1,required_nullable:true:string,optional_note:false:string,labels:true:map[string],addresses:true:arr[ref:0],content:false:vec_or_one[union[ref:4]],opaque_payload:true:json,ap:AllowedAny]
+RepresentativeToolInput (2) fp=object[request:true:ref:1,required_nullable:true:union[string|null],optional_note:false:string,labels:true:map[string],addresses:true:arr[ref:0],content:false:vec_or_one[union[ref:4|ref:5|ref:6]],opaque_payload:true:json,ap:AllowedAny]
   field request: NestedRequest required=true
-  field required_nullable: string required=true
+  field required_nullable: string | null required=true
   field optional_note: string required=false
   field labels: map<string, string> required=true
   field addresses: Address[] required=true
-  field content: (RepresentativeToolInputContent | RepresentativeToolInputContent[]) required=false
+  field content: (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2[]) required=false
   field opaque_payload: json required=true
-  deps [Address, NestedRequest, RepresentativeToolInputContent]
+  deps [Address, NestedRequest, RepresentativeToolInputContentAlt0, RepresentativeToolInputContentAlt1, RepresentativeToolInputContentAlt2]
 
-RepresentativeToolInputContent (4) fp=object[kind:true:string,text:true:string,ap:AllowedAny]
+RepresentativeToolInputContentAlt0 (4) fp=object[kind:true:string,text:true:string,ap:AllowedAny]
   field kind: string required=true
   field text: string required=true
+
+RepresentativeToolInputContentAlt1 (5) fp=object[kind:true:string,url:true:string,ap:AllowedAny]
+  field kind: string required=true
+  field url: string required=true
+
+RepresentativeToolInputContentAlt2 (6) fp=object[kind:true:string,media_type:true:string,data:true:string,ap:AllowedAny]
+  field kind: string required=true
+  field media_type: string required=true
+  field data: string required=true
 
 RequestKind (3) fp=enum[String("create"),String("update")]
   variant Create = String("create")
@@ -33,6 +42,36 @@ RequestKind (3) fp=enum[String("create"),String("update")]
 
 
 == rendered BAML ==
+class RepresentativeToolInputContentAlt0 {
+  kind string
+  text string
+  @@dynamic
+}
+
+class RepresentativeToolInputContentAlt1 {
+  kind string
+  url string
+  @@dynamic
+}
+
+class RepresentativeToolInputContentAlt2 {
+  kind string
+  media_type string
+  data string
+  @@dynamic
+}
+
+class RepresentativeToolInput {
+  request NestedRequest
+  required_nullable string | null
+  optional_note string?
+  labels map<string, string>
+  addresses Address[]
+  content (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[])?
+  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  @@dynamic
+}
+
 class Address {
   city string
   lines string[]
@@ -42,23 +81,6 @@ class Address {
 class NestedRequest {
   address Address
   kind RequestKind
-  @@dynamic
-}
-
-class RepresentativeToolInputContent {
-  kind string
-  text string
-  @@dynamic
-}
-
-class RepresentativeToolInput {
-  request NestedRequest
-  required_nullable string
-  optional_note string?
-  labels map<string, string>
-  addresses Address[]
-  content (RepresentativeToolInputContent | RepresentativeToolInputContent[])?
-  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
   @@dynamic
 }
 

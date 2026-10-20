@@ -62,11 +62,20 @@ export interface ClaudeToolOpenInput { workspace: string | null;
  }
 
 export interface ClaudeToolSendInput { prompt: string | null;
-content: ClaudeToolSendInputContent | ClaudeToolSendInputContent[] | null;
+content: ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2 | (ClaudeToolSendInputContentAlt0 | ClaudeToolSendInputContentAlt1 | ClaudeToolSendInputContentAlt2)[] | null;
  }
 
-export interface ClaudeToolSendInputContent { kind: string;
+export interface ClaudeToolSendInputContentAlt0 { kind: string;
 text: string;
+ }
+
+export interface ClaudeToolSendInputContentAlt1 { kind: string;
+url: string;
+ }
+
+export interface ClaudeToolSendInputContentAlt2 { kind: string;
+media_type: string;
+data: string;
  }
 
 export interface CodeProposal { file_path: string;

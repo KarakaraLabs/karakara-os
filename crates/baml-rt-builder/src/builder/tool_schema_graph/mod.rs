@@ -73,6 +73,31 @@ pub struct SchemaLocation {
     pub json_pointer: String,
 }
 
+impl SchemaLocation {
+    /// Descend one object key into this location (RFC 6901 pointer segment).
+    pub(crate) fn child(&self, segment: &str) -> SchemaLocation {
+        SchemaLocation {
+            tool_name: self.tool_name.clone(),
+            role: self.role,
+            json_pointer: format!("{}/{}", self.json_pointer, escape_json_pointer(segment)),
+        }
+    }
+
+    /// Descend one array index into this location.
+    pub(crate) fn index(&self, index: usize) -> SchemaLocation {
+        SchemaLocation {
+            tool_name: self.tool_name.clone(),
+            role: self.role,
+            json_pointer: format!("{}/{index}", self.json_pointer),
+        }
+    }
+}
+
+/// Escape a JSON Pointer reference token per RFC 6901 (`~` -> `~0`, `/` -> `~1`).
+pub(crate) fn escape_json_pointer(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
 impl std::fmt::Display for SchemaLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.tool_name, self.role) {

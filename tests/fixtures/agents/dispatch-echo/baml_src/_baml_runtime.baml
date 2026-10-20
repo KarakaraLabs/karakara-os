@@ -130,16 +130,16 @@ class CallbackScheduleInput {
   afterMs int @description("Delay before the callback event is emitted, in milliseconds.")
   sourceKey string @description("Stable event source key for subscription matching, for example `coordinator-agent:follow-up`.")
   payload OpaqueJson @description("Opaque JSON payload delivered back through onDispatch.")
-  dedupeKey string | null? @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
-  continuation CallbackContinuationMode | null? @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
+  dedupeKey (string | null)? @description("Optional idempotency key scoped to the sourceKey. A pending callback with the same sourceKey + dedupeKey is reused instead of creating another row.")
+  continuation (CallbackContinuationMode | null)? @description("Optional continuation policy. Omit it for a detached callback. Use `resume_current_task` to re-enter the current task later in the same context after the current turn has quiesced.")
   op string
   @@dynamic
 }
 
 class CallbackCancelInput {
-  callbackId string | null? @description("Exact callback id to cancel.")
-  sourceKey string | null? @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
-  dedupeKey string | null? @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
+  callbackId (string | null)? @description("Exact callback id to cancel.")
+  sourceKey (string | null)? @description("Source key for dedupe-key cancellation. Required when cancelling by dedupeKey.")
+  dedupeKey (string | null)? @description("Optional dedupe key to cancel instead of a callback id. Requires sourceKey.")
   op string
   @@dynamic
 }
@@ -151,19 +151,19 @@ class CallbackScheduledOutput {
   sourceKey string
   scheduledForUnixMs int
   deduped bool
-  dispatchContextId string | null?
-  dispatchTaskId string | null?
-  schedulingContextId string | null?
-  schedulingTaskId string | null?
+  dispatchContextId (string | null)?
+  dispatchTaskId (string | null)?
+  schedulingContextId (string | null)?
+  schedulingTaskId (string | null)?
   outcome string
   @@dynamic
 }
 
 class CallbackCancelledOutput {
   cancelled bool
-  callbackId string | null?
-  sourceKey string | null?
-  dedupeKey string | null?
+  callbackId (string | null)?
+  sourceKey (string | null)?
+  dedupeKey (string | null)?
   outcome string
   @@dynamic
 }
@@ -200,26 +200,26 @@ class HistoryContextV1 {
   op HistoryContextSessionOp
   status HistoryContextStatus
   truncated bool?
-  cursor string | null?
-  payload map<string, OpaqueJson> | null?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
   @@dynamic
 }
 
 class DiscoverToolsNextOutput {
   tools ToolDiscoveryRecordDto[]
   done bool
-  historyContext HistoryContextV1 | null?
+  historyContext (HistoryContextV1 | null)?
   @@dynamic
 }
 
 class DiscoverToolsOpenInput {
-  reason string | null?
+  reason (string | null)?
   @@dynamic
 }
 
 class DiscoverToolsSendInput {
-  query string | null?
-  limit int | null?
+  query (string | null)?
+  limit (int | null)?
   @@dynamic
 }
 

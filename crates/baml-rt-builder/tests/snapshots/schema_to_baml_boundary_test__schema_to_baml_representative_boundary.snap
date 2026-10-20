@@ -3,29 +3,46 @@ source: crates/baml-rt-builder/tests/schema_to_baml_boundary_test.rs
 expression: "format!(\"== rendered BAML ==\\n{}\\n== unsupported allOf diagnostic ==\\n{}\\n\",\nrendered.trim_end(), diagnostic,)"
 ---
 == rendered BAML ==
+class RepresentativeToolInputContentAlt0 {
+  kind string
+  text string
+  @@dynamic
+}
+
+class RepresentativeToolInputContentAlt1 {
+  kind string
+  url string
+  @@dynamic
+}
+
+class RepresentativeToolInputContentAlt2 {
+  kind string
+  media_type string
+  data string
+  @@dynamic
+}
+
+class RepresentativeToolInput {
+  request NestedRequest
+  required_nullable string | null
+  optional_note string?
+  labels map<string, string>
+  addresses Address[]
+  content (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[])?
+  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  @@dynamic
+}
+
 class Address {
   city string
   lines string[]
+  @@dynamic
 }
 
 class NestedRequest {
   address Address
   kind RequestKind
-}
-
-class RepresentativeToolInputContent {
-  kind string
-  text string
-}
-
-class RepresentativeToolInput {
-  request NestedRequest
-  required_nullable string
-  optional_note string?
-  labels map<string, string>
-  addresses Address[]
-  content (RepresentativeToolInputContent | RepresentativeToolInputContent[])?
-  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  @@dynamic
 }
 
 enum RequestKind {
@@ -35,4 +52,4 @@ enum RequestKind {
     @alias("update")
 }
 == unsupported allOf diagnostic ==
-Invalid argument: Cannot generate BAML type for UnsupportedAllOf: unsupported schema format
+Invalid argument: cannot generate BAML type for `UnsupportedAllOf` at <root schema>: unsupported schema format
