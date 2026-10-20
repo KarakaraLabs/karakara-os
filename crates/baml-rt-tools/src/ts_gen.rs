@@ -67,6 +67,24 @@ pub fn runtime_typescript_symbols() -> &'static [&'static str] {
     RUNTIME_TYPESCRIPT_SYMBOLS
 }
 
+/// Runtime TypeScript symbols whose BAML declarations are generated into every agent prelude.
+///
+/// BAML IR carries a copy of these declarations from `_baml_runtime.baml`. They are the only
+/// runtime collisions the builder may suppress; an authored BAML class named after any other
+/// runtime symbol is a real conflict.
+pub const GENERATED_PRELUDE_TYPESCRIPT_SYMBOLS: &[&str] = &[
+    "ReplyMediaType",
+    "TextPart",
+    "DataPart",
+    "ReplyPart",
+    "StructuredReply",
+];
+
+/// Runtime symbols that the generated BAML prelude may duplicate.
+pub fn generated_prelude_typescript_symbols() -> &'static [&'static str] {
+    GENERATED_PRELUDE_TYPESCRIPT_SYMBOLS
+}
+
 /// Compatibility wrapper for callers that still pass tool metadata.
 ///
 /// Tool DTOs are rendered from `ToolSchemaGraph`, so the parameter is ignored.

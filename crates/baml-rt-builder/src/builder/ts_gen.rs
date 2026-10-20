@@ -11,7 +11,9 @@ use std::{
 use baml_rt_tools::{
     SessionPlanFunctionsMap, UnifiedStepExecutorFunctionsMap,
     tools::ToolFunctionMetadata,
-    ts_gen::{render_runtime_typescript, runtime_typescript_symbols},
+    ts_gen::{
+        generated_prelude_typescript_symbols, render_runtime_typescript, runtime_typescript_symbols,
+    },
 };
 use genco::{fmt::Error as GencoFmtError, lang::js, prelude::*};
 use internal_baml_core::ir::ir_hasher::IRSignature;
@@ -94,7 +96,10 @@ pub fn render_ts_declarations(
     let surface = render_tool_typescript_surface(tool_schema_graph)?;
 
     let mut registry = TsDeclarationRegistry::new();
-    registry.reserve_runtime_symbols(runtime_typescript_symbols())?;
+    registry.reserve_runtime_symbols(
+        runtime_typescript_symbols(),
+        generated_prelude_typescript_symbols(),
+    )?;
     for declaration in surface.declarations.iter().cloned() {
         registry.insert(declaration)?;
     }

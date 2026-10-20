@@ -86,6 +86,14 @@ fn mixed_origin_typescript_authority() {
     )
     .expect("compile mixed-origin BAML");
     let ir = extract_baml_signatures(&runtime).expect("extract mixed-origin IR");
+    assert!(
+        ir.functions.contains_key("EchoExternal") && ir.functions.contains_key("EchoMcp"),
+        "fixture BAML functions must reach the IR"
+    );
+    assert!(
+        ir.classes.contains_key("ExternalEchoInput") && ir.classes.contains_key("McpTypedInput"),
+        "fixture BAML classes must overlap graph-owned DTOs"
+    );
 
     let rendered = render_ts_declarations(
         &ir,
@@ -145,7 +153,58 @@ fn mixed_origin_typescript_authority() {
         );
     }
 
+    // Authored BAML that shadows a non-prelude runtime symbol is a hard conflict, not a silent
+    // IR drop that retypes the function with the unrelated runtime declaration.
+    let authored_ir = compile_ir_source(
+        r##"
+client AuthoredClient {
+  provider openai-generic
+  options {
+    model "gpt-4o-mini"
+    base_url "https://example.invalid"
+    api_key "test"
+  }
+}
+
+class Message {
+  text string
+}
+
+function UseMessage(message: Message) -> string {
+  client AuthoredClient
+  prompt #"{{ message }}"#
+}
+"##,
+    );
+    let error = render_ts_declarations(
+        &authored_ir,
+        &tools,
+        &graph,
+        &Default::default(),
+        &Default::default(),
+    )
+    .expect_err("authored BAML class must not shadow runtime Message")
+    .to_string();
+    assert!(
+        error.contains("conflicting TypeScript declaration `Message`"),
+        "diagnostic: {error}"
+    );
+    assert!(error.contains("runtime block"), "diagnostic: {error}");
+    assert!(error.contains("BAML IR"), "diagnostic: {error}");
+
     run_tsc(temp.path());
+}
+
+fn compile_ir_source(baml: &str) -> internal_baml_core::ir::ir_hasher::IRSignature {
+    let files = HashMap::from([("authored.baml".to_string(), baml.to_string())]);
+    let runtime = baml_runtime::BamlRuntime::from_file_content(
+        "test",
+        &files,
+        HashMap::<String, String>::new(),
+        FeatureFlags::default(),
+    )
+    .expect("compile authored BAML");
+    extract_baml_signatures(&runtime).expect("extract authored IR")
 }
 
 fn external_tool(

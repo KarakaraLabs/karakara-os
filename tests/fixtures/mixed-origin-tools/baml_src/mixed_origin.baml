@@ -1,5 +1,14 @@
 // Fixture: BAML function signatures that overlap graph-owned tool DTOs.
 
+client MixedOriginClient {
+  provider openai-generic
+  options {
+    model "gpt-4o-mini"
+    base_url "https://example.invalid"
+    api_key "test"
+  }
+}
+
 class ExternalEchoInput {
   message string
 }
@@ -9,9 +18,11 @@ class McpTypedInput {
 }
 
 function EchoExternal(input: ExternalEchoInput) -> string {
-  input.message
+  client MixedOriginClient
+  prompt #"{{ input }}"#
 }
 
 function EchoMcp(input: McpTypedInput) -> string {
-  input.query
+  client MixedOriginClient
+  prompt #"{{ input }}"#
 }

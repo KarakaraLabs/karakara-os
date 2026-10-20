@@ -60,11 +60,14 @@ impl TsDeclarationOrigin {
 ///
 /// Runtime symbols are reserved because their bodies are emitted by the static runtime block.
 /// Graph declarations are submitted first; an IR copy of a graph-owned symbol is suppressed by
-/// ownership, not by comparing rendered text or by a hard-coded skip list.
+/// ownership, not by comparing rendered text or by a hard-coded skip list. The only runtime
+/// collisions that may be suppressed are the declarations the generated BAML prelude legitimately
+/// duplicates; every other IR collision is a build error.
 #[derive(Debug, Default)]
 pub struct TsDeclarationRegistry {
     declarations: BTreeMap<String, TsDeclaration>,
     reserved: BTreeMap<String, TsDeclarationOrigin>,
+    generated_prelude_duplicates: BTreeSet<String>,
 }
 
 impl TsDeclarationRegistry {
@@ -88,7 +91,25 @@ impl TsDeclarationRegistry {
     }
 
     /// Reserve every symbol exported by the static runtime TypeScript block.
-    pub fn reserve_runtime_symbols(&mut self, symbols: &[&str]) -> Result<()> {
+    ///
+    /// `generated_prelude_duplicates` are the runtime symbols whose BAML declarations the generated
+    /// prelude also carries. Only IR copies of those symbols are suppressed. An authored BAML class
+    /// that shares any other runtime symbol is a conflict.
+    pub fn reserve_runtime_symbols(
+        &mut self,
+        symbols: &[&str],
+        generated_prelude_duplicates: &[&str],
+    ) -> Result<()> {
+        let runtime_symbols: BTreeSet<&str> = symbols.iter().copied().collect();
+        for symbol in generated_prelude_duplicates {
+            if !runtime_symbols.contains(symbol) {
+                return Err(BamlBuilderError::InvalidArgument(format!(
+                    "generated prelude duplicate `{symbol}` is not a runtime TypeScript symbol"
+                )));
+            }
+            self.generated_prelude_duplicates
+                .insert((*symbol).to_string());
+        }
         for symbol in symbols {
             self.reserve(symbol, TsDeclarationOrigin::Runtime)?;
         }
@@ -98,15 +119,17 @@ impl TsDeclarationRegistry {
     /// Submit one declaration, resolving ownership and duplicates.
     ///
     /// Returns an error when two incompatible bodies claim the same symbol. A graph declaration
-    /// always wins over the BAML IR copy of the same DTO, and the runtime block wins over an IR
-    /// copy of a runtime-authored symbol.
+    /// always wins over the BAML IR copy of the same DTO. The runtime block wins only over the
+    /// generated-prelude IR copies it owns; an authored IR declaration that collides with any other
+    /// runtime symbol is rejected.
     pub fn insert(&mut self, declaration: TsDeclaration) -> Result<()> {
         let symbol = declaration.symbol.clone();
 
         if let Some(reserved_origin) = self.reserved.get(&symbol).cloned() {
-            if matches!(declaration.origin, TsDeclarationOrigin::BamlIr) {
-                // BAML IR carries copies of runtime-authored declarations (for example
-                // `StructuredReply`). The runtime block owns them.
+            if matches!(declaration.origin, TsDeclarationOrigin::BamlIr)
+                && self.generated_prelude_duplicates.contains(&symbol)
+            {
+                // `_baml_runtime.baml` declares the prelude copies of these runtime symbols.
                 return Ok(());
             }
             return Err(conflict_error(&symbol, reserved_origin, declaration.origin));

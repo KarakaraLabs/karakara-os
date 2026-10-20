@@ -23,7 +23,9 @@ use baml_rt_builder::builder::{
 use baml_rt_tools::tool_catalog::resolve_manifest_tools;
 use baml_rt_tools::{
     tools::ToolName,
-    ts_gen::{render_runtime_typescript, runtime_typescript_symbols},
+    ts_gen::{
+        generated_prelude_typescript_symbols, render_runtime_typescript, runtime_typescript_symbols,
+    },
 };
 #[cfg(feature = "notion")]
 use baml_tools_notion as _;
@@ -34,6 +36,7 @@ fn ts_declaration_registry_ownership_and_conflicts() {
     assert_runtime_inventory_is_real();
     assert_runtime_versus_graph_conflict();
     assert_runtime_versus_ir_suppression();
+    assert_runtime_versus_authored_ir_conflict();
     assert_identical_duplicates_dedupe();
     assert_graph_shadows_authored_ir();
     assert_ir_only_dependency_is_kept();
@@ -55,19 +58,19 @@ fn assert_runtime_inventory_is_real() {
         );
     }
 
-    // The old hard-coded bootstrap skip list is now a subset of the runtime inventory.
-    for symbol in [
-        "StructuredReply",
-        "TextPart",
-        "DataPart",
-        "ReplyPart",
-        "ReplyMediaType",
-    ] {
-        assert!(
-            inventory.contains(symbol),
-            "`{symbol}` must remain runtime-reserved"
-        );
-    }
+    // Only generated-prelude duplicates may be suppressed; they must all be runtime-owned.
+    let prelude_duplicates: BTreeSet<&str> = generated_prelude_typescript_symbols()
+        .iter()
+        .copied()
+        .collect();
+    assert!(!prelude_duplicates.is_empty());
+    assert!(
+        prelude_duplicates.is_subset(&inventory),
+        "generated-prelude duplicates must be runtime-reserved: {:?}",
+        prelude_duplicates
+            .difference(&inventory)
+            .collect::<Vec<_>>()
+    );
 }
 
 fn assert_runtime_versus_graph_conflict() {
@@ -97,21 +100,45 @@ fn assert_runtime_versus_graph_conflict() {
 
 fn assert_runtime_versus_ir_suppression() {
     let mut registry = new_runtime_registry();
-    registry
-        .insert(declaration(
-            "StructuredReply",
-            "export interface StructuredReply { legacy_ir_copy: true; }",
-            TsDeclarationOrigin::BamlIr,
-        ))
-        .expect("runtime owns its symbols");
+    for symbol in generated_prelude_typescript_symbols() {
+        registry
+            .insert(declaration(
+                symbol,
+                &format!("export interface {symbol} {{ legacy_ir_copy: true; }}"),
+                TsDeclarationOrigin::BamlIr,
+            ))
+            .unwrap_or_else(|error| panic!("generated prelude duplicate `{symbol}`: {error}"));
+        assert!(registry.get(symbol).is_none());
+    }
 
-    assert!(registry.get("StructuredReply").is_none());
     assert!(
         !registry
             .render()
             .expect("render")
             .contains("legacy_ir_copy")
     );
+}
+
+fn assert_runtime_versus_authored_ir_conflict() {
+    for symbol in ["Message", "Part", "A2aTaskState"] {
+        let mut registry = new_runtime_registry();
+        let error = registry
+            .insert(declaration(
+                symbol,
+                &format!("export interface {symbol} {{ authored: true; }}"),
+                TsDeclarationOrigin::BamlIr,
+            ))
+            .expect_err("authored BAML cannot shadow a runtime symbol")
+            .to_string();
+
+        assert!(
+            error.contains(&format!("conflicting TypeScript declaration `{symbol}`")),
+            "diagnostic: {error}"
+        );
+        assert!(error.contains("runtime block"), "diagnostic: {error}");
+        assert!(error.contains("BAML IR"), "diagnostic: {error}");
+        assert!(registry.get(symbol).is_none());
+    }
 }
 
 fn assert_identical_duplicates_dedupe() {
@@ -228,7 +255,10 @@ fn assert_notion_graph_symbols_are_single_copy() {
 fn new_runtime_registry() -> TsDeclarationRegistry {
     let mut registry = TsDeclarationRegistry::new();
     registry
-        .reserve_runtime_symbols(runtime_typescript_symbols())
+        .reserve_runtime_symbols(
+            runtime_typescript_symbols(),
+            generated_prelude_typescript_symbols(),
+        )
         .expect("reserve runtime symbols");
     registry
 }
