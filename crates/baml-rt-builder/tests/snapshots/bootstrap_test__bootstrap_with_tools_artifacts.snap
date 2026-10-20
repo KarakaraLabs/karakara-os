@@ -568,7 +568,6 @@ declare global {
   ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
-
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
 export type StepExecutorFunctionName = "ChooseCalculatoragentTool" | "ChooseCalculatoragentTool__active__support_calculate" | "ChooseCalculatoragentTool__entry";

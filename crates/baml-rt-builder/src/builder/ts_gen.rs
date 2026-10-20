@@ -141,7 +141,7 @@ pub fn render_ts_declarations(
         quote_in!(tokens => $(catalog_comment));
         tokens.line();
         let catalog_ts = render_tool_catalog(&surface)?;
-        quote_in!(tokens => $(catalog_ts));
+        quote_in!(tokens => $(catalog_ts.trim_end()));
         tokens.line();
     }
 

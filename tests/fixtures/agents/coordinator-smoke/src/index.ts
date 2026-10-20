@@ -1,5 +1,14 @@
 /// <reference path="./baml-runtime.d.ts" />
-import type { ChatMessage, RunContext, SessionEmitter, SessionResult } from "./baml-runtime";
+import type {
+  ChatMessage,
+  DiscoverAgentsOpenInput,
+  DiscoverAgentsSendInput,
+  RunContext,
+  SessionEmitter,
+  SessionResult,
+  ToolName,
+  ToolSession,
+} from "./baml-runtime";
 
 type DelegatedChunk = {
   message?: {
@@ -31,12 +40,7 @@ type CoordinatorGoal = {
   due_date?: string | null;
 };
 
-type ToolSessionHandle = {
-  send(args: Record<string, unknown>): Promise<unknown>;
-  continue(): Promise<unknown>;
-  finish(): Promise<unknown>;
-  abort(reason?: string): Promise<unknown>;
-};
+type SessionHandle<T extends ToolName> = Awaited<ReturnType<typeof openToolSession<T>>>;
 
 type RouteTarget = {
   agent_package: string;
@@ -72,11 +76,6 @@ declare function PlanCoordinatorWorkflow(args: {
   available_agents: AgentCandidate[];
 }): Promise<unknown>;
 
-declare function openToolSession(
-  toolName: string,
-  openInput?: Record<string, unknown>,
-): Promise<ToolSessionHandle>;
-
 const MAX_FANOUT_CONCURRENCY = 3;
 const MAX_TRANSCRIPT_CHARS = 12_000;
 const MAX_SINGLE_SEND_CONTINUE_STEPS = 16;
@@ -86,7 +85,6 @@ const MAX_FOREACH_EXPANSIONS = 50;
 const MAX_WORKFLOW_ITERATIONS = 8;
 
 const INTERNAL_A2A_TOOL_NAME = "system/internal_a2a";
-const DISCOVER_AGENTS_TOOL_NAME = "system/discover_agents";
 
 type WorkflowNodeKind =
   | "call_agent"
@@ -580,8 +578,8 @@ function parseToolSessionStep(step: unknown): ParsedToolSessionStep {
   return { status, output, errorMessage };
 }
 
-async function drainToolSession(
-  sessionHandle: ToolSessionHandle,
+async function drainToolSession<I, O>(
+  sessionHandle: ToolSession<I, O>,
   maxSteps: number,
 ): Promise<DrainToolSessionResult> {
   const steps: ParsedToolSessionStep[] = [];
@@ -597,14 +595,13 @@ async function drainToolSession(
 // Tool session management
 // ---------------------------------------------------------------------------
 
-async function runSingleSendSession(
-  toolName: string,
-  openInput: Record<string, unknown>,
-  sendInput: Record<string, unknown>,
+async function runDiscoverAgentsSession(
+  openInput: DiscoverAgentsOpenInput,
+  sendInput: DiscoverAgentsSendInput,
 ): Promise<unknown> {
-  let sessionHandle: ToolSessionHandle | null = null;
+  let sessionHandle: SessionHandle<"system/discover_agents"> | null = null;
   try {
-    sessionHandle = await openToolSession(toolName, openInput);
+    sessionHandle = await openToolSession("system/discover_agents", openInput);
     await sessionHandle.send(sendInput);
     const drained = await drainToolSession(sessionHandle, MAX_SINGLE_SEND_CONTINUE_STEPS);
     if (drained.hitStepLimit) {
@@ -633,8 +630,7 @@ async function runSingleSendSession(
 }
 
 async function discoverAgents(userText: string): Promise<DiscoveredAgent[]> {
-  const response = await runSingleSendSession(
-    DISCOVER_AGENTS_TOOL_NAME,
+  const response = await runDiscoverAgentsSession(
     { reason: "Discover available specialist agents for coordinator routing" },
     { query: userText, limit: 100, offset: 0 },
   );
@@ -643,7 +639,7 @@ async function discoverAgents(userText: string): Promise<DiscoveredAgent[]> {
 }
 
 async function delegateToAgent(target: RouteTarget, prompt: string): Promise<string[]> {
-  let sessionHandle: ToolSessionHandle | null = null;
+  let sessionHandle: SessionHandle<"system/internal_a2a"> | null = null;
   try {
     sessionHandle = await openToolSession(INTERNAL_A2A_TOOL_NAME, {
       target,

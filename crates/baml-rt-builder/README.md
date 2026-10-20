@@ -23,9 +23,13 @@ polymorphic session unions, and per-phase executors. Section markers: `// ──
 The runtime type generator produces `dist/baml-runtime.d.ts` with:
 
 - **Typed BAML function declarations** (args and return types from IR), wrapped in `declare global { }` so they are visible when the file is used as a module.
+- **Tool DTOs from `ToolSchemaGraph`**: interfaces, enums, and aliases for every allowlisted static, external, MCP, sandbox, and WASM tool. Graph-owned symbols are emitted once even when BAML IR also references them.
+- **Tool catalog API**: `ToolName`, input/output/open-input maps, and the generic `openToolSession` global. Open input is required at the call site when the tool schema requires it, and optional otherwise; absent Open input uses `Record<string, never>`. Opaque schemas use `JsonValue`.
 - **Supporting types**: interfaces, enums, and type aliases for BAML classes/unions.
 - **A2A task DSL**: `session(message)`, `RunContext`, `SessionEmitter`, `SessionResult`; `__chat_register({ run })` so the agent entrypoint is `run(ctx)` with `ctx.text`, `ctx.message`, `ctx.emit`; `messageText(message)` and `message.text()` for first-text extraction; `emit.awaitInput(prompt)` for INPUT_REQUIRED suspension. All in one file; no separate `a2a.ts`.
-- **Host tool session API**: `openToolSession`, tool-specific openers, and shared types (e.g. `ToolFailure`, `ToolStep`, `ToolSession`).
+- **Host tool session API**: the generated `openToolSession` handle (`sessionId`, `phase`, `send`, `continue`, `finish`, `abort`) plus `ToolStep`, `ToolSession`, and `ToolFailure`. No per-tool opener globals are generated.
+
+`ToolTypeSpec.ts_decl`, `extra_ts_decls`, and pre-rendered `baml_decl` text remain compatibility metadata; the TypeScript generator never reads them. Generated declarations are the sole owner of `openToolSession` for manifest-backed tools, so agents must not add local `declare function openToolSession` shims.
 
 Agent code uses `__chat_register({ run: async (ctx) => { ... } })` or `session(message).run(...)` and calls `await MyBamlFunction(args)` with full types. See the how-to doc for DSL overview; **task-lifecycle-demo** (`tests/fixtures/agents/task-lifecycle-demo/src/index.ts`) remains the detailed lifecycle reference.
 

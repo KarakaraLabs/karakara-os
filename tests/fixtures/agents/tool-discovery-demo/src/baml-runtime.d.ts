@@ -17,12 +17,58 @@ offset: number | null;
 limit: number | null;
  }
 
-export interface DiscoverToolsOpenInput { reason: string | null;
- }
+export interface CalculatorInput {
+  expression: Expression;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface DiscoverToolsSendInput { query: string | null;
-limit: number | null;
- }
+export interface CalculatorOutput {
+  expression: string;
+  result: number;
+  formatted: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsNextOutput {
+  tools: ToolDiscoveryRecordDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsSendInput {
+  query?: string | null;
+  limit?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface Expression {
+  left: number;
+  operation: MathOperation;
+  right: number;
+  [key: string]: JsonValue | undefined;
+}
+
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
+
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
+
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type MathOperation = "+" | "-" | "*" | "/";
 
 export interface SystemDiscoverToolsAbortStep { op: "Abort";
  }
@@ -52,6 +98,16 @@ citations: string[];
 export interface SystemDiscoverToolsSessionPlan { step: SystemDiscoverToolsOpenStep | SystemDiscoverToolsSendStep | SystemDiscoverToolsSearchReadStep | SystemDiscoverToolsPageReadStep | SystemDiscoverToolsFinishStep | SystemDiscoverToolsAbortStep;
 citations: string[];
  }
+
+export interface ToolDiscoveryRecordDto {
+  name: string;
+  bundle: string;
+  description: string;
+  tags: string[];
+  eventSources?: string[];
+  [key: string]: JsonValue | undefined;
+}
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -409,6 +465,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -420,6 +481,78 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "support/calculate"
+  | "system/discover_tools";
+
+export interface ToolInputMap {
+  "support/calculate": CalculatorInput;
+  "system/discover_tools": DiscoverToolsSendInput;
+}
+
+export interface ToolOutputMap {
+  "support/calculate": CalculatorOutput;
+  "system/discover_tools": DiscoverToolsNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "support/calculate": Record<string, never>;
+  "system/discover_tools": DiscoverToolsOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput = never;
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -461,12 +594,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

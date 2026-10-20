@@ -74,7 +74,9 @@ const result = await WriteFile("/output.txt", processedContent)
 
 ## Generated tool DTO schemas
 
-The builder generates Open, Send, and output DTO BAML from the three JSON Schema values in resolved `ToolFunctionMetadata`. Static tools, external tools, and MCP tools follow the same path. A static tool's `baml_decl`, `ToolTypeSpec.ts_decl`, and `extra_ts_decls` still travel in catalog records for compatibility, but builder DTO generation does not read them.
+The builder generates Open, Send, and output DTOs in both BAML and TypeScript from the three JSON Schema values in resolved `ToolFunctionMetadata`, lowered once into `ToolSchemaGraph`. Static, external, MCP, sandbox, and WASM tools follow the same path; origin and backend never select a different renderer. A tool's `baml_decl`, `ToolTypeSpec.ts_decl`, and `extra_ts_decls` still travel in catalog records for compatibility, but neither the BAML nor the TypeScript generator reads them.
+
+Generated TypeScript also owns `ToolName`, the input/output/open-input maps, and `openToolSession`. Open input is required at the call site when the tool schema requires fields, optional when the schema allows an empty object, and omitted when the tool uses the unit Open input. Opaque schemas render as `JsonValue`. Do not add a local `declare function openToolSession` shim for a manifest-backed tool.
 
 The schema graph supports primitives, literals, homogeneous enums, arrays, typed maps, fixed objects, local `$defs` or `definitions` references, nullable values, `oneOf`, `anyOf`, `vec_or_one`, tagged object unions, and `OpaqueJson`. The builder rejects external `$ref` values, boolean schemas, unresolved local references, empty or unsupported objects, and other shapes it cannot represent in BAML. Use `OpaqueJson` when a tool accepts arbitrary JSON rather than publishing an unrepresentable schema.
 

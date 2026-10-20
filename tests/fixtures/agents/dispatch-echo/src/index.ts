@@ -1,22 +1,12 @@
 /// <reference path="./baml-runtime.d.ts" />
 import type {
+  CallbackScheduleInput,
   DispatchRunContext,
   HostDispatchAck,
   HostDispatchRequest,
   SessionResult,
+  ToolSession,
 } from "./baml-runtime";
-
-type ToolSessionHandle = {
-  send(args: Record<string, unknown>): Promise<unknown>;
-  continue(readInput?: Record<string, unknown>): Promise<unknown>;
-  finish(): Promise<unknown>;
-  abort(reason?: string): Promise<unknown>;
-};
-
-declare function openToolSession(
-  toolName: string,
-  openInput?: Record<string, unknown>,
-): Promise<ToolSessionHandle>;
 
 type CallbackCommand = {
   continuation: "detached" | "resume_current_task";
@@ -39,37 +29,27 @@ function parseCallbackCommand(text: string | undefined): CallbackCommand | null 
   };
 }
 
-async function runSingleSendSession(
-  toolName: string,
-  openInput: Record<string, unknown>,
-  sendInput: Record<string, unknown>,
+async function runToolSession<I, O>(
+  openSession: Promise<ToolSession<I, O>>,
+  sendInput: I,
 ): Promise<unknown> {
-  let toolSession: ToolSessionHandle | null = null;
+  let toolSession: ToolSession<I, O> | null = null;
   try {
-    toolSession = await openToolSession(toolName, openInput);
+    toolSession = await openSession;
     await toolSession.send(sendInput);
     for (let step = 0; step < 8; step += 1) {
       const next = await toolSession.continue();
-      const nextObj = isObject(next) ? next : null;
-      const status =
-        nextObj && typeof nextObj.status === "string" ? nextObj.status.toLowerCase() : null;
-      if (status === "streaming") {
+      if (next.status === "streaming") {
         continue;
       }
-      if (status === "error") {
-        const errorMessage =
-          nextObj &&
-          isObject(nextObj.error) &&
-          typeof nextObj.error.message === "string"
-            ? nextObj.error.message
-            : "tool session returned error status";
-        throw new Error(errorMessage);
+      if (next.status === "error") {
+        throw new Error(next.error.message || "tool session returned error status");
       }
       await toolSession.finish();
       toolSession = null;
-      return nextObj && "output" in nextObj ? nextObj.output : next;
+      return next.output;
     }
-    throw new Error(`tool session ${toolName} exceeded continue step budget`);
+    throw new Error("tool session exceeded continue step budget");
   } catch (error) {
     if (toolSession) {
       try {
@@ -84,7 +64,7 @@ async function runSingleSendSession(
 
 async function scheduleCallback(command: CallbackCommand): Promise<string> {
   const sourceKey = `dispatch-echo:callback:${command.token}`;
-  const input: Record<string, unknown> = {
+  const input: CallbackScheduleInput = {
     op: "schedule",
     afterMs: 0,
     sourceKey,
@@ -96,7 +76,7 @@ async function scheduleCallback(command: CallbackCommand): Promise<string> {
     input.continuation = "resume_current_task";
     input.dedupeKey = command.token;
   }
-  const raw = await runSingleSendSession("system/callback", {}, input);
+  const raw = await runToolSession(openToolSession("system/callback"), input);
   let dispatchContextId = "";
   let dispatchTaskId = "";
   if (isObject(raw)) {
@@ -129,9 +109,8 @@ async function handleCallbackDispatch(request: HostDispatchRequest): Promise<Hos
   }
 
   try {
-    await runSingleSendSession(
-      "system/discover_tools",
-      { reason: "callback provenance probe" },
+    await runToolSession(
+      openToolSession("system/discover_tools", { reason: "callback provenance probe" }),
       { query: token, limit: 1 },
     );
     return {

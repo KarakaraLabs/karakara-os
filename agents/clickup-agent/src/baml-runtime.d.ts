@@ -6,6 +6,29 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
+export interface AgentCardDto {
+  name: string;
+  version: string;
+  contentHash?: string | null;
+  repositoryVersion?: number | null;
+  agentPackage: string;
+  agentInstanceId: string;
+  tools: string[];
+  description?: string | null;
+  capabilities: string[];
+  tags?: string[];
+  subscriptions?: AgentEventSubscriptionDto[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface AgentEventSubscriptionDto {
+  schemaVersions?: string[];
+  sourceKinds?: string[];
+  sourceKeys?: string[];
+  sourceKeyPrefixes?: string[];
+  [key: string]: JsonValue | undefined;
+}
+
 export interface ArchiveLedgerEntry { archive_ref: string;
 header: string;
  }
@@ -21,10 +44,26 @@ offset: number | null;
 limit: number | null;
  }
 
+export type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | ListTasksInput | GetTaskInput | CreateTaskInput | UpdateTaskInput | DeleteTaskInput;
+
 export interface ClickUpIntent { kind: "intent";
 intent: string;
 operation_kind: "read" | "write" | "delete";
  }
+
+export interface ClickUpItem {
+  id: string;
+  name: string;
+  kind: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ClickUpOutput {
+  tasks?: ClickUpTaskSummary[];
+  items?: ClickUpItem[];
+  message: string;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface ClickUpPlanStep { agent_package: string;
 agent_instance_id: string;
@@ -37,34 +76,155 @@ plan_steps: ClickUpPlanStep[];
 citations: string[] | null;
  }
 
-export interface CreateTaskInput { list_id: string;
-name: string;
-description: string | null;
-priority: number | null;
- }
+export interface ClickUpTaskSummary {
+  id: string;
+  name: string;
+  status: string;
+  description?: string | null;
+  url: string;
+  assignees?: string[];
+  priority?: string | null;
+  due_date?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface DeleteTaskInput { task_id: string;
-confirm_delete: boolean;
- }
+export interface ConversationChunk {
+  message?: ConversationMessage | null;
+  task?: string | null;
+  statusUpdate?: string | null;
+  artifactUpdate?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ConversationMessage {
+  role?: string | null;
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ConversationPart {
+  text?: string | null;
+  raw?: string | null;
+  url?: string | null;
+  filename?: string | null;
+  mediaType?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface CreateTaskInput {
+  list_id: string;
+  name: string;
+  description?: string | null;
+  priority?: number | null;
+}
+
+export interface DeleteTaskInput {
+  task_id: string;
+  confirm_delete: boolean;
+}
+
+export interface DiscoverAgentsNextOutput {
+  agents: AgentCardDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverAgentsSendInput {
+  query?: string | null;
+  requiredCapabilities?: string[] | null;
+  requiredSchemaVersions?: string[] | null;
+  requiredSourceKinds?: string[] | null;
+  limit?: number | null;
+  offset?: number | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsNextOutput {
+  tools: ToolDiscoveryRecordDto[];
+  done: boolean;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsOpenInput {
+  reason?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface DiscoverToolsSendInput {
+  query?: string | null;
+  limit?: number | null;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface FinalResponse { message: string;
 structured_json: string | null;
 citations: string[];
  }
 
-export interface GetTaskInput { task_id: string;
- }
+export interface GetTaskInput {
+  task_id: string;
+}
 
-export interface ListListsInput { space_id: string;
- }
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
 
-export interface ListSpacesInput { team_id: string;
- }
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
 
-export interface ListTasksInput { list_id: string;
- }
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface ListTeamsInput { }
+export type InternalA2aCompletion = "DONE" | "INPUT_REQUIRED" | "FAILED";
+
+export interface InternalA2aNextOutput {
+  chunks: ConversationChunk[];
+  completion?: InternalA2aCompletion | null;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aOpenInput {
+  target: InternalA2aTarget;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aSendInput {
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aTarget {
+  agent_package: string;
+  agent_instance_id: string;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ListListsInput {
+  space_id: string;
+}
+
+export interface ListSpacesInput {
+  team_id: string;
+}
+
+export interface ListTasksInput {
+  list_id: string;
+}
+
+export interface ListTeamsInput {
+}
 
 export interface NeedClarification { kind: "clarify";
 question: string;
@@ -113,11 +273,22 @@ export interface SupportClickupSessionPlan { step: SupportClickupOpenStep | Supp
 citations: string[];
  }
 
-export interface UpdateTaskInput { task_id: string;
-status: string | null;
-description: string | null;
-priority: number | null;
- }
+export interface ToolDiscoveryRecordDto {
+  name: string;
+  bundle: string;
+  description: string;
+  tags: string[];
+  eventSources?: string[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface UpdateTaskInput {
+  task_id: string;
+  status?: string | null;
+  description?: string | null;
+  priority?: number | null;
+}
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -479,6 +650,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -490,6 +666,87 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "support/clickup"
+  | "system/discover_agents"
+  | "system/discover_tools"
+  | "system/internal_a2a";
+
+export interface ToolInputMap {
+  "support/clickup": ClickUpInput;
+  "system/discover_agents": DiscoverAgentsSendInput;
+  "system/discover_tools": DiscoverToolsSendInput;
+  "system/internal_a2a": InternalA2aSendInput;
+}
+
+export interface ToolOutputMap {
+  "support/clickup": ClickUpOutput;
+  "system/discover_agents": DiscoverAgentsNextOutput;
+  "system/discover_tools": DiscoverToolsNextOutput;
+  "system/internal_a2a": InternalA2aNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "support/clickup": Record<string, never>;
+  "system/discover_agents": DiscoverAgentsOpenInput;
+  "system/discover_tools": DiscoverToolsOpenInput;
+  "system/internal_a2a": InternalA2aOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput =
+  | "system/internal_a2a";
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -531,12 +788,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

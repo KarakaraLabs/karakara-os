@@ -17,22 +17,67 @@ offset: number | null;
 limit: number | null;
  }
 
-export interface ConversationPart { text: string | null;
-raw: string | null;
-url: string | null;
-filename: string | null;
-mediaType: string | null;
- }
+export interface ConversationChunk {
+  message?: ConversationMessage | null;
+  task?: string | null;
+  statusUpdate?: string | null;
+  artifactUpdate?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface InternalA2aOpenInput { target: InternalA2aTarget;
- }
+export interface ConversationMessage {
+  role?: string | null;
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
 
-export interface InternalA2aSendInput { parts: ConversationPart[];
- }
+export interface ConversationPart {
+  text?: string | null;
+  raw?: string | null;
+  url?: string | null;
+  filename?: string | null;
+  mediaType?: string | null;
+  [key: string]: JsonValue | undefined;
+}
 
-export interface InternalA2aTarget { agent_package: string;
-agent_instance_id: string;
- }
+export type HistoryContextSessionOp = "SearchRead" | "PageRead";
+
+export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
+
+export interface HistoryContextV1 {
+  hop: number;
+  op: HistoryContextSessionOp;
+  status: HistoryContextStatus;
+  truncated?: boolean;
+  cursor?: string | null;
+  payload?: Record<string, JsonValue> | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export type InternalA2aCompletion = "DONE" | "INPUT_REQUIRED" | "FAILED";
+
+export interface InternalA2aNextOutput {
+  chunks: ConversationChunk[];
+  completion?: InternalA2aCompletion | null;
+  historyContext?: HistoryContextV1 | null;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aOpenInput {
+  target: InternalA2aTarget;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aSendInput {
+  parts: ConversationPart[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface InternalA2aTarget {
+  agent_package: string;
+  agent_instance_id: string;
+  [key: string]: JsonValue | undefined;
+}
 
 export interface SystemInternalA2aAbortStep { op: "Abort";
  }
@@ -62,6 +107,7 @@ citations: string[];
 export interface SystemInternalA2aSessionPlan { step: SystemInternalA2aOpenStep | SystemInternalA2aSendStep | SystemInternalA2aSearchReadStep | SystemInternalA2aPageReadStep | SystemInternalA2aFinishStep | SystemInternalA2aAbortStep;
 citations: string[];
  }
+
 
 /** BAML functions: call these from your agent (e.g. await MyFunction(args)). Declared in global scope so they are visible when this file is used as a module. */
 
@@ -421,6 +467,11 @@ declare global {
   /** Exit the innermost unit task scope; used by `withTask`. */
   function __dispatch_exit_unit_task(): Promise<null>;
 }
+export type ErrorDisposition =
+    | "host_retriable"
+    | "llm_correctable"
+    | "inform_and_continue"
+    | "fatal";
 export type ToolFailureKind =
     | "InvalidInput"
     | "ExecutionFailed"
@@ -432,6 +483,75 @@ export interface ToolFailure {
     kind: ToolFailureKind;
     message: string;
     retryable: boolean;
+    disposition: ErrorDisposition;
+    code: string;
+    hint: string | null;
+    retry_after_ms: number | null;
+}
+
+/** Tool catalog and imperative tool-session API (schema-graph derived). */
+
+export type ToolName =
+  | "system/internal_a2a";
+
+export interface ToolInputMap {
+  "system/internal_a2a": InternalA2aSendInput;
+}
+
+export interface ToolOutputMap {
+  "system/internal_a2a": InternalA2aNextOutput;
+}
+
+export interface ToolOpenInputMap {
+  "system/internal_a2a": InternalA2aOpenInput;
+}
+
+export type ToolInput<T extends ToolName> = ToolInputMap[T];
+export type ToolOutput<T extends ToolName> = ToolOutputMap[T];
+export type ToolOpenInput<T extends ToolName> = ToolOpenInputMap[T];
+
+export type ToolWithRequiredOpenInput =
+  | "system/internal_a2a";
+
+export type ToolOpenArgs<T extends ToolName> =
+  T extends ToolWithRequiredOpenInput
+    ? [openInput: ToolOpenInput<T>]
+    : [openInput?: ToolOpenInput<T>];
+
+export type ToolSessionPhase =
+  | "Open"
+  | "Send"
+  | "Continue"
+  | "Finish"
+  | "Abort";
+
+export type ToolReadInput<I> =
+  I extends readonly unknown[]
+    ? Record<string, never>
+    : I extends object
+      ? Partial<I>
+      : Record<string, never>;
+
+export type ToolStep<O> =
+  | { status: "streaming"; output: O }
+  | { status: "suspended"; output: O }
+  | { status: "done"; output: O | null }
+  | { status: "error"; error: ToolFailure };
+
+export interface ToolSession<I, O> {
+  sessionId: string;
+  phase(): ToolSessionPhase;
+  send(input: I): Promise<void>;
+  continue(readInput?: ToolReadInput<I>): Promise<ToolStep<O>>;
+  finish(): Promise<void>;
+  abort(reason?: string): Promise<void>;
+}
+
+declare global {
+  function openToolSession<T extends ToolName>(
+    toolName: T,
+    ...args: ToolOpenArgs<T>
+  ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
 }
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
@@ -473,12 +593,6 @@ export interface StepExecutorStateInput {
 export interface StepExecutorRunOptions {
     max_steps?: number;
 }
-
-export type ErrorDisposition =
-    | "host_retriable"
-    | "llm_correctable"
-    | "inform_and_continue"
-    | "fatal";
 
 export interface StepPlanRecovery {
     code: string;

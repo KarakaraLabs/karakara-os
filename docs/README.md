@@ -54,6 +54,7 @@ Completed implementation plans kept for design and migration history.
 | Doc | Purpose |
 |-----|---------|
 | [tool-schema-graph.md](plans/tool-schema-graph.md) | Canonical JSON Schema graph migration for generated tool DTOs |
+| [tool-typescript-codegen.md](plans/tool-typescript-codegen.md) | Graph-driven TypeScript tool DTOs, catalog maps, and imperative session API |
 
 ## Runbooks (`docs/runbooks/`)
 

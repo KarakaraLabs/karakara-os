@@ -260,6 +260,7 @@ Single source of truth for each behavior; do not add overlapping coverage elsewh
 | MCP snapshot wire shape | `baml-rt-tools/src/mcp_snapshot.rs` — `mcp_snapshot_wire_matrix`, `mcp_wire_variant_round_trip_matrix` | `round_trip_minimal_*`, `approval_variants_*`, `output_mode_variants_*`, `transport_ref_variants_*` |
 | Discovery introspection/extrospection output+scope insta | `baml-tools-system/tests/discovery_sessions_test.rs` — `discovery_session_output_and_scope_snapshot_matrix` | `introspection_session_snapshots_*`, `extrospection_session_snapshots_cross_scope_request` |
 | Exported graph shape (sequence flow) | `baml-rt-provenance/tests/graph_export_sequence_integration_test.rs` — `file_backed_export_renders_expected_sequence_flow` (uses `test_support::testing` graph assertions) | Ad-hoc node/edge counts only |
+| TypeScript tool declarations (graph DTOs, catalog maps, session API) | `baml-rt-builder/tests/mixed_origin_typescript_test.rs` — `mixed_origin_typescript_authority`; boundary snapshots in `tool_schema_graph_typescript_test.rs` and `tool_typescript_catalog_test.rs` | Per-DTO TS unit shards; duplicate graph/IR ownership tests |
 
 ### Do-not-duplicate checklist
 
