@@ -22,6 +22,25 @@ class RepresentativeToolInputContentAlt2 {
   @@dynamic
 }
 
+class Address {
+  city string
+  lines string[]
+  @@dynamic
+}
+
+enum RequestKind {
+  Create
+    @alias("create")
+  Update
+    @alias("update")
+}
+
+class NestedRequest {
+  address Address
+  kind RequestKind
+  @@dynamic
+}
+
 class RepresentativeToolInput {
   request NestedRequest
   required_nullable string | null
@@ -31,25 +50,6 @@ class RepresentativeToolInput {
   content (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[])?
   opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
   @@dynamic
-}
-
-class Address {
-  city string
-  lines string[]
-  @@dynamic
-}
-
-class NestedRequest {
-  address Address
-  kind RequestKind
-  @@dynamic
-}
-
-enum RequestKind {
-  Create
-    @alias("create")
-  Update
-    @alias("update")
 }
 == unsupported allOf diagnostic ==
 Invalid argument: cannot generate BAML type for `UnsupportedAllOf` at <root schema>: unsupported schema format

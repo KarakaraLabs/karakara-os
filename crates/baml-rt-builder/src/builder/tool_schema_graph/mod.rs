@@ -12,6 +12,7 @@
 //! authoritative for runtime validation and stays on `ToolFunctionMetadata`.
 
 pub mod baml;
+mod cycles;
 pub mod diagnostics;
 pub mod lower;
 pub mod names;
@@ -259,8 +260,9 @@ pub struct SchemaDeclaration {
     pub source: SchemaLocation,
     /// Deterministic structural fingerprint (excludes descriptions).
     pub fingerprint: String,
-    /// Render order captured during lowering. Internal; renders emit declarations once in this
-    /// order so inline nested declarations precede their owner, mirroring the historical renderer.
+    /// Historical discovery order captured during lowering. The BAML renderer uses it as a stable
+    /// tie-breaker when ordering dependency-safe strongly connected components; it is no longer the
+    /// final emission order.
     pub(crate) order: u32,
 }
 

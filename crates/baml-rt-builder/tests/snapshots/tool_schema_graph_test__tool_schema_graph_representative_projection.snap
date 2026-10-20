@@ -75,17 +75,6 @@ class RepresentativeToolInputContentAlt2 {
   @@dynamic
 }
 
-class RepresentativeToolInput {
-  request NestedRequest
-  required_nullable string | null
-  optional_note string?
-  labels map<string, string>
-  addresses Address[]
-  content (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[])?
-  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
-  @@dynamic
-}
-
 class RepresentativeToolOutput {
   accepted bool
 }
@@ -96,15 +85,26 @@ class Address {
   @@dynamic
 }
 
+enum RequestKind {
+  Create
+    @alias("create")
+  Update
+    @alias("update")
+}
+
 class NestedRequest {
   address Address
   kind RequestKind
   @@dynamic
 }
 
-enum RequestKind {
-  Create
-    @alias("create")
-  Update
-    @alias("update")
+class RepresentativeToolInput {
+  request NestedRequest
+  required_nullable string | null
+  optional_note string?
+  labels map<string, string>
+  addresses Address[]
+  content (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2 | (RepresentativeToolInputContentAlt0 | RepresentativeToolInputContentAlt1 | RepresentativeToolInputContentAlt2)[])?
+  opaque_payload OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  @@dynamic
 }

@@ -6,17 +6,21 @@
 
 use super::{
     AdditionalProperties, SchemaDeclaration, SchemaDeclarationKind, SchemaEnum, SchemaEnumVariant,
-    SchemaLiteral, SchemaObject, SchemaTypeRef, ToolSchemaGraph,
+    SchemaLiteral, SchemaObject, SchemaTypeRef, ToolSchemaGraph, cycles::baml_emission_order,
 };
 use crate::builder::error::{BamlBuilderError, Result, write_line};
 
-/// Render every declaration in the graph as BAML, once each, in deterministic lowering order.
+/// Render every declaration in the graph as BAML, once each, in deterministic dependency order.
+///
+/// Cycle analysis runs before any text is written, so unsupported recursive components fail with
+/// their participating symbols and source locations instead of a downstream BAML compiler error.
 pub fn render_tool_schema_baml(graph: &ToolSchemaGraph) -> Result<String> {
-    let mut decls: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
-    decls.sort_by_key(|d| d.order);
-
     let mut output = String::new();
-    for decl in decls {
+    for id in baml_emission_order(graph)? {
+        let decl = graph
+            .declarations
+            .get(&id)
+            .expect("emission order only contains graph declarations");
         render_declaration(graph, &mut output, decl)?;
         write_line(&mut output, "")?;
     }
