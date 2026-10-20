@@ -20,10 +20,13 @@ use internal_baml_core::ir::ir_hasher::IRSignature;
 
 use crate::builder::{
     error::{BamlBuilderError, Result, write_line},
-    ir_to_ts::{collect_ir_type_declarations, collect_type_decl_deps, type_to_ts_expr},
+    ir_to_ts::{
+        collect_ir_type_declarations_with_symbols, collect_type_decl_deps,
+        type_to_ts_expr_with_symbols,
+    },
     tool_schema_graph::{
         OpenInputRequirement, ToolSchemaGraph,
-        typescript::{ToolTypescriptSurface, render_tool_typescript_surface},
+        typescript::{ToolTypescriptSurface, TsSymbolMap, render_tool_typescript_surface},
     },
     ts_declarations::TsDeclarationRegistry,
 };
@@ -81,19 +84,19 @@ pub fn render_ts_declarations(
     let mut tokens: js::Tokens = quote!($(header));
     tokens.line();
 
+    validate_tool_metadata(tool_metadata, tool_schema_graph)?;
+    let surface = render_tool_typescript_surface(tool_schema_graph)?;
+
     let mut all_type_deps: HashSet<String> = HashSet::new();
     let mut func_decls: Vec<(String, String, String)> = Vec::new();
     for (name, func_sig) in &ir_signature.functions {
-        let args_frag = build_args_frag(func_sig, ir_signature)?;
-        let return_frag = type_to_ts_expr(func_sig.output.as_ref(), ir_signature)?;
+        let args_frag = build_args_frag(func_sig, &surface.symbols)?;
+        let return_frag = type_to_ts_expr_with_symbols(func_sig.output.as_ref(), &surface.symbols)?;
         all_type_deps.extend(collect_type_decl_deps(&args_frag));
         all_type_deps.extend(collect_type_decl_deps(&return_frag));
         func_decls.push((name.clone(), args_frag.expr, return_frag.expr));
     }
     func_decls.sort_by(|a, b| a.0.cmp(&b.0));
-
-    validate_tool_metadata(tool_metadata, tool_schema_graph)?;
-    let surface = render_tool_typescript_surface(tool_schema_graph)?;
 
     let mut registry = TsDeclarationRegistry::new();
     registry.reserve_runtime_symbols(
@@ -103,7 +106,9 @@ pub fn render_ts_declarations(
     for declaration in surface.declarations.iter().cloned() {
         registry.insert(declaration)?;
     }
-    for declaration in collect_ir_type_declarations(ir_signature, &all_type_deps)? {
+    for declaration in
+        collect_ir_type_declarations_with_symbols(ir_signature, &all_type_deps, &surface.symbols)?
+    {
         registry.insert(declaration)?;
     }
 
@@ -476,7 +481,7 @@ declare global {
 /// Build an object type for function args: { name1: Type1; name2: Type2; ... }.
 fn build_args_frag(
     func_sig: &internal_baml_core::ir::ir_hasher::FunctionSignature,
-    ir: &IRSignature,
+    symbols: &TsSymbolMap,
 ) -> Result<crate::builder::ir_to_ts::TsTypeFrag> {
     use crate::builder::ir_to_ts::TsTypeFrag;
     if func_sig.inputs.is_empty() {
@@ -488,7 +493,7 @@ fn build_args_frag(
     let mut parts = Vec::with_capacity(func_sig.inputs.len());
     let mut deps = Vec::new();
     for (arg_name, arg_ty) in func_sig.inputs.iter() {
-        let frag = type_to_ts_expr(arg_ty, ir)?;
+        let frag = type_to_ts_expr_with_symbols(arg_ty, symbols)?;
         deps.extend(frag.deps);
         parts.push(format!("{}: {}", arg_name, frag.expr));
     }

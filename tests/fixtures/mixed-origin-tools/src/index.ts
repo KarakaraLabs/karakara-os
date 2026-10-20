@@ -9,7 +9,7 @@ async function useStaticTool(): Promise<void> {
 
 async function useExternalTool(): Promise<void> {
   const session = await openToolSession("external/echo");
-  await session.send({ message: "hello" });
+  await session.send({ message: "hello", detail: { value: "detail" } });
   const step = await session.continue();
   if (step.status === "error") {
     throw new Error(step.error.message);

@@ -13,6 +13,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 use baml_rt_builder::builder::{
@@ -25,7 +26,8 @@ use baml_rt_tools::{
     tools::{ToolFunctionMetadata, ToolName},
 };
 use baml_tools_system::metadata::system_callback_metadata;
-use internal_baml_core::feature_flags::FeatureFlags;
+use baml_types::ir_type::TypeNonStreaming;
+use internal_baml_core::{feature_flags::FeatureFlags, ir::ir_hasher::IRSignature};
 use serde_json::{Value, json};
 
 #[test]
@@ -50,8 +52,19 @@ fn mixed_origin_typescript_authority() {
         "ExternalEchoOutput",
         json!({
             "type": "object",
-            "properties": { "message": { "type": "string" } },
-            "required": ["message"],
+            "properties": {
+                "message": { "type": "string" },
+                "detail": { "$ref": "#/$defs/Foo-Bar" }
+            },
+            "required": ["message", "detail"],
+            "$defs": {
+                "Foo-Bar": {
+                    "type": "object",
+                    "properties": { "value": { "type": "string" } },
+                    "required": ["value"],
+                    "additionalProperties": false
+                }
+            },
             "additionalProperties": false
         }),
         ToolBackend::External,
@@ -85,7 +98,10 @@ fn mixed_origin_typescript_authority() {
         FeatureFlags::default(),
     )
     .expect("compile mixed-origin BAML");
-    let ir = extract_baml_signatures(&runtime).expect("extract mixed-origin IR");
+    let mut ir = extract_baml_signatures(&runtime).expect("extract mixed-origin IR");
+    // BAML identifiers cannot contain hyphens, so simulate the graph-original symbol reaching the
+    // IR. This is the shape the TypeScript renderer must remap end to end.
+    rename_ir_symbol(&mut ir, "Foo_Bar", "Foo-Bar");
     assert!(
         ir.functions.contains_key("EchoExternal") && ir.functions.contains_key("EchoMcp"),
         "fixture BAML functions must reach the IR"
@@ -93,6 +109,10 @@ fn mixed_origin_typescript_authority() {
     assert!(
         ir.classes.contains_key("ExternalEchoInput") && ir.classes.contains_key("McpTypedInput"),
         "fixture BAML classes must overlap graph-owned DTOs"
+    );
+    assert!(
+        ir.classes.contains_key("Foo-Bar"),
+        "hyphenated IR class must be remapped before rendering"
     );
 
     let rendered = render_ts_declarations(
@@ -133,6 +153,16 @@ fn mixed_origin_typescript_authority() {
     assert!(rendered.contains("export type McpOpaqueInput = JsonValue;"));
     assert!(rendered.contains("\"external/echo\": ExternalEchoInput;"));
     assert!(rendered.contains("\"mcp/typed\": McpTypedInput;"));
+
+    // A hyphenated $defs DTO is mapped everywhere: graph declaration, graph field, IR suppression,
+    // and the BAML function signature that references the same name.
+    assert!(
+        !rendered.contains("Foo-Bar"),
+        "no BAML symbol leaks into TypeScript"
+    );
+    assert_eq!(declaration_count(&rendered, "Foo_Bar"), 1);
+    assert!(rendered.contains("detail: Foo_Bar;"));
+    assert!(rendered.contains("input: Foo_Bar"));
 
     // Graph-owned symbols shadow the IR copies generated from the fixture BAML.
     for symbol in ["ExternalEchoInput", "McpTypedInput"] {
@@ -193,6 +223,65 @@ function UseMessage(message: Message) -> string {
     assert!(error.contains("BAML IR"), "diagnostic: {error}");
 
     run_tsc(temp.path());
+}
+
+fn rename_ir_symbol(ir: &mut IRSignature, from: &str, to: &str) {
+    if let Some(class) = ir.classes.remove(from) {
+        ir.classes.insert(to.to_string(), class);
+    }
+    if let Some(enumeration) = ir.enums.remove(from) {
+        ir.enums.insert(to.to_string(), enumeration);
+    }
+    if let Some(alias) = ir.type_aliases.remove(from) {
+        ir.type_aliases.insert(to.to_string(), alias);
+    }
+    for class in ir.classes.values_mut() {
+        for (_, field_type) in Arc::make_mut(&mut class.1.fields).iter_mut() {
+            rename_ir_type(Arc::make_mut(field_type), from, to);
+        }
+    }
+    for alias in ir.type_aliases.values_mut() {
+        rename_ir_type(Arc::make_mut(&mut alias.field_type), from, to);
+    }
+    for function in ir.functions.values_mut() {
+        for (_, input_type) in Arc::make_mut(&mut function.inputs).iter_mut() {
+            rename_ir_type(input_type, from, to);
+        }
+        rename_ir_type(Arc::make_mut(&mut function.output), from, to);
+    }
+}
+
+fn rename_ir_type(ty: &mut TypeNonStreaming, from: &str, to: &str) {
+    match ty {
+        TypeNonStreaming::Class { name, .. }
+        | TypeNonStreaming::Enum { name, .. }
+        | TypeNonStreaming::RecursiveTypeAlias { name, .. } => {
+            if name == from {
+                *name = to.to_string();
+            }
+        }
+        TypeNonStreaming::List(inner, _) => rename_ir_type(inner, from, to),
+        TypeNonStreaming::Map(key, value, _) => {
+            rename_ir_type(key, from, to);
+            rename_ir_type(value, from, to);
+        }
+        TypeNonStreaming::Tuple(items, _) => {
+            for item in items {
+                rename_ir_type(item, from, to);
+            }
+        }
+        TypeNonStreaming::Arrow(arrow, _) => {
+            for param in &mut arrow.param_types {
+                rename_ir_type(param, from, to);
+            }
+            rename_ir_type(&mut arrow.return_type, from, to);
+        }
+        // The fixture only uses direct class references; unions require private-union access.
+        TypeNonStreaming::Union(..) => {}
+        TypeNonStreaming::Top(_)
+        | TypeNonStreaming::Primitive(_, _)
+        | TypeNonStreaming::Literal(_, _) => {}
+    }
 }
 
 fn compile_ir_source(baml: &str) -> internal_baml_core::ir::ir_hasher::IRSignature {

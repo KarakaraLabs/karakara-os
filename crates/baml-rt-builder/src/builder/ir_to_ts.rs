@@ -15,6 +15,7 @@ use internal_baml_core::ir::ir_hasher::IRSignature;
 
 use crate::builder::{
     error::{BamlBuilderError, Result},
+    tool_schema_graph::typescript::TsSymbolMap,
     ts_declarations::{TsDeclaration, TsDeclarationOrigin},
 };
 
@@ -27,15 +28,31 @@ pub struct TsTypeFrag {
 
 /// Map a non-streaming BAML type to a TypeScript type expression and collect referenced type names.
 pub fn type_to_ts_expr(ty: &TypeNonStreaming, _ir: &IRSignature) -> Result<TsTypeFrag> {
+    type_to_ts_expr_with_symbols(ty, &TsSymbolMap::default())
+}
+
+/// Map a BAML type using the graph's TypeScript symbol mapping.
+///
+/// Dependency names stay in their original BAML spelling so IR lookup still works; only the emitted
+/// expression uses the mapped TypeScript name.
+pub fn type_to_ts_expr_with_symbols(
+    ty: &TypeNonStreaming,
+    symbols: &TsSymbolMap,
+) -> Result<TsTypeFrag> {
     let mut deps = Vec::new();
-    let expr = type_to_ts_inner(ty, &mut deps)?;
+    let expr = type_to_ts_inner(ty, &mut deps, symbols)?;
     Ok(TsTypeFrag { expr, deps })
 }
 
-fn type_to_ts_inner(ty: &TypeNonStreaming, deps: &mut Vec<String>) -> Result<String> {
+fn type_to_ts_inner(
+    ty: &TypeNonStreaming,
+    deps: &mut Vec<String>,
+    symbols: &TsSymbolMap,
+) -> Result<String> {
     use TypeNonStreaming as T;
 
-    let mut recursive = |t: &TypeNonStreaming| -> Result<String> { type_to_ts_inner(t, deps) };
+    let mut recursive =
+        |t: &TypeNonStreaming| -> Result<String> { type_to_ts_inner(t, deps, symbols) };
 
     Ok(match ty {
         T::Primitive(tv, _) => match tv {
@@ -47,7 +64,7 @@ fn type_to_ts_inner(ty: &TypeNonStreaming, deps: &mut Vec<String>) -> Result<Str
         },
         T::Enum { name, .. } => {
             deps.push(name.clone());
-            name.clone()
+            symbols.map_name(name).to_string()
         }
         T::Literal(lit, _) => match lit {
             LiteralValue::String(s) => format!("{:?}", s),
@@ -56,7 +73,7 @@ fn type_to_ts_inner(ty: &TypeNonStreaming, deps: &mut Vec<String>) -> Result<Str
         },
         T::Class { name, .. } => {
             deps.push(name.clone());
-            name.clone()
+            symbols.map_name(name).to_string()
         }
         T::List(inner, _) => {
             let inner_ts = recursive(inner)?;
@@ -73,7 +90,7 @@ fn type_to_ts_inner(ty: &TypeNonStreaming, deps: &mut Vec<String>) -> Result<Str
         }
         T::RecursiveTypeAlias { name, .. } => {
             deps.push(name.clone());
-            name.clone()
+            symbols.map_name(name).to_string()
         }
         T::Tuple(inner, _) => {
             let parts: Vec<String> = inner.iter().map(&mut recursive).collect::<Result<_>>()?;
@@ -131,12 +148,21 @@ pub fn collect_ir_type_declarations(
     ir: &IRSignature,
     needed: &HashSet<String>,
 ) -> Result<Vec<TsDeclaration>> {
+    collect_ir_type_declarations_with_symbols(ir, needed, &TsSymbolMap::default())
+}
+
+/// Collect structured IR declarations using the graph's TypeScript symbol mapping.
+pub fn collect_ir_type_declarations_with_symbols(
+    ir: &IRSignature,
+    needed: &HashSet<String>,
+    symbols: &TsSymbolMap,
+) -> Result<Vec<TsDeclaration>> {
     let mut all_needed = needed.clone();
     let mut worklist: Vec<String> = needed.iter().cloned().collect();
     while let Some(name) = worklist.pop() {
         if let Some((_, class_details)) = ir.classes.get(&name) {
             for (_, fty) in class_details.fields.iter() {
-                let frag = type_to_ts_expr(fty.as_ref(), ir)?;
+                let frag = type_to_ts_expr_with_symbols(fty.as_ref(), symbols)?;
                 for dep in frag.deps {
                     if all_needed.insert(dep.clone()) {
                         worklist.push(dep);
@@ -146,7 +172,7 @@ pub fn collect_ir_type_declarations(
         } else if let Some(alias_node) = ir.type_aliases.get(&name) {
             // Return/arg types often surface as a `RecursiveTypeAlias` name only; the nested classes
             // live in the alias RHS and were previously never pulled into `all_needed`.
-            let frag = type_to_ts_expr(alias_node.field_type.as_ref(), ir)?;
+            let frag = type_to_ts_expr_with_symbols(alias_node.field_type.as_ref(), symbols)?;
             for dep in frag.deps {
                 if all_needed.insert(dep.clone()) {
                     worklist.push(dep);
@@ -158,28 +184,37 @@ pub fn collect_ir_type_declarations(
     names.sort();
     let mut declarations = Vec::with_capacity(names.len());
     for name in names {
-        if let Some(declaration) = ir_type_declaration(ir, name)? {
+        if let Some(declaration) = ir_type_declaration(ir, name, symbols)? {
             declarations.push(declaration);
         }
     }
     Ok(declarations)
 }
 
-fn ir_type_declaration(ir: &IRSignature, name: &str) -> Result<Option<TsDeclaration>> {
+fn ir_type_declaration(
+    ir: &IRSignature,
+    name: &str,
+    symbols: &TsSymbolMap,
+) -> Result<Option<TsDeclaration>> {
+    let ts_symbol = symbols.map_name(name);
     if let Some((_, class_details)) = ir.classes.get(name) {
         let mut fields: js::Tokens = quote!();
         let mut dependencies = BTreeSet::new();
         for (fname, fty) in class_details.fields.iter() {
-            let frag = type_to_ts_expr(fty.as_ref(), ir)?;
-            dependencies.extend(frag.deps);
+            let frag = type_to_ts_expr_with_symbols(fty.as_ref(), symbols)?;
+            dependencies.extend(
+                frag.deps
+                    .iter()
+                    .map(|dep| symbols.map_name(dep).to_string()),
+            );
             let type_expr = frag.expr.as_str();
             quote_in!(fields => $(fname): $(type_expr););
             fields.push();
         }
         let mut tokens: js::Tokens = quote!();
-        quote_in!(tokens => export interface $(name) { $(fields) });
+        quote_in!(tokens => export interface $(ts_symbol) { $(fields) });
         Ok(Some(TsDeclaration {
-            symbol: name.to_string(),
+            symbol: ts_symbol.to_string(),
             body: render_tokens(tokens)?,
             dependencies,
             origin: TsDeclarationOrigin::BamlIr,
@@ -195,8 +230,8 @@ fn ir_type_declaration(ir: &IRSignature, name: &str) -> Result<Option<TsDeclarat
             .collect();
         let union_expr = variants.join(" | ");
         Ok(Some(TsDeclaration {
-            symbol: name.to_string(),
-            body: format!("export type {name} = {union_expr};"),
+            symbol: ts_symbol.to_string(),
+            body: format!("export type {ts_symbol} = {union_expr};"),
             dependencies: BTreeSet::new(),
             origin: TsDeclarationOrigin::BamlIr,
         }))
@@ -204,12 +239,18 @@ fn ir_type_declaration(ir: &IRSignature, name: &str) -> Result<Option<TsDeclarat
         let (type_expr, dependencies) = if name == "OpaqueJson" {
             ("JsonValue".to_string(), BTreeSet::new())
         } else {
-            let frag = type_to_ts_expr(type_node.field_type.as_ref(), ir)?;
-            (frag.expr, frag.deps.into_iter().collect())
+            let frag = type_to_ts_expr_with_symbols(type_node.field_type.as_ref(), symbols)?;
+            (
+                frag.expr,
+                frag.deps
+                    .iter()
+                    .map(|dep| symbols.map_name(dep).to_string())
+                    .collect(),
+            )
         };
         Ok(Some(TsDeclaration {
-            symbol: name.to_string(),
-            body: format!("export type {name} = {type_expr};"),
+            symbol: ts_symbol.to_string(),
+            body: format!("export type {ts_symbol} = {type_expr};"),
             dependencies,
             origin: TsDeclarationOrigin::BamlIr,
         }))

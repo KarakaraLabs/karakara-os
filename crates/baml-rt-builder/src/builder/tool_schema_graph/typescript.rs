@@ -27,6 +27,8 @@ pub struct ToolTypescriptSurface {
     pub declarations: Vec<TsDeclaration>,
     /// Per-tool root expressions, keyed by qualified tool name in lexical order.
     pub tools: BTreeMap<String, ToolTypescriptContract>,
+    /// Graph-name to TypeScript-name mapping shared with BAML IR declaration collection.
+    pub symbols: TsSymbolMap,
 }
 
 /// One tool's root TypeScript expressions.
@@ -51,7 +53,8 @@ pub struct ToolTypescriptContract {
 /// identifiers such as `Foo-Bar`, but TypeScript does not; those symbols are mapped deterministically
 /// and every `Named` reference uses the same mapped name.
 pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTypescriptSurface> {
-    let renderer = TypescriptRenderer::new(graph);
+    let symbols = TsSymbolMap::from_graph(graph);
+    let renderer = TypescriptRenderer::new(symbols.clone());
     let mut ordered: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
     ordered.sort_by(|left, right| {
         renderer
@@ -86,6 +89,7 @@ pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTyp
     Ok(ToolTypescriptSurface {
         declarations,
         tools,
+        symbols,
     })
 }
 
@@ -94,25 +98,89 @@ pub fn render_tool_typescript_surface(graph: &ToolSchemaGraph) -> Result<ToolTyp
 /// This convenience entry point derives the same TypeScript-safe symbol map as
 /// [`render_tool_typescript_surface`], so references match emitted declarations.
 pub fn render_schema_type_ref(graph: &ToolSchemaGraph, ty: &SchemaTypeRef) -> String {
-    TypescriptRenderer::new(graph).render_type(ty)
+    TypescriptRenderer::new(TsSymbolMap::from_graph(graph)).render_type(ty)
 }
 
-struct TypescriptRenderer {
-    symbols: BTreeMap<SchemaTypeId, String>,
+/// Graph-name to TypeScript-name mapping shared by graph declarations, BAML IR declarations, and
+/// function type expressions.
+#[derive(Debug, Clone, Default)]
+pub struct TsSymbolMap {
+    by_id: BTreeMap<SchemaTypeId, String>,
+    by_name: BTreeMap<String, String>,
 }
 
-impl TypescriptRenderer {
-    fn new(graph: &ToolSchemaGraph) -> Self {
-        Self {
-            symbols: build_typescript_symbols(graph),
+impl TsSymbolMap {
+    fn from_graph(graph: &ToolSchemaGraph) -> Self {
+        let mut ordered: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
+        ordered.sort_by(|left, right| {
+            left.symbol
+                .cmp(&right.symbol)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let mut by_id = BTreeMap::new();
+        let mut by_name = BTreeMap::new();
+        let mut used = BTreeSet::new();
+
+        // Preserve graph symbols that are already legal TypeScript type names.
+        for declaration in &ordered {
+            if is_typescript_identifier(&declaration.symbol)
+                && !is_typescript_reserved_word(&declaration.symbol)
+            {
+                used.insert(declaration.symbol.clone());
+                by_id.insert(declaration.id, declaration.symbol.clone());
+                by_name.insert(declaration.symbol.clone(), declaration.symbol.clone());
+            }
         }
+
+        // Derive stable names for the rest without taking a preserved name.
+        for declaration in &ordered {
+            if by_id.contains_key(&declaration.id) {
+                continue;
+            }
+            let mut base = sanitize_typescript_identifier(&declaration.symbol);
+            if is_typescript_reserved_word(&base) {
+                base.push_str("_Type");
+            }
+            let mut candidate = base.clone();
+            let mut suffix = 2;
+            while used.contains(&candidate) {
+                candidate = format!("{base}_{suffix}");
+                suffix += 1;
+            }
+            used.insert(candidate.clone());
+            by_id.insert(declaration.id, candidate.clone());
+            by_name.insert(declaration.symbol.clone(), candidate);
+        }
+
+        Self { by_id, by_name }
     }
 
-    fn symbol(&self, id: SchemaTypeId) -> &str {
-        self.symbols
+    /// Emitted TypeScript name for a graph declaration id.
+    pub(crate) fn for_id(&self, id: SchemaTypeId) -> &str {
+        self.by_id
             .get(&id)
             .map(String::as_str)
             .unwrap_or("<unresolved>")
+    }
+
+    /// TypeScript name for a BAML or graph symbol. Unknown names pass through unchanged.
+    pub fn map_name<'a>(&'a self, name: &'a str) -> &'a str {
+        self.by_name.get(name).map(String::as_str).unwrap_or(name)
+    }
+}
+
+struct TypescriptRenderer {
+    symbols: TsSymbolMap,
+}
+
+impl TypescriptRenderer {
+    fn new(symbols: TsSymbolMap) -> Self {
+        Self { symbols }
+    }
+
+    fn symbol(&self, id: SchemaTypeId) -> &str {
+        self.symbols.for_id(id)
     }
 
     fn render_declaration(&self, declaration: &SchemaDeclaration) -> Result<String> {
@@ -215,53 +283,6 @@ impl TypescriptRenderer {
             format!("{rendered}[]")
         }
     }
-}
-
-/// Map every graph declaration to a valid, unique TypeScript symbol.
-///
-/// Valid TypeScript names are preserved. Invalid graph symbols (for example BAML identifiers with
-/// hyphens) are sanitized, and the resulting collisions get a deterministic numeric suffix.
-fn build_typescript_symbols(graph: &ToolSchemaGraph) -> BTreeMap<SchemaTypeId, String> {
-    let mut ordered: Vec<&SchemaDeclaration> = graph.declarations.values().collect();
-    ordered.sort_by(|left, right| {
-        left.symbol
-            .cmp(&right.symbol)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-
-    let mut symbols = BTreeMap::new();
-    let mut used = BTreeSet::new();
-
-    // Preserve graph symbols that are already legal TypeScript type names.
-    for declaration in &ordered {
-        if is_typescript_identifier(&declaration.symbol)
-            && !is_typescript_reserved_word(&declaration.symbol)
-        {
-            used.insert(declaration.symbol.clone());
-            symbols.insert(declaration.id, declaration.symbol.clone());
-        }
-    }
-
-    // Derive stable names for the rest without taking a preserved name.
-    for declaration in &ordered {
-        if symbols.contains_key(&declaration.id) {
-            continue;
-        }
-        let mut base = sanitize_typescript_identifier(&declaration.symbol);
-        if is_typescript_reserved_word(&base) {
-            base.push_str("_Type");
-        }
-        let mut candidate = base.clone();
-        let mut suffix = 2;
-        while used.contains(&candidate) {
-            candidate = format!("{base}_{suffix}");
-            suffix += 1;
-        }
-        used.insert(candidate.clone());
-        symbols.insert(declaration.id, candidate);
-    }
-
-    symbols
 }
 
 fn sanitize_typescript_identifier(symbol: &str) -> String {
