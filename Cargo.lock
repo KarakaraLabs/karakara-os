@@ -1428,6 +1428,7 @@ dependencies = [
  "baml-tools-slack",
  "baml-tools-slack-notify",
  "baml-tools-system",
+ "baml-tools-typesafe",
  "clap",
  "dotenvy",
  "flate2",
@@ -1721,6 +1722,7 @@ dependencies = [
  "baml-tools-slack",
  "baml-tools-slack-notify",
  "baml-tools-system",
+ "baml-tools-typesafe",
  "baml-types",
  "clap",
  "dotenvy",
@@ -2286,6 +2288,7 @@ dependencies = [
  "baml-tools-slack",
  "baml-tools-slack-notify",
  "baml-tools-system",
+ "baml-tools-typesafe",
 ]
 
 [[package]]

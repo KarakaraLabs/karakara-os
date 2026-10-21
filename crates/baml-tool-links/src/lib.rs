@@ -26,9 +26,10 @@
 //! - `security-eval` - CRM/email support tools for security-eval fixtures
 //! - `slack` - Slack read integration tool
 //! - `slack-notify` - Slack notification write tool
+//! - `typesafe` - TypeSafe System One read tool
 //! - `grafana-alerts` - Grafana alert webhook intake + event producer
 //! - `internal-dev` - Test tool implementations (Calculator, Delay, etc.)
-//! - `http-tools` - Enables `clickup`, `notion`, `slack`, `slack-notify`, `security-eval`, `grafana-alerts`
+//! - `http-tools` - Enables `clickup`, `notion`, `slack`, `slack-notify`, `typesafe`, `security-eval`, `grafana-alerts`
 //! - `all-tools` - Enables `http-tools` and `memory`
 
 // Re-export tool crates so binaries can access them through baml_tool_links
@@ -59,6 +60,8 @@ pub use baml_tools_slack;
 #[cfg(feature = "slack-notify")]
 pub use baml_tools_slack_notify;
 pub use baml_tools_system;
+#[cfg(feature = "typesafe")]
+pub use baml_tools_typesafe;
 
 /// Force-link all registered tool crates into the binary's inventory.
 ///
@@ -100,6 +103,8 @@ macro_rules! force_link_all_tools {
         use $crate::baml_tools_slack as _;
         #[cfg(feature = "slack-notify")]
         use $crate::baml_tools_slack_notify as _;
+        #[cfg(feature = "typesafe")]
+        use $crate::baml_tools_typesafe as _;
         use $crate::{
             baml_rt_tools_claude as _, baml_tools_calculator as _, baml_tools_system as _,
         };

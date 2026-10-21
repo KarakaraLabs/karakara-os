@@ -49,6 +49,8 @@ use baml_tools_slack as _;
 #[cfg(feature = "slack-notify")]
 use baml_tools_slack_notify as _;
 use baml_tools_system as _;
+#[cfg(feature = "typesafe")]
+use baml_tools_typesafe as _;
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 use tokio::sync::Mutex;

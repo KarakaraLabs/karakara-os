@@ -69,6 +69,8 @@ use baml_tools_slack as _;
 #[cfg(feature = "slack-notify")]
 use baml_tools_slack_notify as _;
 use baml_tools_system::callback_delivery_gate::install_callback_delivery_gate;
+#[cfg(feature = "typesafe")]
+use baml_tools_typesafe as _;
 use callback_delivery::RunnerCallbackDeliveryGate;
 pub use config::Cli as RunnerCli;
 use config::{Cli, ProvenanceDb, parse_surreal_credentials, provenance_config_builder};

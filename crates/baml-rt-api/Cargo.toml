@@ -84,6 +84,7 @@ slack = ["dep:baml-tools-slack", "baml-rt-builder/slack"]
 security-eval = ["dep:baml-tools-security-eval", "baml-rt-builder/security-eval"]
 # api has no direct dep on these — they ride in solely through builder.
 slack-notify = ["baml-rt-builder/slack-notify"]
+typesafe = ["baml-rt-builder/typesafe"]
 grafana-alerts = ["baml-rt-builder/grafana-alerts"]
 memory = ["baml-rt-builder/memory"]
-http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "security-eval", "grafana-alerts"]
+http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "typesafe", "security-eval", "grafana-alerts"]

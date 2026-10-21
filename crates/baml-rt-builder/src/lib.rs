@@ -25,6 +25,8 @@ use baml_tools_slack as _;
 #[cfg(feature = "slack-notify")]
 use baml_tools_slack_notify as _;
 use baml_tools_system as _;
+#[cfg(feature = "typesafe")]
+use baml_tools_typesafe as _;
 pub use builder::*;
 
 use crate::builder::error::Result;

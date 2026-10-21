@@ -24,6 +24,7 @@ baml-tools-memory = { path = "../tools/memory", optional = true }
 baml-tools-notion = { path = "../tools/notion", optional = true }
 baml-tools-slack = { path = "../tools/slack", optional = true }
 baml-tools-slack-notify = { path = "../tools/slack-notify", optional = true }
+baml-tools-typesafe = { path = "../tools/typesafe", optional = true }
 baml-tools-grafana-alerts = { path = "../tools/grafana-alerts", optional = true }
 baml-tools-security-eval = { path = "../tools/security-eval", optional = true }
 baml-rt-repository = { path = "../baml-rt-repository" }
@@ -61,9 +62,10 @@ memory = ["dep:baml-tools-memory"]
 notion = ["dep:baml-tools-notion"]
 slack = ["dep:baml-tools-slack"]
 slack-notify = ["dep:baml-tools-slack-notify"]
+typesafe = ["dep:baml-tools-typesafe"]
 grafana-alerts = ["dep:baml-tools-grafana-alerts"]
 security-eval = ["dep:baml-tools-security-eval"]
-http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "security-eval", "grafana-alerts"]
+http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "typesafe", "security-eval", "grafana-alerts"]
 # Demo/testing-only tools (e.g. `support/calculate`). Off by default; enabled by
 # `--all-features` dev/CI builds and `regen-fixtures`. NOT part of `http-tools`.
 dev-tools = ["dep:baml-tools-calculator"]

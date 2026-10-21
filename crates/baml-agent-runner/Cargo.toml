@@ -37,6 +37,7 @@ baml-tools-memory = { path = "../tools/memory", optional = true }
 baml-tools-notion = { path = "../tools/notion", optional = true }
 baml-tools-slack = { path = "../tools/slack", optional = true }
 baml-tools-slack-notify = { path = "../tools/slack-notify", optional = true }
+baml-tools-typesafe = { path = "../tools/typesafe", optional = true }
 baml-tools-grafana-alerts = { path = "../tools/grafana-alerts", optional = true }
 baml-tools-security-eval = { path = "../tools/security-eval", optional = true }
 anyhow = { workspace = true }
@@ -84,9 +85,10 @@ memory = ["dep:baml-tools-memory", "baml-rt-api/memory"]
 notion = ["dep:baml-tools-notion", "baml-rt-api/notion"]
 slack = ["dep:baml-tools-slack", "baml-rt-api/slack"]
 slack-notify = ["dep:baml-tools-slack-notify", "baml-rt-api/slack-notify"]
+typesafe = ["dep:baml-tools-typesafe", "baml-rt-api/typesafe"]
 grafana-alerts = ["dep:baml-tools-grafana-alerts", "baml-rt-api/grafana-alerts"]
 security-eval = ["dep:baml-tools-security-eval", "baml-rt-api/security-eval"]
-http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "security-eval", "grafana-alerts"]
+http-tools = ["clickup", "github", "notion", "slack", "slack-notify", "typesafe", "security-eval", "grafana-alerts"]
 dev-tools = ["dep:baml-tools-calculator"]
 sandbox-provider = ["baml-rt-tools/sandbox-provider"]
 llm-tests = []
