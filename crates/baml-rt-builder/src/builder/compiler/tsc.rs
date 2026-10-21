@@ -212,15 +212,15 @@ fn find_tsc(start_dir: &Path) -> Result<(String, Vec<String>)> {
         }
     }
 
-    // Try npx tsc (--yes to auto-install if needed)
-    if let Ok(output) = Command::new("npx")
-        .args(["--yes", "tsc", "--version"])
-        .output()
+    // Ask npx for the TypeScript package explicitly. The unrelated `tsc` package is not the
+    // TypeScript compiler and exits with an explanatory error.
+    let npx_args = ["--yes", "--package", "typescript@5", "tsc"];
+    if let Ok(output) = Command::new("npx").args(npx_args).arg("--version").output()
         && output.status.success()
     {
         return Ok((
             "npx".to_string(),
-            vec!["--yes".to_string(), "tsc".to_string()],
+            npx_args.into_iter().map(str::to_string).collect(),
         ));
     }
 
