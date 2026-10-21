@@ -40,9 +40,6 @@ fi
 
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
-
-cargo build -p baml-rt-builder --features http-tools --bin baml-agent-builder
-cargo build -p baml-agent-runner --features http-tools
 RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
 if [ ! -x "$RUNNER_BIN" ]; then
   echo "Runner binary not found: $RUNNER_BIN" >&2
@@ -67,7 +64,7 @@ fi
 
 # Start runner (no positional packages — deploy via repository publish + POST /deploy)
 RUST_LOG=${RUST_LOG:-baml_rt_a2a=debug,baml_rt_quickjs=debug,baml_rt_tools=debug} \
-  nohup "$RUNNER_BIN" \
+  nohup "$RUNNER_BIN" serve \
     --serve-http "127.0.0.1:${PORT}" \
     --repository-url "$REPOSITORY_URL" \
     --state-dir "$STATE_DIR" \
@@ -89,10 +86,10 @@ if ! curl -sf "${RUNNER_URL}/openapi.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-"$BUILDER_BIN" publish \
-  --agent-dir agents/notion-agent \
+"$BUILDER_BIN" install agent \
+  --path agents/notion-agent \
   --repository-url "$REPOSITORY_URL" \
-  --deploy-url "$RUNNER_URL"
+  --url "$RUNNER_URL"
 
 if [ -n "${NOTION_DEMO_TEXT:-}" ]; then
   TEXT="$NOTION_DEMO_TEXT"

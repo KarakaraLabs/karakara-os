@@ -42,9 +42,6 @@ fi
 
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
-
-cargo build -p baml-rt-builder --features http-tools --bin baml-agent-builder
-cargo build -p baml-agent-runner --features http-tools
 RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
 if [ ! -x "$RUNNER_BIN" ]; then
   echo "Runner binary not found: $RUNNER_BIN" >&2
@@ -105,7 +102,7 @@ if [ -n "$LISTEN_PID" ]; then
 fi
 
 RUST_LOG=${RUST_LOG:-baml_rt_a2a=debug,baml_rt_quickjs=debug,baml_rt_tools=debug} \
-  nohup "$RUNNER_BIN" \
+  nohup "$RUNNER_BIN" serve \
     --serve-http "127.0.0.1:${PORT}" \
     --repository-url "$REPOSITORY_URL" \
     --state-dir "$STATE_DIR" \
@@ -132,10 +129,10 @@ if ! port_listening; then
 fi
 
 for dir in "${PUBLISH_DIRS[@]}"; do
-  "$BUILDER_BIN" publish \
-    --agent-dir "$dir" \
+  "$BUILDER_BIN" install agent \
+    --path "$dir" \
     --repository-url "$REPOSITORY_URL" \
-    --deploy-url "$RUNNER_URL"
+    --url "$RUNNER_URL"
 done
 
 echo "Runner ready at ${RUNNER_URL}" >&2

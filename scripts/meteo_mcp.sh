@@ -17,7 +17,6 @@ AGENT_NAME="meteo-mcp-agent"
 RUNNER_URL="${RUNNER_URL:-http://127.0.0.1:18080}"
 REPOSITORY_URL="${REPOSITORY_URL:-$RUNNER_URL/repository}"
 HTTP_BIND="${HTTP_BIND:-127.0.0.1:18080}"
-PACKAGE_OUT="${PACKAGE_OUT:-/tmp/meteo-mcp-agent.tar.gz}"
 # Keep this local MCP demo responsive even when fastembed/JINA model caches are
 # missing or corrupted. Drift scoring will lazily disable/fall back on first use.
 export BAML_SKIP_DRIFT_MODEL_WARMUP="${BAML_SKIP_DRIFT_MODEL_WARMUP:-1}"
@@ -31,8 +30,8 @@ Usage: scripts/meteo_mcp.sh <command>
 Commands:
   config    Render MCP server runtime config only
   enable    Discover/approve meteo MCP schema directly into the repository registry
-  prepare   Render config, enable registry schema, and package the agent locally
-  runner    Render config, then start baml-agent-runner on $HTTP_BIND
+  prepare   Render config and enable registry schema
+  runner    Render config, then start agentium serve on $HTTP_BIND
   push      Enable registry schema, then publish+deploy $AGENT_DIR to $RUNNER_URL
   chat      Run push, then connect to $AGENT_NAME with agentium chat
   review    Show registry state for the meteo MCP server
@@ -48,7 +47,6 @@ Environment:
   RUNNER_URL=$RUNNER_URL
   REPOSITORY_URL=$REPOSITORY_URL
   HTTP_BIND=$HTTP_BIND
-  PACKAGE_OUT=$PACKAGE_OUT
   BAML_SKIP_DRIFT_MODEL_WARMUP=$BAML_SKIP_DRIFT_MODEL_WARMUP
 
 Notes:
@@ -64,10 +62,6 @@ EOF
 
 log_step() {
     printf '\n==> %s\n' "$*"
-}
-
-builder() {
-    cargo run -q -p baml-rt-builder --all-features --bin baml-agent-builder -- "$@"
 }
 
 agent_platform() {
@@ -93,30 +87,20 @@ enable_registry() {
     agent_platform mcp versions "$SERVER_ID" --repository-url "$REPOSITORY_URL"
 }
 
-package_agent() {
-    log_step "Packaging $AGENT_DIR using MCP registry $REPOSITORY_URL"
-    BAML_REGISTRY_URL="$REPOSITORY_URL" \
-        builder package --agent-dir "$AGENT_DIR" --output "$PACKAGE_OUT"
-
-    log_step "Generated MCP BAML types"
-    rg "McpMeteoGetMeteo" "$AGENT_DIR/src/baml-runtime.d.ts" | head || true
-}
-
 prepare() {
     cd "$ROOT"
     enable_registry
-    package_agent
 }
 
 push_agent() {
     cd "$ROOT"
     enable_registry
     log_step "Publishing and deploying $AGENT_DIR to $RUNNER_URL"
-    builder publish \
-        --agent-dir "$AGENT_DIR" \
+    agent_platform install agent \
+        --path "$AGENT_DIR" \
         --repository-url "$REPOSITORY_URL" \
-        --deploy-url "$RUNNER_URL" \
-        --message "meteo-mcp demo"
+        --url "$RUNNER_URL" \
+        --rationale "meteo-mcp demo"
 }
 
 review() {
@@ -140,9 +124,9 @@ case "$cmd" in
         ;;
     runner)
         render_config
-        log_step "Starting baml-agent-runner on $HTTP_BIND"
+        log_step "Starting agentium serve on $HTTP_BIND"
         echo "    In another terminal, run: scripts/meteo_mcp.sh chat"
-        exec cargo run -p agentium -- serve --all-features -- \
+        exec cargo run -p agentium --all-features -- serve \
             --a2a-stdio \
             --serve-http "$HTTP_BIND" \
             --provenance-db provenance.db

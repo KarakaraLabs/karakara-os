@@ -39,9 +39,6 @@ fi
 
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
-
-cargo build -p baml-rt-builder --features http-tools --bin baml-agent-builder
-cargo build -p baml-agent-runner --features http-tools
 RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
 if [ ! -x "$RUNNER_BIN" ]; then
   echo "Runner binary not found: $RUNNER_BIN" >&2
@@ -64,7 +61,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 RUST_LOG=${RUST_LOG:-baml_rt_a2a=debug,baml_rt_quickjs=debug,baml_rt_tools=debug} \
-  nohup "$RUNNER_BIN" \
+  nohup "$RUNNER_BIN" serve \
     --serve-http "127.0.0.1:${PORT}" \
     --repository-url "$REPOSITORY_URL" \
     --state-dir "$STATE_DIR" \
@@ -86,10 +83,10 @@ if ! curl -sf "${RUNNER_URL}/openapi.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-"$BUILDER_BIN" publish \
-  --agent-dir agents/slack-agent \
+"$BUILDER_BIN" install agent \
+  --path agents/slack-agent \
   --repository-url "$REPOSITORY_URL" \
-  --deploy-url "$RUNNER_URL"
+  --url "$RUNNER_URL"
 
 if [ -n "${SLACK_DEMO_TEXT:-}" ]; then
   TEXT="$SLACK_DEMO_TEXT"
