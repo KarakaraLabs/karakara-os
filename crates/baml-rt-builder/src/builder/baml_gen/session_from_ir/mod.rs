@@ -83,8 +83,16 @@ const PHASE_STEP_EXECUTOR_SUFFIX_ACTIVE: &str = r#"
 
 Phase policy:
 - Derived state rule: this active return union has no `Open` variant.
-- After Send completes with status done, use PageRead or SearchRead on last_archive_ref when archive lines are needed; otherwise emit Finish.
-- Never re-Send identical input after a Done; re-Send only for pagination (has_more) or a genuinely different query.
+- After Send completes with status done, the next hop is a consume phase.
+"#;
+
+/// After a completed Send, archive reads or an explicit terminal response are legal. Send is not.
+const PHASE_STEP_EXECUTOR_SUFFIX_CONSUME: &str = r#"
+
+Phase policy:
+- Derived state rule: this is a result-consumption phase and excludes `Send` and `Open`.
+- Use PageRead or SearchRead with the completed archive receipt when result lines are needed.
+- Otherwise emit a terminal response to explicitly consume the receipt.
 "#;
 
 /// Bundle emitted from IR: polymorphic Open/plan classes, per-phase executor functions,
@@ -345,6 +353,48 @@ pub fn render_generated_session_baml_from_ir(
             write_line(
                 &mut phase_out,
                 &active_spec.emit_baml_prompt_body(client_name.as_str(), prompt_template),
+            )?;
+            write_line(&mut phase_out, "}")?;
+            write_line(&mut phase_out, "")?;
+
+            // A completed Send moves here before another Send can be selected. For direct
+            // one-shot Sends, the root's non-session result variants remain legal so a caller
+            // can synthesize a final answer without reopening the tool.
+            let mut legal_consume = vec![
+                search_read_type.clone(),
+                page_read_type.clone(),
+                "ReadOnlyFinishStep".to_string(),
+            ];
+            // Entry-eligible one-shot Sends are auto-closed, so tool-session Finish and Abort
+            // would only produce a no-op status. Configured or streaming sessions stay open and
+            // retain their lifecycle terminals.
+            if !entry_send_eligible(tool) {
+                legal_consume.push(finish_type.clone());
+                legal_consume.push(abort_type.clone());
+            }
+            legal_consume.extend(non_plan_types.iter().cloned());
+            legal_consume.sort();
+            legal_consume.dedup();
+            let consume_name = SessionTypeNames::consume(func_name, &slug);
+            write_line(
+                &mut phase_out,
+                "/// Result-consumption executor: archive reads or terminal synthesis after Send.",
+            )?;
+            write_line(
+                &mut phase_out,
+                &format!(
+                    "function {consume_name}{args_block} -> {} {{",
+                    legal_consume.join(" | ")
+                ),
+            )?;
+            let consume_spec = phase_prompt::ToolSessionPhasePromptSpec {
+                legal_type_names: &legal_consume,
+                ir_signature: &ir_sig,
+                phase_policy: PHASE_STEP_EXECUTOR_SUFFIX_CONSUME,
+            };
+            write_line(
+                &mut phase_out,
+                &consume_spec.emit_baml_prompt_body(client_name.as_str(), prompt_template),
             )?;
             write_line(&mut phase_out, "}")?;
             write_line(&mut phase_out, "")?;

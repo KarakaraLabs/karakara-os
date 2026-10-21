@@ -8,14 +8,154 @@
 //! One `RefTable` per conversation context, allocated lazily and held in the
 //! `ToolSessionExecutionHandle` context map.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 
 use crate::archive_read::{HistoryRef, RenderedContent, ShortRef};
+
+/// Bounded metadata for a completed archive result. The body stays in the archive until read.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ArchiveReceipt {
+    pub archive_ref: String,
+    pub tool_name: String,
+    pub action_identity: String,
+    pub line_count: usize,
+    pub byte_count: usize,
+    pub size_display: String,
+    pub completion: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_hints: Vec<String>,
+}
+
+impl ArchiveReceipt {
+    const ACTION_IDENTITY_CAP: usize = 240;
+
+    fn bounded_text(value: &str) -> String {
+        if value.chars().count() <= Self::ACTION_IDENTITY_CAP {
+            value.to_string()
+        } else {
+            format!(
+                "{}…",
+                value
+                    .chars()
+                    .take(Self::ACTION_IDENTITY_CAP)
+                    .collect::<String>()
+            )
+        }
+    }
+}
+
+/// Derive a small set of grep anchors from a tool's trusted JSON output schema.
+///
+/// Field names are schema metadata, never values from model input or tool output. Arrays and
+/// nested objects contribute their leaf fields because rendered archive lines contain `id:`, not
+/// `tasks.id:`. Opaque schemas intentionally produce no hints.
+pub fn search_hints_from_output_schema(schema: &serde_json::Value) -> Vec<String> {
+    const MAX_HINTS: usize = 8;
+    let mut hints = Vec::with_capacity(MAX_HINTS);
+    let mut seen = HashSet::with_capacity(MAX_HINTS);
+    collect_schema_search_hints(schema, schema, &mut hints, &mut seen, 0, MAX_HINTS);
+    hints
+}
+
+fn collect_schema_search_hints(
+    root: &serde_json::Value,
+    schema: &serde_json::Value,
+    hints: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    depth: usize,
+    max_hints: usize,
+) {
+    if depth > 5 || hints.len() >= max_hints {
+        return;
+    }
+    let Some(object) = schema.as_object() else {
+        return;
+    };
+
+    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+        && let Some(resolved) = reference
+            .strip_prefix('#')
+            .and_then(|pointer| root.pointer(pointer))
+    {
+        collect_schema_search_hints(root, resolved, hints, seen, depth + 1, max_hints);
+        return;
+    }
+
+    for keyword in ["allOf", "anyOf", "oneOf"] {
+        if let Some(variants) = object.get(keyword).and_then(serde_json::Value::as_array) {
+            for variant in variants {
+                collect_schema_search_hints(root, variant, hints, seen, depth + 1, max_hints);
+                if hints.len() >= max_hints {
+                    return;
+                }
+            }
+            return;
+        }
+    }
+
+    if let Some(items) = object.get("items") {
+        collect_schema_search_hints(root, items, hints, seen, depth + 1, max_hints);
+        return;
+    }
+
+    let Some(properties) = object
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    for (name, property) in properties {
+        let before = hints.len();
+        collect_schema_search_hints(root, property, hints, seen, depth + 1, max_hints);
+        if before == hints.len()
+            && !schema_has_children(property)
+            && is_safe_search_hint(name)
+            && seen.insert(name.clone())
+        {
+            hints.push(name.clone());
+        }
+        if hints.len() >= max_hints {
+            return;
+        }
+    }
+}
+
+fn schema_has_children(schema: &serde_json::Value) -> bool {
+    let Some(object) = schema.as_object() else {
+        return false;
+    };
+    ["$ref", "properties", "items", "allOf", "anyOf", "oneOf"]
+        .iter()
+        .any(|key| object.contains_key(*key))
+}
+
+fn is_safe_search_hint(name: &str) -> bool {
+    const SENSITIVE_TERMS: &[&str] = &[
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "cookie",
+    ];
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        && !SENSITIVE_TERMS.iter().any(|term| name.contains(term))
+}
 
 /// A single archived tool result: rendered content + display metadata + provenance.
 #[derive(Debug, Clone)]
@@ -40,8 +180,15 @@ pub struct ArchiveEntry {
     pub activity_anchor: String,
     /// Source kind: `"tool_result"` for archive entries.
     pub source: String,
-    /// Stable identity for deduping direct Send calls: `tool_name + canonical input JSON`.
+    /// Tool-provided terminal completion marker when one is available.
+    pub completion: String,
+    /// Bounded, schema-derived field names that make archive grep useful.
+    pub search_hints: Vec<String>,
+    /// Stable identity for deduping a Send until its result is consumed:
+    /// `tool_name + canonical input JSON`.
     pub send_signature: Option<String>,
+    /// True only while this Send's receipt has not been read or explicitly consumed.
+    pub pending_send: bool,
 }
 
 impl ArchiveEntry {
@@ -63,13 +210,40 @@ impl ArchiveEntry {
             byte_count,
             activity_anchor,
             source,
+            completion: "done".to_string(),
+            search_hints: Vec::new(),
             send_signature: None,
+            pending_send: false,
         }
     }
 
-    /// Attach stable direct-Send identity used for runtime duplicate suppression.
+    /// Attach a tool-provided terminal completion marker.
+    pub fn with_completion(mut self, completion: Option<String>) -> Self {
+        if let Some(completion) = completion.filter(|value| !value.trim().is_empty()) {
+            self.completion = completion;
+        }
+        self
+    }
+
+    /// Attach bounded field names from the trusted output schema.
+    pub fn with_search_hints(mut self, search_hints: Vec<String>) -> Self {
+        self.search_hints = search_hints;
+        self
+    }
+
+    /// Attach stable direct-Send identity used for duplicate suppression.
+    ///
+    /// Both this identity and its pending state are persisted with archive entries so a restored
+    /// runtime can suppress a Send that completed just before the prior process stopped.
     pub fn with_send_signature(mut self, signature: Option<String>) -> Self {
         self.send_signature = signature.filter(|s| !s.trim().is_empty());
+        self.pending_send = self.send_signature.is_some();
+        self
+    }
+
+    /// Restore the persisted consumption state for a signed Send.
+    pub fn with_pending_send(mut self, pending_send: bool) -> Self {
+        self.pending_send = pending_send && self.send_signature.is_some();
         self
     }
 
@@ -79,16 +253,39 @@ impl ArchiveEntry {
         self
     }
 
+    /// Bounded, structured metadata for the next model hop.
+    pub fn receipt(&self, r: ShortRef) -> ArchiveReceipt {
+        ArchiveReceipt {
+            archive_ref: r.to_string(),
+            tool_name: self.tool_name.clone(),
+            action_identity: ArchiveReceipt::bounded_text(
+                self.action_identity
+                    .as_deref()
+                    .or(self.summary.as_deref())
+                    .unwrap_or("Send"),
+            ),
+            line_count: self.line_count,
+            byte_count: self.byte_count,
+            size_display: self.size_display(),
+            completion: self.completion.clone(),
+            search_hints: self.search_hints.clone(),
+        }
+    }
+
+    fn size_display(&self) -> String {
+        let kb = self.byte_count as f64 / 1024.0;
+        if kb < 1.0 {
+            format!("{}B", self.byte_count)
+        } else {
+            format!("{kb:.1}KB")
+        }
+    }
+
     /// One-line display: ref + tool/action identity + size.
     ///
     /// Precedence: `action_identity` (new format) > `summary` (legacy quoted) > tool-name-only.
     pub fn display_header(&self, r: ShortRef) -> String {
-        let kb = self.byte_count as f64 / 1024.0;
-        let size_str = if kb < 1.0 {
-            format!("{}B", self.byte_count)
-        } else {
-            format!("{kb:.1}KB")
-        };
+        let size_str = self.size_display();
         if let Some(action) = self.action_identity.as_deref() {
             return format!(
                 "{r} · {}:{} · {}L · {}",
@@ -264,24 +461,51 @@ impl RefTable {
         rows
     }
 
-    /// Find prior Send archive with same stable direct-Send signature.
+    /// Find the latest unconsumed Send when it has the supplied signature.
     pub fn find_by_send_signature(&self, signature: &str) -> Option<(ShortRef, String)> {
+        self.find_receipt_by_send_signature(signature)
+            .map(|(r, header, _)| (r, header))
+    }
+
+    /// Find a prior Send and retain the structured receipt needed to continue safely.
+    pub fn find_receipt_by_send_signature(
+        &self,
+        signature: &str,
+    ) -> Option<(ShortRef, String, ArchiveReceipt)> {
+        // Only the latest pending Send is an immediate-repeat candidate. Older receipts
+        // deliberately do not suppress a later refresh or an intentional second write.
         let mut rows: Vec<_> = self
             .entries
             .iter()
             .filter_map(|entry| {
-                if entry.value().send_signature.as_deref() != Some(signature) {
+                if !entry.value().pending_send {
                     return None;
                 }
                 let key = *entry.key();
                 let prefix = (key >> 32) as u32;
                 let local = key as u32;
                 let r = ShortRef::new_prefixed(prefix, local);
-                Some((r, entry.value().display_header(r)))
+                Some((
+                    r,
+                    entry.value().send_signature.clone(),
+                    entry.value().display_header(r),
+                    entry.value().receipt(r),
+                ))
             })
             .collect();
-        rows.sort_by_key(|(r, _)| (r.prefix, r.local));
-        rows.into_iter().next()
+        rows.sort_by_key(|(r, _, _, _)| (r.prefix, r.local));
+        rows.into_iter()
+            .next_back()
+            .and_then(|(r, candidate, header, receipt)| {
+                (candidate.as_deref() == Some(signature)).then_some((r, header, receipt))
+            })
+    }
+
+    /// Clear the immediate-repeat guard after a result is materialized or explicitly consumed.
+    pub fn mark_send_consumed(&self, archive_ref: ShortRef) {
+        if let Some(mut entry) = self.entries.get_mut(&archive_ref.cell_key()) {
+            entry.pending_send = false;
+        }
     }
 
     /// Resolve a `HistoryRef` (`#N`) to its `HistoryEntry`, if present.
@@ -440,6 +664,48 @@ mod tests {
     }
 
     #[test]
+    fn archive_receipt_is_bounded_and_never_contains_body() {
+        let table = RefTable::new();
+        let action = format!("Send(query={})", "x".repeat(300));
+        let r = table.insert(
+            make_entry("support/clickup", "ignored")
+                .with_action_identity(Some(action))
+                .with_completion(Some("DONE".to_string()))
+                .with_search_hints(search_hints_from_output_schema(&json!({
+                    "type": "object",
+                    "properties": {
+                        "tasks": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "name": { "type": "string" },
+                                    "status": { "type": "string" },
+                                    "access_token": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                })))
+                .with_send_signature(Some("support/clickup\u{0}{\"query\":\"x\"}".into())),
+        );
+        let receipt = table.get(r).expect("entry").receipt(r);
+        assert_eq!(receipt.archive_ref, "@1");
+        assert_eq!(receipt.tool_name, "support/clickup");
+        assert!(receipt.action_identity.ends_with('…'));
+        assert!(receipt.action_identity.chars().count() <= 241);
+        assert!(receipt.size_display.ends_with('B'));
+        assert_eq!(receipt.completion, "DONE");
+        assert_eq!(receipt.search_hints, ["id", "name", "status"]);
+        assert!(
+            !serde_json::to_string(&receipt)
+                .expect("receipt json")
+                .contains("alice")
+        );
+    }
+
+    #[test]
     fn archive_send_signature_lookup_returns_existing_ref() {
         let table = RefTable::new();
         let entry = make_entry("mcp/grafana/query_prometheus", "query result")
@@ -453,6 +719,39 @@ mod tests {
             .expect("signature lookup");
         assert_eq!(found.0, r);
         assert!(found.1.contains("Send(expr=\"up\")"));
+    }
+
+    #[test]
+    fn duplicate_lookup_only_considers_the_latest_pending_send() {
+        let table = RefTable::new();
+        let list_signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        let create_signature = "support/clickup\0{\"op\":\"create_task\"}";
+        let first = table.insert(
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(list_signature.to_string())),
+        );
+        assert_eq!(
+            table
+                .find_by_send_signature(list_signature)
+                .expect("immediate repeat is suppressed")
+                .0,
+            first
+        );
+
+        table.insert(
+            make_entry("support/clickup", "created task")
+                .with_send_signature(Some(create_signature.to_string())),
+        );
+        assert!(
+            table.find_by_send_signature(list_signature).is_none(),
+            "a later, different Send makes an identical list request a legitimate refresh"
+        );
+
+        table.mark_send_consumed(ShortRef::new(2));
+        assert!(
+            table.find_by_send_signature(create_signature).is_none(),
+            "materializing the result clears the immediate-repeat guard"
+        );
     }
 
     #[test]

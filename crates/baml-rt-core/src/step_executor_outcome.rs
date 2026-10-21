@@ -30,6 +30,7 @@ pub enum StepPlanViolationCode {
     SendInputNull,
     UnknownToolSessionOp,
     InvalidPlanInputJson,
+    MaxStepsExhausted,
 }
 
 impl StepPlanViolationCode {
@@ -48,6 +49,7 @@ impl StepPlanViolationCode {
             Self::SendInputNull => "send_input_null",
             Self::UnknownToolSessionOp => "unknown_tool_session_op",
             Self::InvalidPlanInputJson => "invalid_plan_input_json",
+            Self::MaxStepsExhausted => "max_steps_exhausted",
         }
     }
 }
@@ -218,6 +220,28 @@ impl StepPlanRecovery {
             vec!["Fix the JSON syntax in the plan input.".to_string()],
         )
     }
+
+    #[must_use]
+    pub fn max_steps_exhausted(
+        last_phase: String,
+        last_operation: &str,
+        last_archive_ref: Option<&str>,
+        step_count: usize,
+    ) -> Self {
+        let archive = last_archive_ref.unwrap_or("none");
+        Self::new(
+            StepPlanViolationCode::MaxStepsExhausted,
+            format!(
+                "Step executor reached its {step_count}-step limit without a terminal response. Last phase: {last_phase}; last operation: {last_operation}; last archive: {archive}."
+            ),
+            "Step exhaustion is not successful completion. Emit a legal terminal or corrective step.",
+            vec![
+                "Use the latest archive receipt to PageRead or SearchRead if result lines are needed."
+                    .to_string(),
+                "Otherwise emit the terminal response allowed by the current phase.".to_string(),
+            ],
+        )
+    }
 }
 
 /// Witness returned from `__run_step_executor` — always discriminated; never ambiguous flat JSON.
@@ -272,7 +296,7 @@ mod tests {
         let v = StepExecutorOutcome::Completed {
             last: serde_json::json!({"status": "done"}),
             steps: vec![serde_json::json!({"op": "open"})],
-            session_context: serde_json::json!({"contract_version": "session_context_v3"}),
+            session_context: serde_json::json!({"contract_version": "session_context_v5"}),
             selected_tool: Some("support/notion".to_string()),
         };
         insta::assert_json_snapshot!(snapshot_json(&v));
@@ -284,6 +308,27 @@ mod tests {
             recovery: StepPlanRecovery::missing_archive_ref_page_read(),
         };
         insta::assert_json_snapshot!(snapshot_json(&v));
+
+        let exhausted = StepExecutorOutcome::AgentCorrectable {
+            recovery: StepPlanRecovery::max_steps_exhausted(
+                "Consume".to_string(),
+                "Send",
+                Some("@7"),
+                8,
+            ),
+        };
+        let serde_json::Value::Object(value) = serde_json::to_value(exhausted).expect("serialize")
+        else {
+            panic!("AgentCorrectable must serialize as an object");
+        };
+        assert_eq!(
+            value.get("outcome"),
+            Some(&serde_json::json!("agent_correctable"))
+        );
+        assert_eq!(
+            value["recovery"]["code"],
+            serde_json::json!("max_steps_exhausted")
+        );
     }
 
     #[test]

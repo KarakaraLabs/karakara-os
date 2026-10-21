@@ -87,6 +87,7 @@ fn send_done_json(send_result: &SendResult) -> Value {
         "status": "done",
         "output": send_result.header,
         "archive_ref": send_result.archive_ref.to_string(),
+        "receipt": send_result.receipt,
         "result": send_result.output.clone(),
     })
 }
@@ -94,12 +95,14 @@ fn send_done_json(send_result: &SendResult) -> Value {
 fn duplicate_send_json(
     archive_ref: baml_rt_tools::archive_read::ShortRef,
     header: String,
+    receipt: baml_rt_tools::archive_refs::ArchiveReceipt,
 ) -> Value {
     serde_json::json!({
         "status": "duplicate",
         "op": "DuplicateSend",
         "archive_ref": archive_ref.to_string(),
         "output": header,
+        "receipt": receipt,
         "duplicate": true,
         "message": format!(
             "Identical Send already materialized as {archive_ref}; read it instead of re-issuing."
@@ -198,6 +201,26 @@ impl BamlRuntimeManager {
         )))
     }
 
+    /// Clear the durable duplicate guard for a Send whose result was consumed.
+    pub(crate) async fn mark_archive_send_consumed(
+        &self,
+        context_id: &baml_rt_core::ids::ContextId,
+        archive_ref: baml_rt_tools::archive_read::ShortRef,
+    ) -> Result<()> {
+        if let Some(store) = self.state.archive_ref_store.as_ref() {
+            store
+                .archive_mark_send_consumed(context_id, archive_ref)
+                .await
+                .map_err(map_archive_provenance_err)?;
+        }
+        let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
+            &self.state.archive_ref_tables,
+            context_id.as_str(),
+        );
+        ref_table.mark_send_consumed(archive_ref);
+        Ok(())
+    }
+
     pub(in crate::baml) async fn execute_archive_read_plan(
         &self,
         scope: &context::RuntimeScope,
@@ -277,6 +300,8 @@ impl BamlRuntimeManager {
             }
             Err(other) => return Err(other),
         };
+        self.mark_archive_send_consumed(scope.context_id(), archive_ref)
+            .await?;
         let archive_ref_str = archive_ref.to_string();
         let grep_raw = grep.as_ref().map(|g| g.pattern_text().to_string());
         let page = baml_rt_tools::archive_read::grep_paginate(
@@ -389,13 +414,15 @@ impl BamlRuntimeManager {
                 &self.state.archive_ref_tables,
                 plan_scope.context_id().as_str(),
             );
-            if let Some((archive_ref, header)) = ref_table.find_by_send_signature(&signature) {
+            if let Some((archive_ref, header, receipt)) =
+                ref_table.find_receipt_by_send_signature(&signature)
+            {
                 tracing::warn!(
                     tool = %tool_name_str,
                     archive_ref = %archive_ref,
                     "FSM step: duplicate Send suppressed"
                 );
-                return Ok(duplicate_send_json(archive_ref, header));
+                return Ok(duplicate_send_json(archive_ref, header, receipt));
             }
         }
 
@@ -555,15 +582,15 @@ impl BamlRuntimeManager {
                         &self.state.archive_ref_tables,
                         plan_scope.context_id().as_str(),
                     );
-                    if let Some((archive_ref, header)) =
-                        ref_table.find_by_send_signature(&signature)
+                    if let Some((archive_ref, header, receipt)) =
+                        ref_table.find_receipt_by_send_signature(&signature)
                     {
                         tracing::warn!(
                             tool = %tool_name_str,
                             archive_ref = %archive_ref,
                             "FSM step: duplicate Send suppressed"
                         );
-                        last_output = Some(duplicate_send_json(archive_ref, header));
+                        last_output = Some(duplicate_send_json(archive_ref, header, receipt));
                         send_completed = true;
                         continue;
                     }
@@ -727,6 +754,8 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
+                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
+                        .await?;
                     let page = baml_rt_tools::archive_read::grep_paginate(
                         &entry.content,
                         Some(&grep),
@@ -847,6 +876,8 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
+                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
+                        .await?;
                     let page = baml_rt_tools::archive_read::grep_paginate(
                         &entry.content,
                         None,

@@ -106,8 +106,8 @@ pub fn session_plan_manifest(ir: &IRSignature) -> SessionPlanManifest {
 /// Infer the `FunctionRole` from naming convention.
 ///
 /// Uses the same suffix patterns as `SessionTypeNames` / `BamlFunctionId::parse` in `baml-rt-core`.
-/// `Consume` is reserved: the IR phase generator does not emit `__consume__` functions yet, but
-/// hand-authored BAML or future codegen may; the manifest annotates them when present.
+/// The session IR generator emits `__consume__` functions after completed Sends; hand-authored
+/// variants use the same role annotation.
 fn infer_function_role(name: &str) -> FunctionRole {
     match BamlFunctionId::parse(name).phase() {
         Some(VariantPhase::Consume { .. }) => FunctionRole::Consume,

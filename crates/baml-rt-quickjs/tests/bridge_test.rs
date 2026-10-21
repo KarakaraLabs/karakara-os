@@ -1216,13 +1216,15 @@ async fn test_step_executor_loop_drives_full_session_with_interceptor() {
     );
 }
 
-/// Tier-1 entry-Send (Sections D+E): the model emits a typed Send on the **entry** hop with no
-/// Open and no Finish. The runtime auto-opens, sends, and (OneShot+Strict) auto-finishes, so each
-/// Send stands alone. Two back-to-back entry Sends — no Open/Finish between them — must both reach
-/// Done (proving the first session was closed, not reused), then ReadOnlyFinish ends the turn.
+/// Tier-1 entry-Send handoff: a one-shot Send auto-closes its tool session, then the next hop
+/// must use its generated Consume union to read or synthesize the archived result. That union does
+/// not admit another Send until the receipt is consumed.
 #[tokio::test]
-async fn test_step_executor_loop_entry_send_auto_finishes_and_resends_statelessly() {
-    use std::sync::atomic::{AtomicU32, Ordering};
+async fn test_step_executor_loop_entry_send_hands_off_to_consume() {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    };
 
     use baml_rt::baml::BamlRuntimeManager;
     use baml_rt_core::context::InvocationScope;
@@ -1309,7 +1311,7 @@ async fn test_step_executor_loop_entry_send_auto_finishes_and_resends_statelessl
                 task_id,
                 message_id,
                 "user".to_string(),
-                vec!["entry-send stateless resend e2e".to_string()],
+                vec!["entry-send result handoff e2e".to_string()],
                 None,
                 agent,
                 1_700_000_010_404,
@@ -1318,32 +1320,46 @@ async fn test_step_executor_loop_entry_send_auto_finishes_and_resends_statelessl
             .expect("message received");
     }
 
-    // Two entry Sends (no Open, no Finish), then a ReadOnlyFinish reply. If auto-finish did not
-    // close the first session, the second Send would reuse a stale open session instead of
-    // auto-opening a fresh one.
+    let generated = std::fs::read_to_string(built.join("baml_src/_baml_runtime.baml"))
+        .expect("read generated BAML");
+    let consume_signature = generated
+        .split("function ChooseCalcTool__consume__support_calculate")
+        .nth(1)
+        .and_then(|suffix| suffix.split("client DefaultClient").next())
+        .expect("generated consume function");
+    assert!(consume_signature.contains("ReadOnlyFinishStep"));
+    assert!(!consume_signature.contains("SupportCalculateSendStep"));
+
     let call_count = Arc::new(AtomicU32::new(0));
     let call_count_clone = call_count.clone();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_clone = calls.clone();
 
     struct EntrySendInterceptor {
         count: Arc<AtomicU32>,
+        calls: Arc<Mutex<Vec<(String, String)>>>,
     }
 
     #[async_trait]
     impl baml_rt::interceptor::LLMInterceptor for EntrySendInterceptor {
         async fn intercept_llm_call(
             &self,
-            _ctx: &baml_rt::interceptor::LLMCallContext,
+            ctx: &baml_rt::interceptor::LLMCallContext,
         ) -> baml_rt_core::Result<baml_rt::interceptor::InterceptorDecision> {
+            self.calls.lock().expect("calls lock").push((
+                ctx.function_id.full_name(),
+                serde_json::to_string(&ctx.prompt).expect("serialize prompt"),
+            ));
             let n = self.count.fetch_add(1, Ordering::Relaxed);
             let response = match n {
                 0 => {
                     json!({ "step": { "op": "Send", "tool_name": "support/calculate", "input": { "expression": { "left": 2, "operation": "Add", "right": 3 } } } })
                 }
                 1 => {
-                    json!({ "step": { "op": "Send", "tool_name": "support/calculate", "input": { "expression": { "left": 4, "operation": "Add", "right": 5 } } } })
+                    json!({ "op": "PageRead", "input": { "archive_ref": "@1", "offset": 0, "limit": 10 } })
                 }
                 2 => {
-                    json!({ "op": "ReadOnlyFinish", "reply": { "parts": [{ "type": "text", "text": "7 and 9" }], "citations": [] } })
+                    json!({ "op": "ReadOnlyFinish", "reply": { "parts": [{ "type": "text", "text": "5" }], "citations": [] } })
                 }
                 _ => json!({ "message": "done" }),
             };
@@ -1365,6 +1381,7 @@ async fn test_step_executor_loop_entry_send_auto_finishes_and_resends_statelessl
         let w = manager.write().await;
         w.register_llm_interceptor(EntrySendInterceptor {
             count: call_count_clone,
+            calls: calls_clone,
         })
         .await;
     }
@@ -1375,34 +1392,33 @@ async fn test_step_executor_loop_entry_send_auto_finishes_and_resends_statelessl
             &manager,
             scope.as_scope(),
             "ChooseCalcTool",
-            json!({ "user_message": "what is 2 + 3, then 4 + 5?" }),
+            json!({ "user_message": "what is 2 + 3?" }),
             8,
             None,
         ),
     )
     .await
-    .expect("entry-send loop should complete without an Open/Finish from the model");
+    .expect("entry-send loop should complete through Consume without an Open/Finish");
 
-    // Exactly three hops: Send, Send, ReadOnlyFinish — no Open/Finish hops, no max_steps spin.
-    assert_eq!(
-        call_count.load(Ordering::Relaxed),
-        3,
-        "expected 3 hops (Send, Send, ReadOnlyFinish), got {}",
-        call_count.load(Ordering::Relaxed)
+    assert_eq!(call_count.load(Ordering::Relaxed), 3);
+    let calls = calls.lock().expect("calls lock");
+    assert!(calls[0].0.ends_with("__entry"));
+    assert!(calls[1].0.ends_with("__consume__support_calculate"));
+    assert!(calls[1].1.contains("Completed tool result:"));
+    assert!(calls[1].1.contains("@1"));
+    assert!(calls[1].1.contains("Search hints:"));
+    assert!(
+        !calls[2].1.contains("Completed tool result:"),
+        "a materialized read consumes the receipt before Entry permits another Send"
     );
 
-    let send_done = result
-        .steps
-        .iter()
-        .filter(|s| {
-            s.get("status").and_then(Value::as_str) == Some("done")
-                && s.get("archive_ref").is_some()
-        })
-        .count();
+    let send_done = result.steps.iter().filter(|step| {
+        step.get("status").and_then(Value::as_str) == Some("done") && step.get("receipt").is_some()
+    });
     assert_eq!(
-        send_done, 2,
-        "both entry Sends must reach Done (auto-open + auto-finish each), got {send_done} in {:?}",
-        result.steps
+        send_done.count(),
+        1,
+        "only the original Send reaches the backend"
     );
 }
 

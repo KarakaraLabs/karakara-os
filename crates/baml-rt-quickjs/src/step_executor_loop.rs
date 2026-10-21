@@ -31,7 +31,8 @@ use std::sync::{Arc, Mutex};
 
 use baml_rt_core::{BamlFunctionId, BamlPromptName, BamlRtError, Result, VariantPhase, context};
 use baml_rt_tools::{
-    ToolName, ToolSlug, phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
+    ToolName, ToolSlug, archive_refs::ArchiveReceipt,
+    phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -94,7 +95,6 @@ impl StepStatus {
 enum TerminalReason {
     Finished,
     Aborted,
-    MaxStepsExhausted,
     MissingStatus,
 }
 
@@ -116,6 +116,11 @@ enum Phase {
         tool: ToolBinding,
         has_done: bool,
     },
+    /// The model must acknowledge a completed Send before another Send is legal.
+    Consume {
+        tool: ToolBinding,
+        return_to: ConsumeReturn,
+    },
     #[expect(
         dead_code,
         reason = "Terminal outcome reserved for the step-loop termination path"
@@ -125,12 +130,19 @@ enum Phase {
 
 impl Phase {
     fn is_session_open(&self) -> bool {
-        matches!(self, Self::Active { .. })
+        matches!(
+            self,
+            Self::Active { .. }
+                | Self::Consume {
+                    return_to: ConsumeReturn::Active,
+                    ..
+                }
+        )
     }
 
     fn selected_tool(&self) -> Option<&ToolName> {
         match self {
-            Self::Active { tool, .. } => Some(&tool.name),
+            Self::Active { tool, .. } | Self::Consume { tool, .. } => Some(&tool.name),
             _ => None,
         }
     }
@@ -141,10 +153,16 @@ impl Phase {
     )]
     fn tool_slug(&self) -> Option<&ToolSlug> {
         match self {
-            Self::Active { tool, .. } => Some(&tool.slug),
+            Self::Active { tool, .. } | Self::Consume { tool, .. } => Some(&tool.slug),
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ConsumeReturn {
+    Entry,
+    Active,
 }
 
 /// Coarse FSM status injected into step-executor BAML args.
@@ -165,6 +183,7 @@ struct LastStepContext {
     archive_ref: Option<String>,
     output_header: Option<String>,
     completion: Option<String>,
+    receipt: Option<ArchiveReceipt>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
@@ -189,14 +208,16 @@ struct SessionContextWire {
     last_output_header: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_completion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_receipt: Option<ArchiveReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     archives: Vec<ArchiveLedgerEntry>,
 }
 
 /// Stable id for the `session_context` object shape injected into step-executor BAML args;
 /// must match generated prelude `SessionContext.contract_version` in agent packages.
-const SESSION_CONTEXT_CONTRACT_VERSION: &str = "session_context_v3";
-const SESSION_CONTEXT_ARCHIVE_LEDGER_CAP: usize = 30;
+const SESSION_CONTEXT_CONTRACT_VERSION: &str = "session_context_v5";
+const SESSION_CONTEXT_ARCHIVE_LEDGER_CAP: usize = 8;
 const SESSION_CONTEXT_ARCHIVE_HEADER_CAP: usize = 240;
 
 fn session_status_for_phase(phase: &Phase) -> SessionStatus {
@@ -205,6 +226,7 @@ fn session_status_for_phase(phase: &Phase) -> SessionStatus {
         Phase::Active {
             has_done: false, ..
         } => SessionStatus::JustOpened,
+        Phase::Consume { .. } => SessionStatus::ResultReady,
         Phase::Active { has_done: true, .. } | Phase::Terminal(_) => SessionStatus::Done,
     }
 }
@@ -242,13 +264,7 @@ fn strip_archive_header_for_ledger(header: &str) -> String {
     }
 }
 
-fn status_for_context(phase: &Phase, last_step: &LastStepContext) -> SessionStatus {
-    if matches!(phase, Phase::Entry)
-        && matches!(last_step.op, Some("send") | Some("duplicate_send"))
-        && matches!(last_step.status, Some("done") | Some("duplicate"))
-    {
-        return SessionStatus::ResultReady;
-    }
+fn status_for_context(phase: &Phase) -> SessionStatus {
     session_status_for_phase(phase)
 }
 
@@ -260,15 +276,23 @@ fn build_session_context(
     let wire = SessionContextWire {
         contract_version: SESSION_CONTEXT_CONTRACT_VERSION,
         session_open: phase.is_session_open(),
-        status: status_for_context(phase, last_step),
+        status: status_for_context(phase),
         last_step_op: last_step.op,
         last_step_status: last_step.status,
         last_archive_ref: last_step.archive_ref.clone(),
         last_output_header: last_step.output_header.clone(),
         last_completion: last_step.completion.clone(),
+        last_receipt: last_step.receipt.clone(),
         archives: archives.to_vec(),
     };
     serde_json::to_value(wire).unwrap_or(Value::Null)
+}
+
+fn receipt_from_result(result: &Value) -> Option<ArchiveReceipt> {
+    result
+        .get("receipt")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 fn infer_last_step_context(
@@ -315,6 +339,12 @@ fn infer_last_step_context(
             _ if result.get("has_more").is_some() => Some("read"),
             _ => None,
         },
+        Phase::Consume { .. } => match status {
+            StepStatus::Finished => Some("finish"),
+            StepStatus::Aborted => Some("abort"),
+            _ if result.get("has_more").is_some() => Some("read"),
+            _ => None,
+        },
         Phase::Terminal(_) => None,
     };
 
@@ -334,6 +364,7 @@ fn infer_last_step_context(
             .and_then(|r| r.get("completion"))
             .and_then(Value::as_str)
             .map(ToString::to_string),
+        receipt: receipt_from_result(result),
     }
 }
 
@@ -389,49 +420,6 @@ fn result_is_read_only_finish(result: &Value) -> bool {
     )
 }
 
-fn llm_step_op(result: &Value) -> Option<&str> {
-    result.get("op").and_then(Value::as_str).or_else(|| {
-        result
-            .get("step")
-            .and_then(|s| s.get("op"))
-            .and_then(Value::as_str)
-    })
-}
-
-fn llm_step_input(result: &Value) -> Option<&Value> {
-    result
-        .get("input")
-        .or_else(|| result.get("step").and_then(|s| s.get("input")))
-}
-
-/// True when the model re-emits Send with the same input immediately after a Send hop completed Done.
-fn is_redundant_repeat_send(result: &Value, last_step: &LastStepContext, steps: &[Value]) -> bool {
-    if llm_step_op(result) != Some("Send") {
-        return false;
-    }
-    if last_step.op != Some("send") || last_step.status != Some("done") {
-        return false;
-    }
-    let current_input = match llm_step_input(result) {
-        Some(v) => v,
-        None => return false,
-    };
-    steps
-        .iter()
-        .rev()
-        .find_map(|step| {
-            if llm_step_op(step) != Some("Send") {
-                return None;
-            }
-            if extract_status(step)? != StepStatus::Done {
-                return None;
-            }
-            let prev_input = llm_step_input(step)?;
-            (prev_input == current_input).then_some(())
-        })
-        .is_some()
-}
-
 /// Unified-primary `__entry` hops return structured variants without tool-session `status`.
 fn unified_entry_status_fallback(result: &Value) -> Option<StepStatus> {
     let v = result
@@ -466,27 +454,37 @@ fn phase_function_id(base: &BamlPromptName, phase: &Phase) -> BamlFunctionId {
                 tool_slug: tool.slug.to_string(),
             },
         ),
+        Phase::Consume { tool, .. } => BamlFunctionId::variant(
+            base.clone(),
+            VariantPhase::Consume {
+                tool_slug: tool.slug.to_string(),
+            },
+        ),
         Phase::Terminal(_) => BamlFunctionId::base(base.as_str()),
     }
 }
 
 /// Extract tool_name from a step executor result (Open step output).
+fn tool_binding_from_name(raw: &str) -> Option<ToolBinding> {
+    match ToolName::parse(raw) {
+        Ok(name) => {
+            let slug = name.slug();
+            Some(ToolBinding { name, slug })
+        }
+        Err(e) => {
+            tracing::warn!(raw_tool_name = raw, error = %e, "step_executor_loop: invalid tool name");
+            None
+        }
+    }
+}
+
+fn tool_binding_from_receipt(receipt: &ArchiveReceipt) -> Option<ToolBinding> {
+    tool_binding_from_name(&receipt.tool_name)
+}
+
 fn extract_tool_binding(result: &Value) -> Option<ToolBinding> {
     fn binding_from_tool_name_str(raw: &str) -> Option<ToolBinding> {
-        match ToolName::parse(raw) {
-            Ok(name) => {
-                let slug = name.slug();
-                Some(ToolBinding { name, slug })
-            }
-            Err(e) => {
-                tracing::warn!(
-                    raw_tool_name = raw,
-                    error = %e,
-                    "step_executor_loop: invalid tool_name in result, ignoring"
-                );
-                None
-            }
-        }
+        tool_binding_from_name(raw)
     }
 
     fn extract_tool_binding_inner(result: &Value) -> Option<ToolBinding> {
@@ -645,11 +643,25 @@ pub async fn run_step_executor_loop(
                             break;
                         }
                     }
+                } else if matches!(phase, Phase::Consume { .. }) {
+                    // Root synthesis variants in a consume union are terminal responses rather
+                    // than tool-session envelopes, so they intentionally carry no status.
+                    StepStatus::Finished
                 } else {
                     phase = Phase::Terminal(TerminalReason::MissingStatus);
                     break;
                 }
             }
+        };
+
+        let consumed_receipt_ref = if matches!(phase, Phase::Consume { .. })
+            && (read_only_finish || matches!(status, StepStatus::Finished | StepStatus::Aborted))
+        {
+            last_step_context.receipt.as_ref().and_then(|receipt| {
+                baml_rt_tools::archive_read::ShortRef::parse(&receipt.archive_ref)
+            })
+        } else {
+            None
         };
 
         let p_after = if status == StepStatus::Open {
@@ -688,6 +700,13 @@ pub async fn run_step_executor_loop(
         }
         prev_hop_graph_lines = Some(p_after);
 
+        if let Some(archive_ref) = consumed_receipt_ref {
+            let guard = manager.read().await;
+            guard
+                .mark_archive_send_consumed(scope.context_id(), archive_ref)
+                .await?;
+        }
+
         // Capture the last result with meaningful output (Done has output,
         // Finished/Open/Sent are status-only). This ensures `last` contains
         // the tool data, not a bare `{"status":"finished"}`.
@@ -710,6 +729,7 @@ pub async fn run_step_executor_loop(
                 archive_ref: None,
                 output_header: None,
                 completion: None,
+                receipt: None,
             }
         } else {
             infer_last_step_context(&phase, status, &result)
@@ -723,18 +743,6 @@ pub async fn run_step_executor_loop(
             }
         }
 
-        if steps.len() > 1
-            && is_redundant_repeat_send(&result, &last_step_context, &steps[..steps.len() - 1])
-        {
-            tracing::warn!(
-                hop = hop_idx,
-                function = %current_function,
-                "step_executor_loop: redundant repeat Send after Done; terminating with last result"
-            );
-            last_step_context = next_step_context;
-            phase = Phase::Terminal(TerminalReason::Finished);
-            break;
-        }
         update_archive_ledger(&mut archive_ledger, &next_step_context);
         last_step_context = next_step_context;
 
@@ -744,16 +752,33 @@ pub async fn run_step_executor_loop(
         } else {
             match phase {
                 Phase::Entry => {
-                    // An entry-hop Send (typed `<Tool>SendStep`, no Open) runs via auto-open and,
-                    // for OneShot+Strict tools, auto-finish (see `execute_tool_session_plan`), so it
-                    // returns Done with the session already closed. Stay in Entry — stateless
-                    // resend: the next hop emits another Send or a ReadOnlyFinish to end the turn.
-                    // A one-shot therefore never enters Active (no Open → no `Phase::Active`).
-                    // Entry archive reads (`@N`) also return Done and likewise continue here.
                     if matches!(status, StepStatus::Done | StepStatus::Duplicate) {
-                        continue;
-                    }
-                    if status == StepStatus::Finished {
+                        if matches!(last_step_context.op, Some("send") | Some("duplicate_send")) {
+                            // A direct Send has no open session to bind, but its receipt is the
+                            // authoritative producing-tool binding. A completed Send without one
+                            // would reopen Entry and make the old repeat-Send loop possible.
+                            let receipt = last_step_context.receipt.as_ref().ok_or_else(|| {
+                                BamlRtError::InvalidArgument(format!(
+                                    "step executor contract violation ({current_function}): \
+                                     completed Send did not provide an archive receipt"
+                                ))
+                            })?;
+                            let tool = tool_binding_from_receipt(receipt).ok_or_else(|| {
+                                BamlRtError::InvalidArgument(format!(
+                                    "step executor contract violation ({current_function}): \
+                                     completed Send receipt has invalid tool name {:?}",
+                                    receipt.tool_name
+                                ))
+                            })?;
+                            Phase::Consume {
+                                tool,
+                                return_to: ConsumeReturn::Entry,
+                            }
+                        } else {
+                            // Entry archive reads are already legal and do not create a receipt.
+                            Phase::Entry
+                        }
+                    } else if status == StepStatus::Finished {
                         Phase::Terminal(TerminalReason::Finished)
                     } else if status == StepStatus::Aborted {
                         Phase::Terminal(TerminalReason::Aborted)
@@ -810,10 +835,35 @@ pub async fn run_step_executor_loop(
                         );
                         let send_completed =
                             matches!(inferred.op, Some("send") | Some("duplicate_send"));
-                        Phase::Active {
-                            tool,
-                            has_done: has_done || send_completed,
+                        if send_completed {
+                            Phase::Consume {
+                                tool,
+                                return_to: ConsumeReturn::Active,
+                            }
+                        } else {
+                            Phase::Active { tool, has_done }
                         }
+                    }
+                },
+                Phase::Consume { tool, return_to } => match status {
+                    StepStatus::Finished => Phase::Terminal(TerminalReason::Finished),
+                    StepStatus::Aborted => Phase::Terminal(TerminalReason::Aborted),
+                    StepStatus::Done
+                    | StepStatus::Sent
+                    | StepStatus::Streaming
+                    | StepStatus::Suspended
+                    | StepStatus::Duplicate => match return_to {
+                        ConsumeReturn::Entry => Phase::Entry,
+                        ConsumeReturn::Active => Phase::Active {
+                            tool,
+                            has_done: true,
+                        },
+                    },
+                    StepStatus::Open => {
+                        return Err(BamlRtError::InvalidArgument(format!(
+                            "step executor contract violation ({current_function}): \
+                             Open is invalid while consuming an archived result"
+                        )));
                     }
                 },
                 Phase::Terminal(_) => break,
@@ -825,8 +875,19 @@ pub async fn run_step_executor_loop(
         }
     }
 
-    if matches!(phase, Phase::Entry | Phase::Active { .. }) && steps.len() >= max_steps {
-        phase = Phase::Terminal(TerminalReason::MaxStepsExhausted);
+    if matches!(
+        phase,
+        Phase::Entry | Phase::Active { .. } | Phase::Consume { .. }
+    ) && steps.len() >= max_steps
+    {
+        return Err(BamlRtError::from(
+            baml_rt_core::StepPlanRecovery::max_steps_exhausted(
+                format!("{phase:?}"),
+                last_step_context.op.unwrap_or("unknown"),
+                last_step_context.archive_ref.as_deref(),
+                steps.len(),
+            ),
+        ));
     }
 
     let session_context = build_session_context(&phase, &last_step_context, &archive_ledger);
@@ -842,9 +903,12 @@ pub async fn run_step_executor_loop(
 
 #[cfg(test)]
 mod session_context_wire_tests {
+    use baml_rt_tools::{ToolName, archive_refs::ArchiveReceipt};
+
     use super::{
-        LastStepContext, Phase, SESSION_CONTEXT_CONTRACT_VERSION, SessionContextWire,
-        SessionStatus, build_session_context, update_archive_ledger,
+        ConsumeReturn, LastStepContext, Phase, SESSION_CONTEXT_CONTRACT_VERSION,
+        SessionContextWire, SessionStatus, ToolBinding, build_session_context,
+        update_archive_ledger,
     };
 
     #[test]
@@ -858,13 +922,14 @@ mod session_context_wire_tests {
             last_archive_ref: Some("@1".to_string()),
             last_output_header: Some("@1 · \"tool: Send\" · 1L · 10B".to_string()),
             last_completion: Some("DONE".to_string()),
+            last_receipt: None,
             archives: vec![super::ArchiveLedgerEntry {
                 archive_ref: "@1".to_string(),
                 header: "tool: Send".to_string(),
             }],
         })
         .expect("serialize session_context");
-        assert_eq!(v["contract_version"], "session_context_v3");
+        assert_eq!(v["contract_version"], "session_context_v5");
         assert_eq!(v["session_open"], true);
         assert_eq!(v["status"], "done");
         assert_eq!(v["last_step_op"], "send");
@@ -882,46 +947,41 @@ mod session_context_wire_tests {
                 "@7 · mcp/grafana/query_prometheus:Send(expr=\"up\") · 7L · 2.8KB".to_string(),
             ),
             completion: None,
+            receipt: Some(ArchiveReceipt {
+                archive_ref: "@7".to_string(),
+                tool_name: "mcp/grafana/query_prometheus".to_string(),
+                action_identity: "Send(expr=\"up\")".to_string(),
+                line_count: 7,
+                byte_count: 2_800,
+                size_display: "2.7KB".to_string(),
+                completion: "done".to_string(),
+                search_hints: vec!["id".to_string(), "status".to_string()],
+            }),
         };
         let mut archives = Vec::new();
         update_archive_ledger(&mut archives, &last);
-        let v = build_session_context(&Phase::Entry, &last, &archives);
-        assert_eq!(v["contract_version"], "session_context_v3");
+        let name = ToolName::parse("mcp/grafana/query_prometheus").expect("valid tool");
+        let phase = Phase::Consume {
+            tool: ToolBinding {
+                slug: name.slug(),
+                name,
+            },
+            return_to: ConsumeReturn::Entry,
+        };
+        let v = build_session_context(&phase, &last, &archives);
+        assert_eq!(v["contract_version"], "session_context_v5");
         assert_eq!(v["session_open"], false);
         assert_eq!(v["status"], "result_ready");
+        assert_eq!(v["last_receipt"]["archive_ref"], "@7");
+        assert_eq!(v["last_receipt"]["completion"], "done");
+        assert_eq!(
+            v["last_receipt"]["search_hints"],
+            serde_json::json!(["id", "status"])
+        );
         assert_eq!(v["archives"][0]["archive_ref"], "@7");
         assert_eq!(
             v["archives"][0]["header"],
             "mcp/grafana/query_prometheus:Send(expr=\"up\")"
         );
-    }
-
-    #[test]
-    fn redundant_repeat_send_detects_identical_input_after_done() {
-        use super::{LastStepContext, StepStatus, is_redundant_repeat_send};
-
-        let send_input = serde_json::json!({"block_id": "abc", "raw_blocks": "Enriched"});
-        let prior_send = serde_json::json!({
-            "op": "Send",
-            "input": send_input,
-            "status": "done",
-            "archive_ref": "@1",
-        });
-        let repeat_send = serde_json::json!({
-            "op": "Send",
-            "input": send_input,
-        });
-        let last = LastStepContext {
-            op: Some("send"),
-            status: Some(StepStatus::Done.as_str()),
-            archive_ref: Some("@1".to_string()),
-            output_header: None,
-            completion: None,
-        };
-        assert!(is_redundant_repeat_send(
-            &repeat_send,
-            &last,
-            std::slice::from_ref(&prior_send),
-        ));
     }
 }

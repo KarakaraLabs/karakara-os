@@ -129,12 +129,24 @@ class ArchiveLedgerEntry {{
   header string @description("Compact tool/action identity for this Send, without result body")
 }}
 
+class ArchiveReceipt {{
+  archive_ref string @description("Resolvable archive handle from a completed Send")
+  tool_name string @description("Qualified tool name that produced this archive")
+  action_identity string @description("Bounded Send action and input identity, without result body")
+  line_count int @description("Rendered archive line count")
+  byte_count int @description("Rendered archive byte count")
+  size_display string @description("Human-readable rendered archive size")
+  completion string @description("Completion state for the archived Send")
+  search_hints string[]? @description("Trusted searchable field names when supplied by tool metadata")
+}}
+
 /// Runtime session state injected by the step-executor loop.
 /// Do not construct manually — values come from the FSM.
 class SessionContext {{
   contract_version string
   session_open bool
   status string @description("FSM status: awaiting_open | just_opened | result_ready | done. result_ready means previous direct Send completed and its archive is available; read it or move on, do not re-Send same input.")
+  last_receipt ArchiveReceipt? @description("Latest completed Send receipt. The archive body is not in this object.")
   last_step_op string? @description("Previous FSM step op when known: open | send | duplicate_send | read | finish | abort")
   last_step_status string? @description("Previous FSM step status when known: open | done | duplicate | finished | aborted")
   last_archive_ref string? @description("Archive ref from the previous Send when available, e.g. @4")
