@@ -24,8 +24,8 @@ use super::{
     ToolSchemaContract, ToolSchemaGraph, ToolSchemaRole, classify_open_input,
     diagnostics::{external_reference, unsupported_json_schema, unsupported_named_schema},
     names::{
-        enum_variant_identifier, is_reserved_symbol, is_valid_identifier, sanitize_identifier,
-        to_pascal_case,
+        enum_variant_identifier, field_identifier, is_reserved_symbol, is_valid_identifier,
+        sanitize_identifier, to_pascal_case,
     },
 };
 use crate::builder::error::{BamlBuilderError, Result};
@@ -973,12 +973,7 @@ impl GraphBuilder {
                 .and_then(|o| o.get("description"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let identifier = if is_valid_identifier(prop_name) {
-                prop_name.clone()
-            } else {
-                sanitize_identifier(prop_name)
-            };
-            let identifier = unique_identifier(identifier, &mut field_identifiers);
+            let identifier = unique_identifier(field_identifier(prop_name), &mut field_identifiers);
             fields.push(SchemaField {
                 wire_name: prop_name.clone(),
                 preferred_identifier: identifier,

@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "name": "typesafe-system-one-authority",
+  "entry_point": "src/index.ts",
+  "signature": "typesafe-system-one-authority@1.0.0",
+  "tools": [
+    "typesafe/system_one"
+  ],
+  "discovery": {
+    "description": "Authority fixture for generated System One contracts",
+    "capabilities": [
+      "typesafe:system-one"
+    ]
+  },
+  "tags": [
+    "fixture"
+  ]
+}

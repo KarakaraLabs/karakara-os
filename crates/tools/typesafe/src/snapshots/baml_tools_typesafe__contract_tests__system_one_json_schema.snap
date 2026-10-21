@@ -13,105 +13,7 @@ expression: schema
       "questions": {
         "type": "object",
         "additionalProperties": {
-          "oneOf": [
-            {
-              "type": "object",
-              "title": "ChoiceQuestion",
-              "properties": {
-                "instructions": {
-                  "x-baml-type": "OpaqueJson",
-                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                },
-                "criteria": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "x-baml-type": "OpaqueJson",
-                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                  }
-                },
-                "type": {
-                  "type": "string",
-                  "const": "choice"
-                }
-              },
-              "required": [
-                "instructions",
-                "criteria",
-                "type"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "title": "ScoreQuestion",
-              "properties": {
-                "instructions": {
-                  "x-baml-type": "OpaqueJson",
-                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                },
-                "criteria": {
-                  "type": "array",
-                  "items": {
-                    "x-baml-type": "OpaqueJson",
-                    "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                  }
-                },
-                "type": {
-                  "type": "string",
-                  "const": "score"
-                }
-              },
-              "required": [
-                "instructions",
-                "criteria",
-                "type"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "instructions": {
-                  "x-baml-type": "OpaqueJson",
-                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                },
-                "criteria": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "true": {
-                          "x-baml-type": "OpaqueJson",
-                          "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                        },
-                        "false": {
-                          "x-baml-type": "OpaqueJson",
-                          "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
-                        }
-                      },
-                      "required": [
-                        "true",
-                        "false"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "type": {
-                  "type": "string",
-                  "const": "noul"
-                }
-              },
-              "required": [
-                "instructions",
-                "type"
-              ]
-            }
-          ]
+          "$ref": "#/definitions/SystemOneQuestion"
         }
       },
       "model": {
@@ -141,13 +43,121 @@ expression: schema
       "questions"
     ],
     "additionalProperties": false,
+    "definitions": {
+      "SystemOneQuestion": {
+        "title": "SystemOneQuestion",
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "ChoiceQuestion",
+            "additionalProperties": false,
+            "properties": {
+              "instructions": {
+                "x-baml-type": "OpaqueJson",
+                "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+              },
+              "criteria": {
+                "type": "object",
+                "additionalProperties": {
+                  "x-baml-type": "OpaqueJson",
+                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                }
+              },
+              "type": {
+                "type": "string",
+                "const": "choice"
+              }
+            },
+            "required": [
+              "instructions",
+              "criteria",
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "ScoreQuestion",
+            "additionalProperties": false,
+            "properties": {
+              "instructions": {
+                "x-baml-type": "OpaqueJson",
+                "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+              },
+              "criteria": {
+                "type": "array",
+                "items": {
+                  "x-baml-type": "OpaqueJson",
+                  "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                }
+              },
+              "type": {
+                "type": "string",
+                "const": "score"
+              }
+            },
+            "required": [
+              "instructions",
+              "criteria",
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "NoulQuestion",
+            "additionalProperties": false,
+            "properties": {
+              "instructions": {
+                "x-baml-type": "OpaqueJson",
+                "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+              },
+              "criteria": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "title": "NoulCriteria",
+                    "properties": {
+                      "true": {
+                        "x-baml-type": "OpaqueJson",
+                        "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                      },
+                      "false": {
+                        "x-baml-type": "OpaqueJson",
+                        "description": "Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper."
+                      }
+                    },
+                    "required": [
+                      "true",
+                      "false"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "const": "noul"
+              }
+            },
+            "required": [
+              "instructions",
+              "type"
+            ]
+          }
+        ]
+      }
+    },
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "question": {
+    "title": "SystemOneQuestion",
     "oneOf": [
       {
         "type": "object",
         "title": "ChoiceQuestion",
+        "additionalProperties": false,
         "properties": {
           "instructions": {
             "x-baml-type": "OpaqueJson",
@@ -169,12 +179,12 @@ expression: schema
           "instructions",
           "criteria",
           "type"
-        ],
-        "additionalProperties": false
+        ]
       },
       {
         "type": "object",
         "title": "ScoreQuestion",
+        "additionalProperties": false,
         "properties": {
           "instructions": {
             "x-baml-type": "OpaqueJson",
@@ -196,11 +206,11 @@ expression: schema
           "instructions",
           "criteria",
           "type"
-        ],
-        "additionalProperties": false
+        ]
       },
       {
         "type": "object",
+        "title": "NoulQuestion",
         "additionalProperties": false,
         "properties": {
           "instructions": {
@@ -211,6 +221,7 @@ expression: schema
             "anyOf": [
               {
                 "type": "object",
+                "title": "NoulCriteria",
                 "properties": {
                   "true": {
                     "x-baml-type": "OpaqueJson",
@@ -254,90 +265,14 @@ expression: schema
       "answers": {
         "type": "object",
         "additionalProperties": {
-          "oneOf": [
-            {
-              "type": "object",
-              "title": "ChoiceAnswer",
-              "properties": {
-                "choice": {
-                  "type": "string"
-                },
-                "probabilities": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  }
-                },
-                "confidence": {
-                  "type": "number"
-                },
-                "type": {
-                  "type": "string",
-                  "const": "choice"
-                }
-              },
-              "required": [
-                "choice",
-                "probabilities",
-                "confidence",
-                "type"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "title": "ScoreAnswer",
-              "properties": {
-                "score": {
-                  "type": "number"
-                },
-                "probabilities": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "number"
-                  }
-                },
-                "confidence": {
-                  "type": "number"
-                },
-                "type": {
-                  "type": "string",
-                  "const": "score"
-                }
-              },
-              "required": [
-                "score",
-                "probabilities",
-                "confidence",
-                "type"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "title": "NoulAnswer",
-              "properties": {
-                "noul": {
-                  "type": "number"
-                },
-                "type": {
-                  "type": "string",
-                  "const": "noul"
-                }
-              },
-              "required": [
-                "noul",
-                "type"
-              ],
-              "additionalProperties": false
-            }
-          ]
+          "$ref": "#/definitions/SystemOneAnswer"
         }
       },
       "usage": {
         "anyOf": [
           {
             "type": "object",
+            "title": "SystemOneUsage",
             "properties": {
               "input_tokens": {
                 "anyOf": [
@@ -375,13 +310,98 @@ expression: schema
       "answers"
     ],
     "additionalProperties": false,
+    "definitions": {
+      "SystemOneAnswer": {
+        "title": "SystemOneAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "ChoiceAnswer",
+            "additionalProperties": false,
+            "properties": {
+              "choice": {
+                "type": "string"
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              },
+              "confidence": {
+                "type": "number"
+              },
+              "type": {
+                "type": "string",
+                "const": "choice"
+              }
+            },
+            "required": [
+              "choice",
+              "probabilities",
+              "confidence",
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "ScoreAnswer",
+            "additionalProperties": false,
+            "properties": {
+              "score": {
+                "type": "number"
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              },
+              "confidence": {
+                "type": "number"
+              },
+              "type": {
+                "type": "string",
+                "const": "score"
+              }
+            },
+            "required": [
+              "score",
+              "probabilities",
+              "confidence",
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "NoulAnswer",
+            "additionalProperties": false,
+            "properties": {
+              "noul": {
+                "type": "number"
+              },
+              "type": {
+                "type": "string",
+                "const": "noul"
+              }
+            },
+            "required": [
+              "noul",
+              "type"
+            ]
+          }
+        ]
+      }
+    },
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "answer": {
+    "title": "SystemOneAnswer",
     "oneOf": [
       {
         "type": "object",
         "title": "ChoiceAnswer",
+        "additionalProperties": false,
         "properties": {
           "choice": {
             "type": "string"
@@ -405,12 +425,12 @@ expression: schema
           "probabilities",
           "confidence",
           "type"
-        ],
-        "additionalProperties": false
+        ]
       },
       {
         "type": "object",
         "title": "ScoreAnswer",
+        "additionalProperties": false,
         "properties": {
           "score": {
             "type": "number"
@@ -434,12 +454,12 @@ expression: schema
           "probabilities",
           "confidence",
           "type"
-        ],
-        "additionalProperties": false
+        ]
       },
       {
         "type": "object",
         "title": "NoulAnswer",
+        "additionalProperties": false,
         "properties": {
           "noul": {
             "type": "number"
@@ -452,8 +472,7 @@ expression: schema
         "required": [
           "noul",
           "type"
-        ],
-        "additionalProperties": false
+        ]
       }
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"

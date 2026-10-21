@@ -70,15 +70,6 @@ fn tagged_variant_schema<T: JsonSchemaType>(tag_value: &str) -> Value {
     Value::Object(schema)
 }
 
-fn tagged_union_ts_decl(type_name: &str, variants: &[(&str, &str)]) -> String {
-    let union = variants
-        .iter()
-        .map(|(tag, payload)| format!("({{ type: \"{tag}\" }} & {payload})"))
-        .collect::<Vec<_>>()
-        .join(" | ");
-    format!("export type {type_name} = {union};")
-}
-
 fn optional_schema(inner: Value) -> Value {
     json!({ "anyOf": [inner, { "type": "null" }] })
 }
@@ -267,10 +258,7 @@ impl TsType for SystemOneInput {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(
-            "export interface SystemOneInput { state: OpaqueJson; questions: Record<string, SystemOneQuestion>; model?: string | null; timeout_ms?: number | null; }"
-                .to_string(),
-        )
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -286,13 +274,16 @@ impl JsonSchemaType for SystemOneInput {
                 "state": OpaqueJson::json_schema_inline(),
                 "questions": {
                     "type": "object",
-                    "additionalProperties": SystemOneQuestion::json_schema_inline()
+                    "additionalProperties": { "$ref": "#/definitions/SystemOneQuestion" }
                 },
                 "model": optional_schema(json!({ "type": "string" })),
                 "timeout_ms": optional_schema(json!({ "type": "integer", "minimum": 0 }))
             },
             "required": ["state", "questions"],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "definitions": {
+                "SystemOneQuestion": SystemOneQuestion::json_schema_inline()
+            }
         })
     }
 }
@@ -323,14 +314,7 @@ impl TsType for SystemOneQuestion {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(tagged_union_ts_decl(
-            Self::ts_type_name(),
-            &[
-                ("choice", "ChoiceQuestion"),
-                ("score", "ScoreQuestion"),
-                ("noul", "NoulQuestion"),
-            ],
-        ))
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -341,6 +325,7 @@ impl TsType for SystemOneQuestion {
 impl JsonSchemaType for SystemOneQuestion {
     fn json_schema_inline() -> Value {
         json!({
+            "title": "SystemOneQuestion",
             "oneOf": [
                 tagged_variant_schema::<ChoiceQuestion>("choice"),
                 tagged_variant_schema::<ScoreQuestion>("score"),
@@ -378,10 +363,7 @@ impl TsType for NoulQuestion {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(
-            "export interface NoulQuestion { instructions: OpaqueJson; criteria?: NoulCriteria | null; }"
-                .to_string(),
-        )
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -393,6 +375,7 @@ impl JsonSchemaType for NoulQuestion {
     fn json_schema_inline() -> Value {
         json!({
             "type": "object",
+            "title": "NoulQuestion",
             "properties": {
                 "instructions": OpaqueJson::json_schema_inline(),
                 "criteria": optional_schema(NoulCriteria::json_schema_inline())
@@ -418,7 +401,7 @@ impl TsType for NoulCriteria {
     }
 
     fn ts_decl() -> Option<String> {
-        Some("export interface NoulCriteria { true: OpaqueJson; false: OpaqueJson; }".to_string())
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -430,6 +413,7 @@ impl JsonSchemaType for NoulCriteria {
     fn json_schema_inline() -> Value {
         json!({
             "type": "object",
+            "title": "NoulCriteria",
             "properties": {
                 "true": OpaqueJson::json_schema_inline(),
                 "false": OpaqueJson::json_schema_inline()
@@ -456,10 +440,7 @@ impl TsType for SystemOneOutput {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(
-            "export interface SystemOneOutput { model: string; answers: Record<string, SystemOneAnswer>; usage?: SystemOneUsage | null; }"
-                .to_string(),
-        )
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -475,12 +456,15 @@ impl JsonSchemaType for SystemOneOutput {
                 "model": { "type": "string" },
                 "answers": {
                     "type": "object",
-                    "additionalProperties": SystemOneAnswer::json_schema_inline()
+                    "additionalProperties": { "$ref": "#/definitions/SystemOneAnswer" }
                 },
                 "usage": optional_schema(SystemOneUsage::json_schema_inline())
             },
             "required": ["model", "answers"],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "definitions": {
+                "SystemOneAnswer": SystemOneAnswer::json_schema_inline()
+            }
         })
     }
 }
@@ -511,14 +495,7 @@ impl TsType for SystemOneAnswer {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(tagged_union_ts_decl(
-            Self::ts_type_name(),
-            &[
-                ("choice", "ChoiceAnswer"),
-                ("score", "ScoreAnswer"),
-                ("noul", "NoulAnswer"),
-            ],
-        ))
+        None
     }
 
     fn ts_dependencies() -> Vec<&'static str> {
@@ -529,6 +506,7 @@ impl TsType for SystemOneAnswer {
 impl JsonSchemaType for SystemOneAnswer {
     fn json_schema_inline() -> Value {
         json!({
+            "title": "SystemOneAnswer",
             "oneOf": [
                 tagged_variant_schema::<ChoiceAnswer>("choice"),
                 tagged_variant_schema::<ScoreAnswer>("score"),
@@ -575,10 +553,7 @@ impl TsType for SystemOneUsage {
     }
 
     fn ts_decl() -> Option<String> {
-        Some(
-            "export interface SystemOneUsage { input_tokens?: number | null; output_tokens?: number | null; }"
-                .to_string(),
-        )
+        None
     }
 }
 
@@ -586,6 +561,7 @@ impl JsonSchemaType for SystemOneUsage {
     fn json_schema_inline() -> Value {
         json!({
             "type": "object",
+            "title": "SystemOneUsage",
             "properties": {
                 "input_tokens": optional_schema(json!({ "type": "integer", "minimum": 0 })),
                 "output_tokens": optional_schema(json!({ "type": "integer", "minimum": 0 }))

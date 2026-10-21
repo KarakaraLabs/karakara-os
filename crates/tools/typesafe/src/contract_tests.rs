@@ -10,7 +10,6 @@ use std::{
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
-use baml_derive_core::TsType;
 use baml_rt_core::{
     BamlRtError, ErrorDisposition,
     context::{InvocationScope, RuntimeScope},
@@ -531,7 +530,7 @@ async fn oversized_request_fails_validation_before_call_controls() {
 }
 
 #[test]
-fn schema_and_typescript_cover_all_question_and_answer_variants() {
+fn schema_covers_all_question_and_answer_variants() {
     let schema = json!({
         "input": json_schema_value::<SystemOneInput>(),
         "question": json_schema_value::<SystemOneQuestion>(),
@@ -546,33 +545,6 @@ fn schema_and_typescript_cover_all_question_and_answer_variants() {
         );
     }
     insta::assert_json_snapshot!("system_one_json_schema", schema);
-
-    let declarations = [
-        <OpaqueJson as TsType>::ts_decl(),
-        <ChoiceQuestion as TsType>::ts_decl(),
-        <ScoreQuestion as TsType>::ts_decl(),
-        <NoulCriteria as TsType>::ts_decl(),
-        <NoulQuestion as TsType>::ts_decl(),
-        <SystemOneQuestion as TsType>::ts_decl(),
-        <SystemOneInput as TsType>::ts_decl(),
-        <ChoiceAnswer as TsType>::ts_decl(),
-        <ScoreAnswer as TsType>::ts_decl(),
-        <NoulAnswer as TsType>::ts_decl(),
-        <SystemOneAnswer as TsType>::ts_decl(),
-        <SystemOneUsage as TsType>::ts_decl(),
-        <SystemOneOutput as TsType>::ts_decl(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join("\n");
-    for tag in ["choice", "score", "noul"] {
-        assert!(
-            declarations.contains(&format!("type: \"{tag}\"")),
-            "TypeScript must contain the {tag} variant"
-        );
-    }
-    insta::assert_snapshot!("system_one_typescript", declarations);
 }
 
 #[test]

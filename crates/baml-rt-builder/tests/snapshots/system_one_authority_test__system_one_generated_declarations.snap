@@ -1,0 +1,67 @@
+---
+source: crates/baml-rt-builder/tests/system_one_authority_test.rs
+expression: "declaration_excerpt(&declarations,\n&[\"SystemOneInput\", \"SystemOneQuestion\", \"ChoiceQuestion\", \"ScoreQuestion\",\n\"NoulQuestion\", \"NoulCriteria\", \"SystemOneOutput\", \"SystemOneAnswer\",\n\"ChoiceAnswer\", \"ScoreAnswer\", \"NoulAnswer\", \"SystemOneUsage\",],)"
+---
+export interface SystemOneInput {
+  state: JsonValue;
+  questions: Record<string, SystemOneQuestion>;
+  model?: string | null;
+  timeout_ms?: number | null;
+}
+
+export type SystemOneQuestion = ChoiceQuestion | ScoreQuestion | NoulQuestion;
+
+export interface ChoiceQuestion {
+  instructions: JsonValue;
+  criteria: Record<string, JsonValue>;
+  type: "choice";
+}
+
+export interface ScoreQuestion {
+  instructions: JsonValue;
+  criteria: JsonValue[];
+  type: "score";
+}
+
+export interface NoulQuestion {
+  instructions: JsonValue;
+  criteria?: NoulCriteria | null;
+  type: "noul";
+}
+
+export interface NoulCriteria {
+  true: JsonValue;
+  false: JsonValue;
+}
+
+export interface SystemOneOutput {
+  model: string;
+  answers: Record<string, SystemOneAnswer>;
+  usage?: SystemOneUsage | null;
+}
+
+export type SystemOneAnswer = ChoiceAnswer | ScoreAnswer | NoulAnswer;
+
+export interface ChoiceAnswer {
+  choice: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+  type: "choice";
+}
+
+export interface ScoreAnswer {
+  score: number;
+  probabilities: Record<string, number>;
+  confidence: number;
+  type: "score";
+}
+
+export interface NoulAnswer {
+  noul: number;
+  type: "noul";
+}
+
+export interface SystemOneUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+}
