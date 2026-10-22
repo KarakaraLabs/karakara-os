@@ -105,12 +105,12 @@ impl ConversationContextBatch<Canonical> {
     }
 }
 
-/// Derives [`crate::store::SessionStepContent::read_replay_lines`] for archive read ops from an earlier
+/// Derives [`crate::store::SessionStepContent::read_replay_payload`] for archive read ops from an earlier
 /// `SendDone`’s hydrated replay payload in the same conversation batch. Pure derivation (no I/O).
 ///
-/// Each line is a **raw rendered archive line** (the same as [`ArchiveEntry::content`] / `render_to_lines`),
-/// not a pre-formatted `cat -n` / `grep -n` session read block. Prompt projection and episode re-apply
-/// [`baml_rt_tools::archive_read::format_session_read_body_from_rendered`].
+/// Stores the raw `SendDone` `tool_result` JSON; prompt projection and episode re-render it via
+/// `render_to_lines` and re-apply
+/// [`baml_rt_tools::archive_read::format_session_read_body_from_rendered`], preserving record spans.
 fn hydrate_session_step_read_replays(items: &mut [ProvenanceConversationContextItem]) {
     for i in 0..items.len() {
         let archive_ref = {
@@ -143,18 +143,13 @@ fn hydrate_session_step_read_replays(items: &mut [ProvenanceConversationContextI
         let Some(val) = base else {
             continue;
         };
-        let rendered = render_to_lines(&val);
-        if rendered.is_empty() {
-            continue;
-        }
-        let lines: Vec<String> = rendered.lines().map(str::to_string).collect();
-        if lines.is_empty() {
+        if render_to_lines(&val).is_empty() {
             continue;
         }
         let ConversationItemContent::SessionStep(ss) = &mut items[i].content else {
             continue;
         };
-        ss.read_replay_lines = Some(lines);
+        ss.read_replay_payload = Some(val);
     }
 }
 
@@ -205,7 +200,7 @@ mod tests {
                         informed_by: anchor.as_str().to_string(),
                     },
                     send_done_replay_payload: None,
-                    read_replay_lines: None,
+                    read_replay_payload: None,
                 }),
                 user_speaker_kind: None,
             },

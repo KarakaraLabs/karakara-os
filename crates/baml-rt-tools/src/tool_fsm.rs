@@ -96,6 +96,11 @@ impl SessionPhase {
     }
 }
 
+/// Stable classification code for a delegated-agent terminal failure (failed/canceled/rejected).
+/// Surfaced to the caller as a correctable delegation error — never auto-retried, never a
+/// successful archive.
+pub const A2A_DELEGATION_FAILED_CODE: &str = "a2a_delegation_failed";
+
 impl ToolFailure {
     pub fn invalid_input(message: impl Into<String>) -> Self {
         let message = message.into();
@@ -122,6 +127,30 @@ impl ToolFailure {
             disposition: baml_rt_core::semantics::ErrorDisposition::Fatal,
             message: message.clone(),
             hint: None,
+            retry_after_ms: None,
+        };
+        let retryability = classified.host_retryability();
+        Self {
+            kind: ToolFailureKind::ExecutionFailed,
+            message,
+            retryability,
+            classified,
+        }
+    }
+
+    /// A delegated agent reached a terminal failure state (failed/canceled/rejected).
+    ///
+    /// Tagged with [`A2A_DELEGATION_FAILED_CODE`] and classified as correctable so the step loop
+    /// surfaces it as a delegation failure rather than an auto-retried or fatal tool error.
+    pub fn a2a_delegation_failed(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let classified = ClassifiedToolError {
+            code: A2A_DELEGATION_FAILED_CODE.to_string(),
+            disposition: ErrorDisposition::LlmCorrectable,
+            message: message.clone(),
+            hint: Some(
+                "The delegated agent could not complete the request; re-ask to retry.".to_string(),
+            ),
             retry_after_ms: None,
         };
         let retryability = classified.host_retryability();

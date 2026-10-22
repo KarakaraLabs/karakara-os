@@ -4,8 +4,11 @@
 
 // FSM execution for typed ToolSessionPlan fragments (Open/Send/Read/Finish/Abort).
 
-use baml_rt_core::semantics::ErrorDisposition;
-use baml_rt_tools::{ToolFailure, should_host_retry, tool_failure_to_baml_tool_execution_error};
+use baml_rt_core::{StepPlanRecovery, semantics::ErrorDisposition};
+use baml_rt_tools::{
+    A2A_DELEGATION_FAILED_CODE, ToolFailure, should_host_retry,
+    tool_failure_to_baml_tool_execution_error,
+};
 
 use super::{BamlRuntimeManager, ToolSessionOp, ToolSessionPlan, manager_prelude::*, open_input};
 use crate::{
@@ -87,6 +90,7 @@ fn send_done_json(send_result: &SendResult) -> Value {
         "status": "done",
         "output": send_result.header,
         "archive_ref": send_result.archive_ref.to_string(),
+        "receipt": send_result.receipt,
         "result": send_result.output.clone(),
     })
 }
@@ -94,12 +98,14 @@ fn send_done_json(send_result: &SendResult) -> Value {
 fn duplicate_send_json(
     archive_ref: baml_rt_tools::archive_read::ShortRef,
     header: String,
+    receipt: baml_rt_tools::archive_refs::ArchiveReceipt,
 ) -> Value {
     serde_json::json!({
         "status": "duplicate",
         "op": "DuplicateSend",
         "archive_ref": archive_ref.to_string(),
         "output": header,
+        "receipt": receipt,
         "duplicate": true,
         "message": format!(
             "Identical Send already materialized as {archive_ref}; read it instead of re-issuing."
@@ -198,6 +204,26 @@ impl BamlRuntimeManager {
         )))
     }
 
+    /// Clear the durable duplicate guard for a Send whose result was consumed.
+    pub(crate) async fn mark_archive_send_consumed(
+        &self,
+        context_id: &baml_rt_core::ids::ContextId,
+        archive_ref: baml_rt_tools::archive_read::ShortRef,
+    ) -> Result<()> {
+        if let Some(store) = self.state.archive_ref_store.as_ref() {
+            store
+                .archive_mark_send_consumed(context_id, archive_ref)
+                .await
+                .map_err(map_archive_provenance_err)?;
+        }
+        let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
+            &self.state.archive_ref_tables,
+            context_id.as_str(),
+        );
+        ref_table.mark_send_consumed(archive_ref);
+        Ok(())
+    }
+
     pub(in crate::baml) async fn execute_archive_read_plan(
         &self,
         scope: &context::RuntimeScope,
@@ -277,27 +303,53 @@ impl BamlRuntimeManager {
             }
             Err(other) => return Err(other),
         };
+        self.mark_archive_send_consumed(scope.context_id(), archive_ref)
+            .await?;
         let archive_ref_str = archive_ref.to_string();
         let grep_raw = grep.as_ref().map(|g| g.pattern_text().to_string());
-        let page = baml_rt_tools::archive_read::grep_paginate(
-            &entry.content,
-            grep.as_ref(),
-            offset,
-            limit,
-        );
-        let body = baml_rt_tools::archive_read::format_session_read_body_from_rendered(
-            &entry.content,
-            &archive_ref_str,
-            grep_raw.as_deref(),
-            offset.0,
-            limit,
-        );
+        // A read that reports `has_more` is not a complete input for a later model hop. Consume
+        // the remaining pages here, using the source cursor, so the model cannot accidentally
+        // synthesize a final answer from a partial archive.
+        let mut current_offset = offset;
+        let mut bodies = Vec::new();
+        let mut materialized_pages = 0usize;
+        let next_offset = loop {
+            let page = baml_rt_tools::archive_read::grep_paginate(
+                &entry.content,
+                grep.as_ref(),
+                current_offset,
+                limit,
+            );
+            // The page renderer normally tells an LLM how to fetch another page. This host loop
+            // already does that, so render each materialized page without a stale continuation
+            // instruction.
+            let mut display_page = page.clone();
+            display_page.has_more = false;
+            bodies.push(
+                baml_rt_tools::archive_read::format_grep_page_as_session_read_body(
+                    &display_page,
+                    &archive_ref_str,
+                    grep_raw.as_deref(),
+                ),
+            );
+            materialized_pages += 1;
+            if !page.has_more {
+                break page.next_offset;
+            }
+            if page.next_offset <= current_offset.0 {
+                return Err(BamlRtError::InvalidArgument(format!(
+                    "{op_name} {archive_ref} reported has_more without advancing its cursor"
+                )));
+            }
+            current_offset = baml_rt_tools::archive_read::LineOffset(page.next_offset);
+        };
         let header = entry.display_header(archive_ref);
         let read_output = serde_json::json!({
             "status": "done",
-            "output": format!("{header}\n{body}"),
-            "has_more": page.has_more,
-            "next_offset": page.next_offset,
+            "output": format!("{header}\n{}", bodies.join("\n")),
+            "has_more": false,
+            "next_offset": next_offset,
+            "materialized_pages": materialized_pages,
         });
 
         if let Some(emitter) = self.effect_emitter_for_tool_effects() {
@@ -389,13 +441,15 @@ impl BamlRuntimeManager {
                 &self.state.archive_ref_tables,
                 plan_scope.context_id().as_str(),
             );
-            if let Some((archive_ref, header)) = ref_table.find_by_send_signature(&signature) {
+            if let Some((archive_ref, header, receipt)) =
+                ref_table.find_receipt_by_send_signature(&signature)
+            {
                 tracing::warn!(
                     tool = %tool_name_str,
                     archive_ref = %archive_ref,
                     "FSM step: duplicate Send suppressed"
                 );
-                return Ok(duplicate_send_json(archive_ref, header));
+                return Ok(duplicate_send_json(archive_ref, header, receipt));
             }
         }
 
@@ -555,15 +609,15 @@ impl BamlRuntimeManager {
                         &self.state.archive_ref_tables,
                         plan_scope.context_id().as_str(),
                     );
-                    if let Some((archive_ref, header)) =
-                        ref_table.find_by_send_signature(&signature)
+                    if let Some((archive_ref, header, receipt)) =
+                        ref_table.find_receipt_by_send_signature(&signature)
                     {
                         tracing::warn!(
                             tool = %tool_name_str,
                             archive_ref = %archive_ref,
                             "FSM step: duplicate Send suppressed"
                         );
-                        last_output = Some(duplicate_send_json(archive_ref, header));
+                        last_output = Some(duplicate_send_json(archive_ref, header, receipt));
                         send_completed = true;
                         continue;
                     }
@@ -635,6 +689,13 @@ impl BamlRuntimeManager {
                                 break;
                             }
                             Ok(ToolSessionSendBlockingOutcome::ToolFailed(failure)) => {
+                                // A delegated agent's terminal failure is a correctable
+                                // delegation error, not a tool retry and not a fatal stop.
+                                if failure.classified.code == A2A_DELEGATION_FAILED_CODE {
+                                    return Err(BamlRtError::from(
+                                        StepPlanRecovery::delegation_failed(&failure.message),
+                                    ));
+                                }
                                 let retry_classified = should_host_retry(&failure.classified)
                                     && host_attempt < MAX_HOST_RETRIES;
                                 if retry_classified {
@@ -727,51 +788,48 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
-                    let page = baml_rt_tools::archive_read::grep_paginate(
-                        &entry.content,
-                        Some(&grep),
-                        offset,
-                        limit,
-                    );
-                    let formatted = baml_rt_tools::archive_read::format_cat_n(&page.lines);
-                    let header = entry.display_header(archive_ref);
-                    let line_range = if page.lines.is_empty() {
-                        String::new()
-                    } else {
-                        let first = page
-                            .lines
-                            .first()
-                            .map(|l| l.original_line_number)
-                            .unwrap_or(1);
-                        let last = page
-                            .lines
-                            .last()
-                            .map(|l| l.original_line_number)
-                            .unwrap_or(1);
-                        let more = if page.has_more {
-                            let o = page.next_offset;
-                            let n = page.total_matched - page.next_offset;
-                            format!(
-                                "\n--- Not all lines shown — next step: SearchRead (grep) or PageRead {archive_ref} with offset={o} ({n} more lines — use offset={o} for next page) ---",
-                            )
-                        } else {
-                            String::new()
-                        };
-                        format!(
-                            "\nlines {first}-{last} of {}:\n{formatted}{more}",
-                            page.total_matched
-                        )
+                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
+                        .await?;
+                    let grep_str = grep.pattern_text().to_string();
+                    let mut current_offset = offset;
+                    let mut bodies = Vec::new();
+                    let mut materialized_pages = 0usize;
+                    let read_output = loop {
+                        let page = baml_rt_tools::archive_read::grep_paginate(
+                            &entry.content,
+                            Some(&grep),
+                            current_offset,
+                            limit,
+                        );
+                        bodies.push(
+                            baml_rt_tools::archive_read::format_grep_page_as_session_read_body(
+                                &page,
+                                &archive_ref.to_string(),
+                                Some(&grep_str),
+                            ),
+                        );
+                        materialized_pages += 1;
+                        if !page.has_more {
+                            let header = entry.display_header(archive_ref);
+                            let read_output = serde_json::json!({
+                                "status": "done",
+                                "output": format!("{header}\n{}", bodies.join("\n")),
+                                "has_more": false,
+                                "next_offset": page.next_offset,
+                                "materialized_pages": materialized_pages,
+                            });
+                            break read_output;
+                        }
+                        if page.next_offset <= current_offset.0 {
+                            return Err(BamlRtError::InvalidArgument(format!(
+                                "SearchRead {archive_ref} reported has_more without advancing its cursor"
+                            )));
+                        }
+                        current_offset = baml_rt_tools::archive_read::LineOffset(page.next_offset);
                     };
-                    let read_output = serde_json::json!({
-                        "status": "done",
-                        "output": format!("{header}{line_range}"),
-                        "has_more": page.has_more,
-                        "next_offset": page.next_offset,
-                    });
                     last_output = Some(read_output.clone());
 
                     if let Some(emitter) = self.effect_emitter_for_tool_effects() {
-                        let grep_str = grep.pattern_text().to_string();
                         let read_args = serde_json::json!({
                             "op": "SearchRead",
                             "archive_ref": archive_ref.to_string(),
@@ -847,46 +905,51 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
-                    let page = baml_rt_tools::archive_read::grep_paginate(
-                        &entry.content,
-                        None,
-                        offset,
-                        limit,
-                    );
-                    let formatted = baml_rt_tools::archive_read::format_cat_n(&page.lines);
+                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
+                        .await?;
+                    let mut current_offset = offset;
+                    let mut lines = Vec::new();
+                    let mut materialized_pages = 0usize;
+                    let (next_offset, total_matched) = loop {
+                        let page = baml_rt_tools::archive_read::grep_paginate(
+                            &entry.content,
+                            None,
+                            current_offset,
+                            limit,
+                        );
+                        lines.extend(page.lines);
+                        materialized_pages += 1;
+                        if !page.has_more {
+                            break (page.next_offset, page.total_matched);
+                        }
+                        if page.next_offset <= current_offset.0 {
+                            return Err(BamlRtError::InvalidArgument(format!(
+                                "PageRead {archive_ref} reported has_more without advancing its cursor"
+                            )));
+                        }
+                        current_offset = baml_rt_tools::archive_read::LineOffset(page.next_offset);
+                    };
+                    let formatted = baml_rt_tools::archive_read::format_cat_n(&lines);
                     let header = entry.display_header(archive_ref);
-                    let line_range = if page.lines.is_empty() {
+                    let line_range = if lines.is_empty() {
                         String::new()
                     } else {
-                        let first = page
-                            .lines
+                        let first = lines
                             .first()
-                            .map(|l| l.original_line_number)
+                            .map(|line| line.original_line_number)
                             .unwrap_or(1);
-                        let last = page
-                            .lines
+                        let last = lines
                             .last()
-                            .map(|l| l.original_line_number)
+                            .map(|line| line.original_line_number)
                             .unwrap_or(1);
-                        let more = if page.has_more {
-                            let o = page.next_offset;
-                            let n = page.total_matched - page.next_offset;
-                            format!(
-                                "\n--- Not all lines shown — next step: PageRead {archive_ref} with offset={o} ({n} more lines — use offset={o} for next page) ---",
-                            )
-                        } else {
-                            String::new()
-                        };
-                        format!(
-                            "\nlines {first}-{last} of {}:\n{formatted}{more}",
-                            page.total_matched
-                        )
+                        format!("\nlines {first}-{last} of {total_matched}:\n{formatted}")
                     };
                     let read_output = serde_json::json!({
                         "status": "done",
                         "output": format!("{header}{line_range}"),
-                        "has_more": page.has_more,
-                        "next_offset": page.next_offset,
+                        "has_more": false,
+                        "next_offset": next_offset,
+                        "materialized_pages": materialized_pages,
                     });
                     last_output = Some(read_output.clone());
 

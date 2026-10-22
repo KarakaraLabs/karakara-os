@@ -30,11 +30,10 @@ done
 RUNNER_PID=""
 if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/agents" 2>/dev/null | grep -q 200; then
   echo "Starting runner on $BIND (state/repo under $VERIFY_TMP)..."
-  cargo build -p baml-agent-runner -q
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
   RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
   RUST_LOG="${RUST_LOG:-error}" \
-    "$RUNNER_BIN" \
+    "$RUNNER_BIN" serve \
     --serve-http "$BIND" \
     --repository-url "$REPOSITORY_URL" \
     --state-dir "$STATE_DIR" \
@@ -55,16 +54,14 @@ if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/a
     exit 1
   fi
 
-  cargo build -p baml-rt-builder -q --bin baml-agent-builder
   BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
   echo "Publishing $AGENT_DIR ..."
-  "$BUILDER_BIN" publish --agent-dir "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --deploy-url "$RUNNER_URL"
+  "$BUILDER_BIN" install agent --path "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 elif [[ "$do_build" == "true" ]]; then
   echo "Re-publishing (--build) against existing server on $BIND..."
-  cargo build -p baml-rt-builder -q --bin baml-agent-builder
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
   BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
-  "$BUILDER_BIN" publish --agent-dir "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --deploy-url "$RUNNER_URL"
+  "$BUILDER_BIN" install agent --path "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 fi
 
 # Resolve agent name from manifest (tool-discovery-demo)

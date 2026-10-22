@@ -1125,7 +1125,7 @@ impl SurrealProvenanceStore {
                             tool_name,
                             op,
                             send_done_replay_payload: None,
-                            read_replay_lines: None,
+                            read_replay_payload: None,
                         }),
                         user_speaker_kind: None,
                     });

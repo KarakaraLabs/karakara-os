@@ -37,12 +37,24 @@ class ArchiveLedgerEntry {
   header string @description("Compact tool/action identity for this Send, without result body")
 }
 
+class ArchiveReceipt {
+  archive_ref string @description("Resolvable archive handle from a completed Send")
+  tool_name string @description("Qualified tool name that produced this archive")
+  action_identity string @description("Bounded Send action and input identity, without result body")
+  line_count int @description("Rendered archive line count")
+  byte_count int @description("Rendered archive byte count")
+  size_display string @description("Human-readable rendered archive size")
+  completion string @description("Completion state for the archived Send")
+  search_hints string[]? @description("Trusted searchable field names when supplied by tool metadata")
+}
+
 /// Runtime session state injected by the step-executor loop.
 /// Do not construct manually — values come from the FSM.
 class SessionContext {
   contract_version string
   session_open bool
   status string @description("FSM status: awaiting_open | just_opened | result_ready | done. result_ready means previous direct Send completed and its archive is available; read it or move on, do not re-Send same input.")
+  last_receipt ArchiveReceipt? @description("Latest completed Send receipt. The archive body is not in this object.")
   last_step_op string? @description("Previous FSM step op when known: open | send | duplicate_send | read | finish | abort")
   last_step_status string? @description("Previous FSM step status when known: open | done | duplicate | finished | aborted")
   last_archive_ref string? @description("Archive ref from the previous Send when available, e.g. @4")
@@ -81,29 +93,29 @@ type ReplyPart = TextPart | DataPart
 
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
-  parts ReplyPart[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")
+  parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
   citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 /// Line-filtered archive read (emit op SearchRead).
 class ArchiveSearchReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
-  grep string @description("Non-empty filter over rendered archive lines. SearchRead is for locating lines that match; use when you have a concrete term. Shape: substring or regex per host (e.g. name, -i error). For full contiguous slices without filtering, use PageRead.")
-  offset int? @description("0-based offset over grep matches (after the filter). First window: offset=0; next: previous next_offset while matches remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  grep string @description("Non-empty filter over rendered archive lines. When a match belongs to a rendered array record, SearchRead returns that complete record; other content falls back to matching lines. Literal substring by default; a bare `|` means regex alternation (e.g. `in progress|done`); prefix `-E` for full regex, `-F` to force literal, `-i` for case-insensitive. For contiguous unfiltered text, use PageRead.")
+  offset int? @description("0-based offset over filtered result units. A unit is a complete record when record metadata applies, otherwise one matching line. First window: offset=0; continue with the returned next_offset.")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Contiguous archive paging without a line filter (emit op PageRead).
 class ArchivePageReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
   offset int? @description("0-based offset over full rendered archive lines (no grep). First window: offset=0; next: previous next_offset while lines remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Global line-filtered archive read step. Legal before Open, during a session, or after a Send.
 class ArchiveSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 /// Global contiguous archive paging step. Legal before Open, during a session, or after a Send.
@@ -268,7 +280,7 @@ class ClaudeDevSendStep {
 
 class ClaudeDevSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class ClaudeDevPageReadStep {
@@ -391,6 +403,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 You control a claude cli tool session that implements a spec and then runs validation. Return either a final report, a request for user input, or a session plan (steps) — same pattern as other session tools.
@@ -472,6 +494,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 You control a claude cli tool session that implements a spec and then runs validation. Return either a final report, a request for user input, or a session plan (steps) — same pattern as other session tools.
@@ -520,8 +552,101 @@ Do not add text before or after the JSON object.
 
 Phase policy:
 - Derived state rule: this active return union has no `Open` variant.
-- After Send completes with status done, use PageRead or SearchRead on last_archive_ref when archive lines are needed; otherwise emit Finish.
-- Never re-Send identical input after a Done; re-Send only for pagination (has_more) or a genuinely different query.
+- After Send completes with status done, the next hop is a consume phase.
+"#
+
+}
+
+/// Result-consumption executor: archive reads or terminal synthesis after Send.
+function ChooseClaudeDevAction__consume__claude_dev(
+  spec_text: string,
+  validation_criteria_json: string,
+  last_tool_output: string,
+  user_approval_intent: string,
+  session_context: SessionContext?
+) -> ClaudeDevAbortStep | ClaudeDevAskUser | ClaudeDevFinishStep | ClaudeDevPageReadStep | ClaudeDevReport | ClaudeDevSearchReadStep | ReadOnlyFinishStep {
+
+  client DefaultClient
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
+Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+
+{% if ctx.tags['tool_schema_prelude'] %}
+Tool and operation types:
+{{ ctx.tags['tool_schema_prelude'] }}
+
+{% endif %}
+{% if ctx.tags['conversation_transcript'] %}
+Session history:
+{{ ctx.tags['conversation_transcript'] }}
+{% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
+Current step instructions:
+
+You control a claude cli tool session that implements a spec and then runs validation. Return either a final report, a request for user input, or a session plan (steps) — same pattern as other session tools.
+
+RULES:
+0. CRITICAL: When emitting ClaudeDevSessionPlan, use one object with step (single FSM step) and citations fields. Per-phase hops are narrowed: emit ONLY the allowed type at the JSON root — often a bare step object with op Open, Send, SearchRead, PageRead, Finish, or Abort, with NO outer step wrapper. Do not emit a steps array.
+1. CRITICAL: This hop calls a phase-specific BAML function — its return type is narrowed to one fragment shape. Emit exactly that shape.
+2. spec_text is the development objective. validation_criteria_json lists pass/fail checks.
+3. Initialization is two-hop under host FSM:
+   - On the select/Open phase, emit Open (initial_input may be null/default).
+   - Next hop, on the Send phase and last_tool_output is empty, emit Send with:
+     prompt = spec_text + "\n\nImplement this specification. Ask for clarification only when necessary. Keep code and technical output precise."
+4. user_approval_intent:
+   - approved -> Send userInput { kind: "toolApproval", approved: true } (optional short prompt allowed)
+   - rejected -> Abort with short reason, or Send userInput { kind: "toolApproval", approved: false, reason: "..." } if continuing
+5. When completion is DONE or INTERRUPTED:
+   - if validation has not been requested yet, Send validation prompt
+   - otherwise emit Report with concise requirements/build/validation summary
+6. Non-terminal sessions: poll tool output (SearchRead to filter, PageRead for contiguous lines) before more Send or Finish when needed. Large @N: SearchRead requires grep + limit + offset; PageRead pages rendered lines without grep.
+7. AskUser is only for genuine missing operator input. Keep prompt neutral and short.
+8. Never emit Open except on the Open/select phase (session not yet open).
+9. Never emit tool_call objects.
+
+SESSION PLAN FORMAT: For ClaudeDevSessionPlan only: one wrapper object whose step field holds a single FSM step, plus a citations array (history refs use hash-prefixed line numbers in prose; avoid embedding the literal quote-hash sequence in examples). For Report/AskUser: flat objects with action field. Do not confuse SessionPlan (wrapper) with a bare step type returned on narrowed hops.
+
+spec_text:
+{{ spec_text }}
+
+validation_criteria_json:
+{{ validation_criteria_json }}
+
+last_tool_output:
+{{ last_tool_output }}
+
+user_approval_intent (approved | rejected | empty):
+{{ user_approval_intent }}
+
+Session open (host FSM): {{ session_context.session_open }}
+
+OUTPUT FORMAT: Respond with ONLY a single JSON object. No reasoning, no markdown, no text before or after the JSON. Use exactly one of: Report/AskUser-shaped objects, or ClaudeDevSessionPlan with step plus citations as required by ctx.output_format.
+
+Return exactly one JSON object of type `ClaudeDevAbortStep | ClaudeDevAskUser | ClaudeDevFinishStep | ClaudeDevPageReadStep | ClaudeDevReport | ClaudeDevSearchReadStep | ReadOnlyFinishStep`.
+
+Choose the matching object type.
+- `ClaudeDevAbortStep` uses fields like `op`
+- `ClaudeDevAskUser` uses fields like `action`, `prompt`
+- `ClaudeDevFinishStep` uses fields like `op`
+- `ClaudeDevPageReadStep` uses fields like `input`, `op`
+- `ClaudeDevReport` uses fields like `action`, `message`
+- `ClaudeDevSearchReadStep` uses fields like `input`, `op`
+- `ReadOnlyFinishStep` uses fields like `op`, `reply`
+Do not mix fields from different object shapes.
+Do not add text before or after the JSON object.
+
+Phase policy:
+- Derived state rule: this is a result-consumption phase and excludes `Send` and `Open`.
+- Use PageRead or SearchRead with the completed archive receipt when result lines are needed.
+- Otherwise emit a terminal response to explicitly consume the receipt.
 "#
 
 }

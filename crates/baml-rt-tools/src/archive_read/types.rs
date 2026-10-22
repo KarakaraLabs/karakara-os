@@ -135,12 +135,13 @@ impl<'de> Deserialize<'de> for HistoryRef {
     }
 }
 
-/// Line offset into rendered content. 0-based.
+/// Zero-based pagination offset. Counts physical lines for PageRead and filtered result units for
+/// SearchRead. The wire field remains `offset` in both operations.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct LineOffset(pub usize);
 
-/// Maximum lines per page.
+/// Maximum result units per page. Units are lines for PageRead and may be records for SearchRead.
 #[derive(Debug, Clone, Copy)]
 pub struct PageLimit(usize);
 
@@ -181,13 +182,24 @@ impl<'de> Deserialize<'de> for PageLimit {
 /// Grep pattern with optional CLI-style flag prefix.
 ///
 /// Parses `-F` (fixed string, default), `-E` (extended regex), `-i` (case
-/// insensitive), combinable (`-iE`). The BAML schema sees a single `string?`
-/// field; the flag decomposition is an implementation detail.
+/// insensitive). `-i` combines with either mode (`-iE`, `-iF`); `-F` and `-E`
+/// are mutually exclusive and are rejected together. A bare `|` alternation is
+/// auto-promoted to regex (e.g. `"task|in progress"`) so plain strings stay
+/// literal while the model's natural alternation intent works without an
+/// explicit `-E`, but only when every branch is non-empty (`|`, `foo|`, `|foo`,
+/// `foo||bar` stay literal). `-F` forces literal matching even when `|` is
+/// present. The BAML schema sees a single `string?` field; the flag
+/// decomposition is an implementation detail.
 ///
-/// Examples: `"deploy"`, `"-i deploy"`, `"-E error|warn"`, `"-iE \\bauth\\b"`
+/// Examples: `"deploy"`, `"-i deploy"`, `"-E error|warn"`, `"-iE \\bauth\\b"`,
+/// `"task|in progress"`, `"-F a|b"`
 #[derive(Debug, Clone)]
 pub struct GrepPattern {
+    /// Stripped pattern (flags removed) used for fixed/`-i` matching.
     pattern: String,
+    /// Full trimmed input (flags + pattern). Returned by [`Self::pattern_text`] so callers
+    /// can persist and later re-parse the grep value without losing its flags.
+    input: String,
     /// Pre-lowercased pattern for the fixed+case-insensitive path — avoids
     /// one allocation per `matches()` call.
     pattern_lower: Option<String>,
@@ -225,12 +237,33 @@ impl GrepPattern {
             ("", input)
         };
 
-        let mode = if flags.contains('E') {
+        let case_insensitive = flags.contains('i');
+        let explicit_regex = flags.contains('E');
+        let explicit_fixed = flags.contains('F');
+
+        if explicit_regex && explicit_fixed {
+            return Err(
+                "conflicting flags: -F (literal) and -E (regex) cannot be combined".to_string(),
+            );
+        }
+
+        // Default is fixed (literal substring). Auto-promote a bare `|` alternation to
+        // regex so the model's natural `a|b|c` intent works without requiring `-E`, while
+        // plain strings stay literal-safe. `-F` forces literal; `-E` forces regex.
+        let mut mode = if explicit_regex {
             GrepMode::Regex
         } else {
             GrepMode::Fixed
         };
-        let case_insensitive = flags.contains('i');
+        if mode == GrepMode::Fixed && !explicit_fixed && pattern.contains('|') {
+            // A bare `|` with non-empty branches is treated as alternation. Empty branches
+            // (`|`, `foo|`, `|foo`, `foo||bar`) compile to a regex whose empty alternative
+            // matches every line, so they stay fixed; an invalid regex also stays fixed.
+            let has_empty_branch = pattern.split('|').any(|branch| branch.is_empty());
+            if !has_empty_branch && regex::Regex::new(pattern).is_ok() {
+                mode = GrepMode::Regex;
+            }
+        }
 
         let compiled_regex = if mode == GrepMode::Regex {
             let re_pattern = if case_insensitive {
@@ -251,6 +284,7 @@ impl GrepPattern {
 
         Ok(Self {
             pattern: pattern.to_string(),
+            input: input.to_string(),
             pattern_lower,
             mode,
             case_insensitive,
@@ -268,8 +302,12 @@ impl GrepPattern {
         }
     }
 
+    /// The full reparseable pattern including flags (`-F`, `-E`, `-i` when present).
+    ///
+    /// Round-trips through [`Self::parse`]: persisting this string and re-parsing it yields the
+    /// same fixed/regex mode and case-insensitivity.
     pub fn pattern_text(&self) -> &str {
-        &self.pattern
+        &self.input
     }
 }
 
@@ -281,14 +319,60 @@ pub struct LineWithPosition {
     pub text: String,
 }
 
+/// One paginated SearchRead result unit.
+#[derive(Debug, Clone)]
+pub enum GrepMatch {
+    /// A matching line that is not owned by a renderer-identified record.
+    Line(LineWithPosition),
+    /// A complete renderer-identified record containing one or more matching lines.
+    Record {
+        /// 1-based inclusive first archive line.
+        start_line_number: usize,
+        /// 1-based inclusive last archive line.
+        end_line_number: usize,
+        /// Original 1-based archive lines that matched the grep pattern.
+        matched_line_numbers: Vec<usize>,
+        /// Full record lines, or a bounded head/matches/tail projection for an oversized record.
+        lines: Vec<LineWithPosition>,
+        truncated: bool,
+    },
+}
+
+impl GrepMatch {
+    pub fn lines(&self) -> &[LineWithPosition] {
+        match self {
+            Self::Line(line) => std::slice::from_ref(line),
+            Self::Record { lines, .. } => lines,
+        }
+    }
+
+    pub fn is_record(&self) -> bool {
+        matches!(self, Self::Record { .. })
+    }
+}
+
+/// Shape of the complete match set before pagination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrepPageMode {
+    Lines,
+    Records,
+    Mixed,
+}
+
 /// Result of grep + paginate.
 #[derive(Debug, Clone)]
 pub struct GrepPage {
+    /// Flattened selected result lines for callers that only need `cat -n` output.
     pub lines: Vec<LineWithPosition>,
+    /// Selected line or record units, retained for record-aware formatting.
+    pub matches: Vec<GrepMatch>,
+    /// Number of matching result units. A unit is a record when record metadata applies,
+    /// otherwise one matching line.
     pub total_matched: usize,
+    pub mode: GrepPageMode,
     pub has_more: bool,
     /// Offset to pass on the next Read call to get the following page.
-    /// Equal to the input offset + lines returned. Zero when `has_more` is false.
+    /// Equal to the number of result units consumed from the complete match set.
     pub next_offset: usize,
 }
 
@@ -368,6 +452,42 @@ mod tests {
                 matches: &["the deploy.*pipeline thing"],
                 misses: &["the deploy-pipeline thing"],
             },
+            GrepCase {
+                label: "bare_alternation_auto_regex",
+                pattern: "task|in progress|progress",
+                matches: &["a task item", "status is in progress", "making progress"],
+                misses: &["nothing relevant", "TASK item"],
+            },
+            GrepCase {
+                label: "forced_fixed_pipe",
+                pattern: "-F a|b",
+                matches: &["the a|b literal"],
+                misses: &["a", "b"],
+            },
+            GrepCase {
+                label: "empty_alternation_stays_fixed",
+                pattern: "foo||bar",
+                matches: &["the foo||bar literal"],
+                misses: &["foo", "bar", "foo bar", "nothing"],
+            },
+            GrepCase {
+                label: "leading_empty_branch_stays_fixed",
+                pattern: "|foo",
+                matches: &["the |foo literal"],
+                misses: &["foo", "nothing"],
+            },
+            GrepCase {
+                label: "trailing_empty_branch_stays_fixed",
+                pattern: "foo|",
+                matches: &["the foo| literal"],
+                misses: &["foo", "nothing"],
+            },
+            GrepCase {
+                label: "lone_pipe_stays_fixed",
+                pattern: "|",
+                matches: &["a | b"],
+                misses: &["a", "b", "nothing"],
+            },
         ];
         for case in grep_cases {
             let g = GrepPattern::parse(case.pattern).expect(case.label);
@@ -389,5 +509,21 @@ mod tests {
         assert!(GrepPattern::parse("").is_err());
         assert!(GrepPattern::parse("-E ").is_err());
         assert!(GrepPattern::parse("-E [invalid").is_err());
+        // `-F` and `-E` conflict: rejecting keeps precedence unambiguous.
+        assert!(GrepPattern::parse("-FE a|b").is_err());
+        assert!(GrepPattern::parse("-EF a|b").is_err());
+        assert!(GrepPattern::parse("-iFE a|b").is_err());
+
+        // `pattern_text` must round-trip flags so persisted/replayed grep values keep the
+        // same semantics (no silent `-F`/`-i`/`-E` loss).
+        for flagged in ["-F a|b", "-i deploy", "-E ^foo$", "task|in progress"] {
+            let parsed = GrepPattern::parse(flagged).expect("parse flagged");
+            let reparsed = GrepPattern::parse(parsed.pattern_text()).expect("reparse");
+            assert_eq!(parsed.mode, reparsed.mode, "mode round-trip for {flagged}");
+            assert_eq!(
+                parsed.case_insensitive, reparsed.case_insensitive,
+                "case-insensitivity round-trip for {flagged}"
+            );
+        }
     }
 }

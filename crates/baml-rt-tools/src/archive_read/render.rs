@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-use super::rendered::RenderedContent;
+use super::rendered::{RecordSpan, RenderedContent};
 
 const BLOCK_SCALAR_THRESHOLD: usize = 80;
 const WRAP_WIDTH: usize = 78;
@@ -18,31 +18,63 @@ const WRAP_WIDTH: usize = 78;
 /// Render a JSON value to grep-friendly YAML lines.
 pub fn render_to_lines(value: &Value) -> RenderedContent {
     let mut lines = Vec::new();
+    let mut record_spans = Vec::new();
     match value {
         Value::Array(arr) if arr.is_empty() => {
             lines.push("(empty)".to_string());
         }
         Value::Array(arr) if arr.iter().all(Value::is_object) => {
-            render_object_array(arr, &mut lines);
+            render_object_array(arr, "", 2, &mut lines, &mut record_spans);
         }
         Value::Array(arr) => {
             for item in arr {
                 lines.push(render_scalar(item));
             }
         }
-        Value::Object(_) => {
-            render_mapping(value, 0, &mut lines);
+        Value::Object(fields) => {
+            render_root_mapping(fields, &mut lines, &mut record_spans);
         }
         Value::Null => lines.push("null".to_string()),
         _ => lines.push(render_scalar(value)),
     }
-    RenderedContent::from_lines(lines)
+    RenderedContent::try_from_lines_with_record_spans(lines, record_spans)
+        .expect("JSON renderer must produce valid record spans")
 }
 
-fn render_object_array(arr: &[Value], lines: &mut Vec<String>) {
+fn render_object_array(
+    arr: &[Value],
+    base_indent: &str,
+    continuation_indent: usize,
+    lines: &mut Vec<String>,
+    record_spans: &mut Vec<RecordSpan>,
+) {
     for obj in arr {
         let fields = obj.as_object().expect("checked in caller");
-        render_object_item(fields, "", 2, lines);
+        let start = lines.len();
+        render_object_item(
+            fields,
+            base_indent,
+            continuation_indent,
+            lines,
+            record_spans,
+        );
+        let end = lines.len();
+        if start < end {
+            record_spans.push(RecordSpan { start, end });
+        }
+    }
+}
+
+/// Render a root object, emitting record spans for every direct array-of-objects field.
+/// Scalar siblings such as `message` remain outside the record spans. Nested arrays inside an
+/// item are part of the parent record and do not get independent spans.
+fn render_root_mapping(
+    fields: &serde_json::Map<String, Value>,
+    lines: &mut Vec<String>,
+    record_spans: &mut Vec<RecordSpan>,
+) {
+    for (key, val) in fields {
+        render_field("", key, val, 2, lines, record_spans, true);
     }
 }
 
@@ -53,6 +85,7 @@ fn render_object_item(
     base_indent: &str,
     continuation_indent: usize,
     lines: &mut Vec<String>,
+    record_spans: &mut Vec<RecordSpan>,
 ) {
     for (fi, (key, val)) in fields.iter().enumerate() {
         let prefix = if fi == 0 {
@@ -60,17 +93,41 @@ fn render_object_item(
         } else {
             format!("{base_indent}  ")
         };
-        render_field(&prefix, key, val, continuation_indent, lines);
+        // Nested arrays inside a record item belong to the parent record, so they never emit
+        // their own spans.
+        render_field(
+            &prefix,
+            key,
+            val,
+            continuation_indent,
+            lines,
+            record_spans,
+            false,
+        );
     }
 }
 
-fn render_mapping(value: &Value, indent: usize, lines: &mut Vec<String>) {
+fn render_mapping(
+    value: &Value,
+    indent: usize,
+    lines: &mut Vec<String>,
+    record_spans: &mut Vec<RecordSpan>,
+    emit_spans: bool,
+) {
     let Some(obj) = value.as_object() else {
         lines.push(format!("{}{}", " ".repeat(indent), render_scalar(value)));
         return;
     };
     for (key, val) in obj {
-        render_field(&" ".repeat(indent), key, val, indent + 2, lines);
+        render_field(
+            &" ".repeat(indent),
+            key,
+            val,
+            indent + 2,
+            lines,
+            record_spans,
+            emit_spans,
+        );
     }
 }
 
@@ -80,6 +137,8 @@ fn render_field(
     val: &Value,
     continuation_indent: usize,
     lines: &mut Vec<String>,
+    record_spans: &mut Vec<RecordSpan>,
+    emit_spans: bool,
 ) {
     match val {
         Value::String(s) if needs_block_scalar(s) => {
@@ -94,7 +153,7 @@ fn render_field(
         }
         Value::Object(_) => {
             lines.push(format!("{prefix}{key}:"));
-            render_mapping(val, continuation_indent, lines);
+            render_mapping(val, continuation_indent, lines, record_spans, emit_spans);
         }
         Value::Array(arr) if arr.is_empty() => {
             lines.push(format!("{prefix}{key}: []"));
@@ -113,13 +172,24 @@ fn render_field(
             }
         }
         Value::Array(arr) => {
+            let all_objects = arr.iter().all(Value::is_object);
             lines.push(format!("{prefix}{key}:"));
             let indent = " ".repeat(continuation_indent);
-            for item in arr {
-                if let Some(obj) = item.as_object() {
-                    render_object_item(obj, &indent, continuation_indent + 4, lines);
-                } else {
-                    lines.push(format!("{indent}- {}", render_scalar(item)));
+            if all_objects && emit_spans {
+                render_object_array(arr, &indent, continuation_indent + 4, lines, record_spans);
+            } else {
+                for item in arr {
+                    if let Some(obj) = item.as_object() {
+                        render_object_item(
+                            obj,
+                            &indent,
+                            continuation_indent + 4,
+                            lines,
+                            record_spans,
+                        );
+                    } else {
+                        lines.push(format!("{indent}- {}", render_scalar(item)));
+                    }
                 }
             }
         }
@@ -332,5 +402,81 @@ mod tests {
         let rc = render_to_lines(&json!({"body": huge.trim()}));
         assert!(rc.line_count() > 50, "10KB body line count");
         assert!(rc.lines().any(|l| l.contains("deployment")));
+    }
+
+    #[test]
+    fn records_are_tracked_for_root_array() {
+        let rc = render_to_lines(&json!([
+            {"id": "one", "status": "open"},
+            {"id": "two", "status": "closed"}
+        ]));
+        assert_eq!(
+            rc.record_spans(),
+            &[
+                RecordSpan { start: 0, end: 2 },
+                RecordSpan { start: 2, end: 4 }
+            ]
+        );
+    }
+
+    #[test]
+    fn one_root_record_collection_allows_scalar_siblings() {
+        let rc = render_to_lines(&json!({
+            "tasks": [
+                {"id": "one", "status": "open"},
+                {"id": "two", "status": "closed", "tags": [{"name": "nested"}]}
+            ],
+            "message": "Found two tasks"
+        }));
+        assert_eq!(
+            rc.record_spans(),
+            &[
+                RecordSpan { start: 1, end: 3 },
+                RecordSpan { start: 3, end: 7 }
+            ]
+        );
+        assert_eq!(rc.get_line(7), Some("message: Found two tasks"));
+    }
+
+    #[test]
+    fn multiple_root_record_collections_each_get_spans() {
+        let rc = render_to_lines(&json!({
+            "tasks": [{"id": "one"}],
+            "agents": [{"id": "two"}]
+        }));
+        assert_eq!(
+            rc.record_spans(),
+            &[
+                RecordSpan { start: 1, end: 2 },
+                RecordSpan { start: 3, end: 4 }
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_record_collection_gets_spans() {
+        let rc = render_to_lines(&json!({
+            "data": {
+                "tasks": [{"id": "one"}, {"id": "two"}]
+            }
+        }));
+        assert_eq!(
+            rc.record_spans(),
+            &[
+                RecordSpan { start: 2, end: 3 },
+                RecordSpan { start: 3, end: 4 }
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_array_inside_record_does_not_get_own_spans() {
+        let rc = render_to_lines(&json!({
+            "tasks": [
+                {"id": "one", "comments": [{"user": "alice"}]}
+            ]
+        }));
+        // Only the task record gets a span; the nested `comments` array is part of it.
+        assert_eq!(rc.record_spans(), &[RecordSpan { start: 1, end: 4 }]);
     }
 }

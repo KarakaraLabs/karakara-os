@@ -76,7 +76,7 @@ pub enum VariantPhase {
     Select,
     /// Legacy: parsed from `{base}__act__{slug}`.
     Act { tool_slug: String },
-    /// Output-consumption phase (`__consume__{slug}`) — reserved; builder does not emit these yet.
+    /// Output-consumption phase (`__consume__{slug}`) after a completed Send.
     Consume { tool_slug: String },
     /// Legacy: parsed from `{base}__continue__{slug}`.
     Continue { tool_slug: String },

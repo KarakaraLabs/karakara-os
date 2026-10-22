@@ -32,6 +32,7 @@ pub(crate) struct PostHistorySpec<'a> {
     pub output_contract: OutputContractSpec<'a>,
     pub selection_hint: &'a str,
     pub phase_policy: Option<&'a str>,
+    pub render_archive_receipt: bool,
 }
 
 pub(crate) struct PromptLayout<'a> {
@@ -75,6 +76,7 @@ impl PromptCompositor {
                 output_contract: OutputContractSpec::OutputFormat,
                 selection_hint: "",
                 phase_policy: None,
+                render_archive_receipt: false,
             },
         };
         let mut out = String::with_capacity(
@@ -103,6 +105,7 @@ impl PromptCompositor {
                 output_contract: OutputContractSpec::OutputFormat,
                 selection_hint,
                 phase_policy: None,
+                render_archive_receipt: false,
             },
         })
     }
@@ -118,6 +121,7 @@ impl PromptCompositor {
                 output_contract: OutputContractSpec::Text(spec.output_contract),
                 selection_hint: spec.selection_hint,
                 phase_policy: Some(spec.phase_policy),
+                render_archive_receipt: true,
             },
         })
     }
@@ -132,6 +136,7 @@ impl PromptCompositor {
                 output_contract: OutputContractSpec::Text(spec.output_contract),
                 selection_hint: spec.selection_hint,
                 phase_policy: Some(spec.phase_policy),
+                render_archive_receipt: true,
             },
         })
     }
@@ -140,6 +145,9 @@ impl PromptCompositor {
         let mut out = String::with_capacity(layout.post_history.task_body.len() + 768);
         push_stable_prefix(&mut out, layout.stable_prefix);
         push_transcript_if_block(&mut out);
+        if layout.post_history.render_archive_receipt {
+            push_archive_receipt_if_block(&mut out);
+        }
         push_task_body(&mut out, layout.post_history.task_body);
         push_output_contract(&mut out, layout.post_history.output_contract);
         push_selection_hint(&mut out, layout.post_history.selection_hint);
@@ -178,6 +186,15 @@ fn push_transcript_if_block(out: &mut String) {
     out.push_str("'] %}\nSession history:\n{{ ctx.tags['");
     out.push_str(CONVERSATION_TRANSCRIPT_TAG);
     out.push_str("'] }}\n{% endif %}\n");
+}
+
+fn push_archive_receipt_if_block(out: &mut String) {
+    out.push_str("{% if session_context.last_receipt %}\nCompleted tool result:\n");
+    out.push_str("{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}\n");
+    out.push_str("Result body is archived and is not visible yet.\n");
+    out.push_str("{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}\n{% endif %}");
+    out.push_str("Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.\n{% endif %}\n");
+    out.push_str("{% if session_context.archives %}Recent archives:\n{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}\n{% endfor %}{% endif %}\n");
 }
 
 fn push_output_contract(out: &mut String, contract: OutputContractSpec<'_>) {
@@ -286,6 +303,27 @@ mod tests {
             task_pos < contract_pos,
             "task body must precede output contract"
         );
+    }
+
+    #[test]
+    fn tool_session_phase_renders_conditional_bounded_archive_receipt_after_history() {
+        let s = PromptCompositor::tool_session_phase(ToolSessionPhaseSpec {
+            stripped_ir_body: "IR body.",
+            output_contract: "Return one object.\n",
+            selection_hint: "Choose the matching object.\n",
+            phase_policy: "Phase policy:\n- Consume.\n",
+        });
+        let history = s.find("Session history:").expect("history");
+        let receipt = s.find("Completed tool result:").expect("receipt");
+        let task = s.find("IR body.").expect("task");
+        assert!(
+            history < receipt && receipt < task,
+            "receipt placement: {s}"
+        );
+        assert!(s.contains("session_context.last_receipt.archive_ref"));
+        assert!(s.contains("Result body is archived and is not visible yet."));
+        assert!(s.contains("Do not repeat the completed Send."));
+        assert!(!s.contains("{{ session_context }}"));
     }
 
     #[test]

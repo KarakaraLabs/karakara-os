@@ -37,12 +37,24 @@ class ArchiveLedgerEntry {
   header string @description("Compact tool/action identity for this Send, without result body")
 }
 
+class ArchiveReceipt {
+  archive_ref string @description("Resolvable archive handle from a completed Send")
+  tool_name string @description("Qualified tool name that produced this archive")
+  action_identity string @description("Bounded Send action and input identity, without result body")
+  line_count int @description("Rendered archive line count")
+  byte_count int @description("Rendered archive byte count")
+  size_display string @description("Human-readable rendered archive size")
+  completion string @description("Completion state for the archived Send")
+  search_hints string[]? @description("Trusted searchable field names when supplied by tool metadata")
+}
+
 /// Runtime session state injected by the step-executor loop.
 /// Do not construct manually — values come from the FSM.
 class SessionContext {
   contract_version string
   session_open bool
   status string @description("FSM status: awaiting_open | just_opened | result_ready | done. result_ready means previous direct Send completed and its archive is available; read it or move on, do not re-Send same input.")
+  last_receipt ArchiveReceipt? @description("Latest completed Send receipt. The archive body is not in this object.")
   last_step_op string? @description("Previous FSM step op when known: open | send | duplicate_send | read | finish | abort")
   last_step_status string? @description("Previous FSM step status when known: open | done | duplicate | finished | aborted")
   last_archive_ref string? @description("Archive ref from the previous Send when available, e.g. @4")
@@ -81,29 +93,29 @@ type ReplyPart = TextPart | DataPart
 
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
-  parts ReplyPart[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")
+  parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
   citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 /// Line-filtered archive read (emit op SearchRead).
 class ArchiveSearchReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
-  grep string @description("Non-empty filter over rendered archive lines. SearchRead is for locating lines that match; use when you have a concrete term. Shape: substring or regex per host (e.g. name, -i error). For full contiguous slices without filtering, use PageRead.")
-  offset int? @description("0-based offset over grep matches (after the filter). First window: offset=0; next: previous next_offset while matches remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  grep string @description("Non-empty filter over rendered archive lines. When a match belongs to a rendered array record, SearchRead returns that complete record; other content falls back to matching lines. Literal substring by default; a bare `|` means regex alternation (e.g. `in progress|done`); prefix `-E` for full regex, `-F` to force literal, `-i` for case-insensitive. For contiguous unfiltered text, use PageRead.")
+  offset int? @description("0-based offset over filtered result units. A unit is a complete record when record metadata applies, otherwise one matching line. First window: offset=0; continue with the returned next_offset.")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Contiguous archive paging without a line filter (emit op PageRead).
 class ArchivePageReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
   offset int? @description("0-based offset over full rendered archive lines (no grep). First window: offset=0; next: previous next_offset while lines remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Global line-filtered archive read step. Legal before Open, during a session, or after a Send.
 class ArchiveSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 /// Global contiguous archive paging step. Legal before Open, during a session, or after a Send.
@@ -285,6 +297,7 @@ class DiscoverToolsSendInput {
 
 class ConversationPart {
   text (string | null)? @description("Plain text content for this conversation part.")
+  data (OpaqueJson | null)? @description("Structured JSON content for this conversation part.")
   raw (string | null)? @description("Raw provider-native content when plain text would be lossy or unavailable.")
   url (string | null)? @description("Remote URL for this part when the content points to a web or attachment resource.")
   filename (string | null)? @description("Attachment filename when this part refers to a file.")
@@ -308,9 +321,14 @@ class ConversationChunk {
 
 enum InternalA2aCompletion {
   DONE
+  COMPLETED
+  FAILED
+  CANCELED
+  REJECTED
   INPUTREQUIRED
     @alias("INPUT_REQUIRED")
-  FAILED
+  AUTHREQUIRED
+    @alias("AUTH_REQUIRED")
 }
 
 class InternalA2aNextOutput {
@@ -361,7 +379,7 @@ class SupportClickupSendStep {
 
 class SupportClickupSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class SupportClickupPageReadStep {
@@ -410,7 +428,7 @@ class SystemDiscoverAgentsSendStep {
 
 class SystemDiscoverAgentsSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class SystemDiscoverAgentsPageReadStep {
@@ -459,7 +477,7 @@ class SystemDiscoverToolsSendStep {
 
 class SystemDiscoverToolsSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class SystemDiscoverToolsPageReadStep {
@@ -508,7 +526,7 @@ class SystemInternalA2aSendStep {
 
 class SystemInternalA2aSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class SystemInternalA2aPageReadStep {
@@ -560,6 +578,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 You are a ClickUp workspace assistant executing one plan step.
@@ -620,6 +648,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 You are a ClickUp workspace assistant executing one plan step.
@@ -648,8 +686,78 @@ Do not add text before or after the JSON object.
 
 Phase policy:
 - Derived state rule: this active return union has no `Open` variant.
-- After Send completes with status done, use PageRead or SearchRead on last_archive_ref when archive lines are needed; otherwise emit Finish.
-- Never re-Send identical input after a Done; re-Send only for pagination (has_more) or a genuinely different query.
+- After Send completes with status done, the next hop is a consume phase.
+"#
+
+}
+
+/// Result-consumption executor: archive reads or terminal synthesis after Send.
+function ChooseClickUpAction__consume__support_clickup(
+  goal: string,
+  step_description: string,
+  operation_kind: string,
+  prior_results: string?,
+  session_context: SessionContext?
+) -> FinalResponse | ReadOnlyFinishStep | SupportClickupPageReadStep | SupportClickupSearchReadStep {
+
+  client DefaultClient
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
+Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+
+{% if ctx.tags['tool_schema_prelude'] %}
+Tool and operation types:
+{{ ctx.tags['tool_schema_prelude'] }}
+
+{% endif %}
+{% if ctx.tags['conversation_transcript'] %}
+Session history:
+{{ ctx.tags['conversation_transcript'] }}
+{% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
+Current step instructions:
+
+You are a ClickUp workspace assistant executing one plan step.
+Stay focused on this step only and use prior tool evidence from this turn.
+
+Overall goal: {{ goal }}
+Current step: {{ step_description }}
+Operation kind: {{ operation_kind }}
+
+Domain rules:
+- Reuse IDs from prior_results / history; do not invent IDs for required fields.
+- For read steps, gather only the data needed for this step and then complete.
+- For write steps, perform the requested change and then confirm what changed.
+- For delete operations: require explicit confirmation flow. First send confirm_delete=false; only send confirm_delete=true after clear user confirmation in prior results/history.
+- For final formatting steps, return FinalResponse with a user-ready message grounded in retrieved results.
+
+{% if prior_results %}
+Results from previous steps (use IDs and data from here):
+{{ prior_results }}
+{% endif %}
+
+Return exactly one JSON object of type `FinalResponse | ReadOnlyFinishStep | SupportClickupPageReadStep | SupportClickupSearchReadStep`.
+
+Choose the matching object type.
+- `FinalResponse` uses fields like `citations`, `message`, `structured_json`
+- `ReadOnlyFinishStep` uses fields like `op`, `reply`
+- `SupportClickupPageReadStep` uses fields like `input`, `op`
+- `SupportClickupSearchReadStep` uses fields like `input`, `op`
+Do not mix fields from different object shapes.
+Do not add text before or after the JSON object.
+
+Phase policy:
+- Derived state rule: this is a result-consumption phase and excludes `Send` and `Open`.
+- Use PageRead or SearchRead with the completed archive receipt when result lines are needed.
+- Otherwise emit a terminal response to explicitly consume the receipt.
 "#
 
 }

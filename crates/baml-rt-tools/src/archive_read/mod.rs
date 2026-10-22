@@ -7,7 +7,7 @@
 //! Three layers, each pure and independently testable:
 //!
 //! - **render**: JSON → YAML text lines (long strings become block scalars)
-//! - **grep**: line-level substring/regex filter + offset/limit pagination
+//! - **grep**: record-aware substring/regex filter + offset/limit pagination
 //! - **cat_n**: GNU `cat -n` style line numbering with original positions
 //!
 //! The module is stateless. Session-scoped ref tables (`@N → content`)
@@ -26,14 +26,15 @@ pub use cat_n::{format_cat_n, format_cat_n_sequential};
 pub use grep::grep_paginate;
 pub use read_resolve::{ResolvedArchiveRead, resolve_archive_for_read};
 pub use render::render_to_lines;
-pub use rendered::RenderedContent;
+pub use rendered::{RecordSpan, RenderedContent};
 pub use session_read_body::{
     format_grep_page_as_session_read_body, format_session_read_body_from_json_value,
     format_session_read_body_from_rendered, format_session_read_from_vtable,
     session_read_command_line,
 };
 pub use types::{
-    DEFAULT_TOOL_RESULT_INLINE_LINES, GrepPage, GrepPattern, HistoryRef, LineOffset,
-    LineWithPosition, PageLimit, SEND_DONE_HISTORY_INLINE_LINES, ShortRef, archive_cell_key,
+    DEFAULT_TOOL_RESULT_INLINE_LINES, GrepMatch, GrepPage, GrepPageMode, GrepPattern, HistoryRef,
+    LineOffset, LineWithPosition, PageLimit, SEND_DONE_HISTORY_INLINE_LINES, ShortRef,
+    archive_cell_key,
 };
 pub use virtual_source::{VirtualArchiveRow, VirtualArchiveSource, VirtualHistoryRow};

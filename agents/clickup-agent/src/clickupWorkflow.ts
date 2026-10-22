@@ -14,7 +14,7 @@ import type {
   StructuredReply,
 } from "./baml-runtime";
 
-export const MAX_REACT_STEPS = 8;
+export const MAX_REACT_STEPS = 32;
 export const PKG_CLICKUP_EXECUTE = "clickup-execute";
 export const PKG_CLICKUP_FORMAT = "clickup-format";
 
@@ -59,6 +59,14 @@ function isFinalResponse(v: unknown): v is FinalResponse {
   if (!isJsonObject(v)) return false;
   if (typeof v.message !== "string") return false;
   return !("tasks" in v || "items" in v || "steps" in v || "action" in v || "intent" in v);
+}
+
+function isStructuredReply(v: unknown): v is StructuredReply {
+  return isJsonObject(v) && Array.isArray(v.parts) && Array.isArray(v.citations);
+}
+
+function isReadOnlyFinish(v: unknown): v is { op: "ReadOnlyFinish"; reply: StructuredReply } {
+  return isJsonObject(v) && v.op === "ReadOnlyFinish" && isStructuredReply(v.reply);
 }
 
 function finalResponseToStructured(fr: FinalResponse): StructuredReply {
@@ -107,6 +115,7 @@ function formatListLikeToolPayload(output: JsonObject): string {
 
 function extractFinalMessage(steps: unknown[]): StructuredReply {
   for (const step of [...steps].reverse()) {
+    if (isReadOnlyFinish(step)) return step.reply;
     if (isFinalResponse(step)) return finalResponseToStructured(step);
     const toolLike = extractToolLikePayload(step);
     if (toolLike) return textReply(formatListLikeToolPayload(toolLike));

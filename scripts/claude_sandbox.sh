@@ -116,8 +116,8 @@ enable_external_tool() {
 push_agent() {
     enable_external_tool
     log_step "Publishing and deploying $AGENT_DIR"
-    cargo run -q -p agentium -- push \
-        --agents "$AGENT_DIR" \
+    cargo run -q -p agentium -- install agent \
+        --path "$AGENT_DIR" \
         --repository-url "$REPOSITORY_URL" \
         --url "$RUNNER_URL"
 }
@@ -134,9 +134,9 @@ case "$cmd" in
         ;;
     runner)
         prepare
-        log_step "Starting baml-agent-runner on 127.0.0.1:18080"
+        log_step "Starting agentium serve on 127.0.0.1:18080"
         echo "    In another terminal, run: scripts/claude_sandbox.sh chat"
-        exec cargo run -p agentium -- serve --all-features -- \
+        exec cargo run -p agentium --all-features -- serve \
             --a2a-stdio \
             --serve-http 127.0.0.1:18080 \
             --provenance-db provenance.db

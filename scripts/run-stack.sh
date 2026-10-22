@@ -8,14 +8,13 @@
 # then stay alive until Ctrl-C (which kills the runner via the trap).
 #
 # Usage:
-#   run-stack.sh <runner_bin> <builder_bin> <http_bind> <runner_url> \
+#   run-stack.sh <agentium_bin> <http_bind> <runner_url> \
 #                <provenance_db> <state_dir> <repository_dir> \
 #                [--web-dir <path>] [--event-poll-interval-secs <n>] \
 #                <agent_dir> [<agent_dir>...]
 set -euo pipefail
 
-RUNNER_BIN="$1";  shift
-BUILDER_BIN="$1"; shift
+AGENTIUM_BIN="$1"; shift
 HTTP_BIND="$1";   shift
 RUNNER_URL="$1";  shift
 PROVENANCE_DB="$1"; shift
@@ -39,7 +38,7 @@ if [[ ${#AGENT_DIRS[@]} -eq 0 ]]; then
 fi
 
 # Start runner in background.
-"$RUNNER_BIN" \
+"$AGENTIUM_BIN" serve \
     --serve-http "$HTTP_BIND" \
     --provenance-db "$PROVENANCE_DB" \
     --state-dir "$STATE_DIR" \
@@ -58,10 +57,10 @@ done
 
 # Publish and deploy each agent.
 for dir in "${AGENT_DIRS[@]}"; do
-    "$BUILDER_BIN" publish \
-        --agent-dir "$dir" \
+    "$AGENTIUM_BIN" install agent \
+        --path "$dir" \
         --repository-url "$RUNNER_URL/repository" \
-        --deploy-url "$RUNNER_URL"
+        --url "$RUNNER_URL"
 done
 
 wait "$RUNNER_PID"

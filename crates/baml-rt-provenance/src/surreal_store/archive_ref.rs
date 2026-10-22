@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use baml_rt_core::ids::{AgentId, ContextId};
 use baml_rt_tools::{
-    archive_read::{RenderedContent, ShortRef},
+    archive_read::{RecordSpan, RenderedContent, ShortRef},
     archive_refs::ArchiveEntry,
 };
 use serde_json::{Value, json};
@@ -43,7 +43,14 @@ fn entry_to_json(entry: &ArchiveEntry) -> Value {
         "action_identity": entry.action_identity,
         "activity_anchor": entry.activity_anchor,
         "source": entry.source,
+        "completion": entry.completion,
+        "search_hints": entry.search_hints,
+        // Duplicate suppression is durable: a restarted runtime must not reissue a Send whose
+        // result was archived immediately before shutdown.
+        "send_signature": entry.send_signature,
+        "pending_send": entry.pending_send,
         "rendered_lines": lines,
+        "record_spans": entry.content.record_spans(),
     })
 }
 
@@ -78,6 +85,28 @@ pub(super) fn entry_from_json(v: &Value) -> Result<ArchiveEntry> {
         .and_then(|s| s.as_str())
         .unwrap_or("tool_result")
         .to_string();
+    let completion = v
+        .get("completion")
+        .and_then(|x| x.as_str())
+        .map(str::to_string);
+    let search_hints = v
+        .get("search_hints")
+        .and_then(|x| x.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let send_signature = v
+        .get("send_signature")
+        .and_then(|x| x.as_str())
+        .map(str::to_string);
+    let pending_send = v
+        .get("pending_send")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let lines: Vec<String> = v
         .get("rendered_lines")
         .and_then(|x| x.as_array())
@@ -87,10 +116,26 @@ pub(super) fn entry_from_json(v: &Value) -> Result<ArchiveEntry> {
         .iter()
         .filter_map(|x| x.as_str().map(str::to_string))
         .collect();
-    let content = RenderedContent::from_lines(lines);
+    let record_spans: Vec<RecordSpan> = match v.get("record_spans") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|error| {
+            ProvenanceError::CorruptArchiveEntry {
+                reason: format!("invalid record_spans: {error}"),
+            }
+        })?,
+        None => Vec::new(),
+    };
+    let content = RenderedContent::try_from_lines_with_record_spans(lines, record_spans).map_err(
+        |reason| ProvenanceError::CorruptArchiveEntry {
+            reason: format!("invalid record_spans: {reason}"),
+        },
+    )?;
     Ok(
         ArchiveEntry::new(content, tool_name, summary, activity_anchor, source)
-            .with_action_identity(action_identity),
+            .with_action_identity(action_identity)
+            .with_completion(completion)
+            .with_search_hints(search_hints)
+            .with_send_signature(send_signature)
+            .with_pending_send(pending_send),
     )
 }
 
@@ -444,6 +489,28 @@ impl SurrealProvenanceStore {
         Ok(())
     }
 
+    /// Persist receipt consumption so a restored runtime permits a later identical Send.
+    pub async fn archive_mark_send_consumed(
+        &self,
+        context_id: &ContextId,
+        archive_ref: ShortRef,
+    ) -> Result<()> {
+        let q = format!(
+            "UPDATE {TBL_ARCHIVE_BODY} SET entry.pending_send = false \
+             WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc;"
+        );
+        let response = self
+            .db()
+            .query(&q)
+            .bind(("ctx", context_id.as_str().to_string()))
+            .bind(("pfx", archive_ref.prefix))
+            .bind(("loc", archive_ref.local))
+            .await
+            .map_err(map_surreal_error)?;
+        let _: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        Ok(())
+    }
+
     /// Load archive body by composite ref.
     pub async fn archive_get_body(
         &self,
@@ -513,5 +580,58 @@ impl SurrealProvenanceStore {
                 .ok_or(e),
             Err(e) => Err(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use baml_rt_tools::{archive_read::render_to_lines, archive_refs::ArchiveEntry};
+    use serde_json::json;
+
+    use super::{entry_from_json, entry_to_json};
+
+    fn sample_entry() -> ArchiveEntry {
+        ArchiveEntry::new(
+            render_to_lines(&json!({
+                "tasks": [
+                    {"id": "one", "status": "in progress"},
+                    {"id": "two", "status": "to do"}
+                ],
+                "message": "Found two tasks"
+            })),
+            "support/clickup".to_string(),
+            None,
+            "anchor".to_string(),
+            "tool_result".to_string(),
+        )
+    }
+
+    #[test]
+    fn archive_json_round_trip_preserves_record_spans() {
+        let entry = sample_entry();
+        assert_eq!(entry.content.record_spans().len(), 2);
+
+        let restored = entry_from_json(&entry_to_json(&entry)).expect("round trip");
+        assert_eq!(
+            restored.content.record_spans(),
+            entry.content.record_spans()
+        );
+        assert_eq!(
+            restored.content.lines().collect::<Vec<_>>(),
+            entry.content.lines().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn legacy_archive_without_record_spans_remains_readable() {
+        let entry = sample_entry();
+        let mut value = entry_to_json(&entry);
+        value
+            .as_object_mut()
+            .expect("archive entry object")
+            .remove("record_spans");
+
+        let restored = entry_from_json(&value).expect("legacy archive");
+        assert!(restored.content.record_spans().is_empty());
     }
 }

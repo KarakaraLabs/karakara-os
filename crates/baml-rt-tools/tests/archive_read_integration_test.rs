@@ -5,7 +5,8 @@
 //! Integration tests: render → grep → cat_n full pipeline.
 
 use baml_rt_tools::archive_read::{
-    GrepPattern, LineOffset, PageLimit, format_cat_n, grep_paginate, render_to_lines,
+    GrepMatch, GrepPageMode, GrepPattern, LineOffset, PageLimit, format_cat_n, grep_paginate,
+    render_to_lines,
 };
 use serde_json::json;
 
@@ -28,10 +29,10 @@ fn full_pipeline_slack_messages_grep_deploy() {
     let pattern = GrepPattern::parse("-i deploy").unwrap();
     let page = grep_paginate(&content, Some(&pattern), LineOffset(0), PageLimit::new(100));
 
-    assert!(
-        page.total_matched >= 3,
-        "at least 3 lines should match 'deploy' (case insensitive)"
-    );
+    assert_eq!(page.total_matched, 3, "three records should match deploy");
+    assert_eq!(page.mode, GrepPageMode::Records);
+    assert_eq!(page.matches.len(), 3);
+    assert!(page.matches.iter().all(GrepMatch::is_record));
 
     let formatted = format_cat_n(&page.lines);
     for line in formatted.lines() {
@@ -43,12 +44,13 @@ fn full_pipeline_slack_messages_grep_deploy() {
             .parse()
             .expect("line number should be numeric");
         assert!(num >= 1, "line numbers are 1-based");
-        let text = parts[1].to_lowercase();
-        assert!(
-            text.contains("deploy"),
-            "grep-filtered line should contain 'deploy'"
-        );
     }
+    assert!(
+        page.lines
+            .iter()
+            .any(|line| line.text.contains("ts: 14:01")),
+        "the whole matching record should include its timestamp"
+    );
 }
 
 #[test]
@@ -130,6 +132,58 @@ fn case_insensitive_fixed_grep() {
         page.total_matched, 2,
         "case insensitive should match Alice and ALICE_ADMIN"
     );
+}
+
+#[test]
+fn clickup_status_search_returns_complete_task_records() {
+    let data = json!({
+        "tasks": [
+            {
+                "id": "86aff3vkz",
+                "name": "Task21",
+                "status": "in progress",
+                "description": "testing",
+                "url": "https://app.clickup.com/t/86aff3vkz",
+                "priority": "high"
+            },
+            {
+                "id": "86afezej0",
+                "name": "Task19",
+                "status": "to do",
+                "url": "https://app.clickup.com/t/86afezej0"
+            },
+            {
+                "id": "86afed83u",
+                "name": "Task16",
+                "status": "in progress",
+                "url": "https://app.clickup.com/t/86afed83u"
+            },
+            {
+                "id": "86afcwxrj",
+                "name": "Test1",
+                "status": "in progress",
+                "url": "https://app.clickup.com/t/86afcwxrj"
+            }
+        ],
+        "message": "Found 4 task(s)"
+    });
+
+    let content = render_to_lines(&data);
+    let pattern = GrepPattern::parse("in progress").unwrap();
+    let page = grep_paginate(&content, Some(&pattern), LineOffset(0), PageLimit::new(50));
+    let rendered = format_cat_n(&page.lines);
+
+    assert_eq!(page.total_matched, 3);
+    assert_eq!(page.mode, GrepPageMode::Records);
+    for expected in ["Task21", "Task16", "Test1"] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}:\n{rendered}"
+        );
+    }
+    assert!(!rendered.contains("Task19"));
+    assert!(rendered.contains("86aff3vkz"));
+    assert!(rendered.contains("https://app.clickup.com/t/86aff3vkz"));
 }
 
 #[test]

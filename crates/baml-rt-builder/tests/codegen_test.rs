@@ -644,6 +644,72 @@ async fn test_generated_a2a_shim_emits_planning_effects() {
 }
 
 #[tokio::test]
+async fn test_generated_a2a_shim_emits_data_only_structured_reply() {
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-00000000bb12").unwrap());
+    let (mut bridge, _capture) = make_capturing_bridge(agent_id.clone()).await;
+    bridge
+        .eval_sync(
+            "globalThis.__chunks = []; globalThis.__chat_yield = function(chunk) { globalThis.__chunks.push(chunk); };",
+        )
+        .await
+        .expect("install chat chunk capture");
+
+    let shim_js = render_a2a_shim().expect("render generated shim");
+    bridge
+        .eval_sync(&shim_js)
+        .await
+        .expect("evaluate generated a2a shim");
+
+    let context_id = ContextId::new(7_003, 1);
+    let message_id = MessageId::from_external(ExternalId::new("msg-shim-data-only-1"));
+    let task_id = TaskId::from_external(ExternalId::new("task-shim-data-only-1"));
+    let scope = RuntimeScope::task_scope(context_id, agent_id, message_id, task_id);
+    let invoke_scope = InvocationScope::new(scope.clone());
+    let js = r##"
+      (async function() {
+        __chat_register({
+          run: async function(_ctx) {
+            return {
+              message: {
+                parts: [{
+                  type: "data",
+                  data: JSON.stringify({ items: [{ id: "task-1" }, { id: "task-2" }] }),
+                  media_type: "application/json"
+                }],
+                citations: []
+              }
+            };
+          }
+        });
+        await onChatMessage({
+          messageId: "msg-shim-data-only-1",
+          taskId: "task-shim-data-only-1",
+          parts: [{ text: "list tasks" }]
+        });
+        return globalThis.__chunks;
+      })()
+    "##;
+
+    let chunks = context::with_scope(scope, async {
+        bridge
+            .eval_scoped(&invoke_scope, js)
+            .await
+            .expect("run data-only structured reply flow")
+    })
+    .await;
+
+    assert_eq!(
+        chunks.pointer("/0/message/parts/0/data/items/0/id"),
+        Some(&Value::String("task-1".to_string()))
+    );
+    assert_eq!(
+        chunks.pointer("/0/message/parts/0/media_type"),
+        Some(&Value::String("application/json".to_string()))
+    );
+}
+
+#[tokio::test]
 async fn test_generated_a2a_shim_aborts_planning_on_run_failure() {
     let agent_id =
         AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-00000000bb11").unwrap());

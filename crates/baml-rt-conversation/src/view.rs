@@ -65,12 +65,12 @@ pub struct SessionStepContent {
     /// for ref-table / replay **hydration** only — not rendered as `conversation_history` content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_done_replay_payload: Option<serde_json::Value>,
-    /// SearchRead/PageRead only: **raw** rendered archive body lines (from the linked
-    /// `SendDone` JSON, same as ref-table `ArchiveEntry::content`), not a pre-formatted
-    /// `cat -n` / `grep -n` session read block. Prompt/episode re-apply
+    /// SearchRead/PageRead only: the linked `SendDone`'s `tool_result` JSON, re-rendered
+    /// during replay (`render_to_lines`) so record-aware SearchRead keeps complete records.
+    /// Not a pre-formatted `cat -n` / `grep -n` session read block — prompt/episode re-apply
     /// `baml_rt_tools::archive_read::format_session_read_body_from_rendered`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_replay_lines: Option<Vec<String>>,
+    pub read_replay_payload: Option<serde_json::Value>,
 }
 
 /// Typed discriminated content for a conversation history item.
@@ -452,7 +452,7 @@ mod tests {
             tool_name: "support/notion".into(),
             op: SessionStepOp::Open,
             send_done_replay_payload: None,
-            read_replay_lines: None,
+            read_replay_payload: None,
         });
         assert!(!open_step.is_meaningful());
 

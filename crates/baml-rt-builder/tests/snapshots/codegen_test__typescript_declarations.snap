@@ -23,6 +23,16 @@ export interface ArchivePageReadStep { op: "PageRead";
 input: ArchivePageReadInput;
  }
 
+export interface ArchiveReceipt { archive_ref: string;
+tool_name: string;
+action_identity: string;
+line_count: number;
+byte_count: number;
+size_display: string;
+completion: string;
+search_hints: string[] | null;
+ }
+
 export interface ArchiveSearchReadInput { archive_ref: string;
 grep: string;
 offset: number | null;
@@ -61,6 +71,7 @@ reply: StructuredReply;
 export interface SessionContext { contract_version: string;
 session_open: boolean;
 status: string;
+last_receipt: ArchiveReceipt | null;
 last_step_op: string | null;
 last_step_status: string | null;
 last_archive_ref: string | null;
@@ -107,6 +118,8 @@ declare function ChooseCalcTool(args: { user_message: string; session_context: S
 declare function ChooseCalcToolStream(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<string>;
 
 declare function ChooseCalcTool__active__support_calculate(args: { user_message: string; session_context: SessionContext | null } & { __baml_invocation_token?: string }): Promise<SupportCalculateSendStep | SupportCalculateSearchReadStep | SupportCalculatePageReadStep | SupportCalculateFinishStep | SupportCalculateAbortStep>;
+
+declare function ChooseCalcTool__consume__support_calculate(args: { user_message: string; session_context: SessionContext | null } & { __baml_invocation_token?: string }): Promise<ReadOnlyFinishStep | SupportCalculatePageReadStep | SupportCalculateSearchReadStep>;
 
 declare function ChooseCalcTool__entry(args: { user_message: string; session_context: SessionContext | null } & { __baml_invocation_token?: string }): Promise<ArchivePageReadStep | ArchiveSearchReadStep | ReadOnlyFinishStep | SupportCalculateSendStep>;
 
@@ -551,7 +564,7 @@ declare global {
 export type StepExecutorFunctionName = "ChooseCalcTool";
 
 export interface SessionContext {
-    contract_version: "session_context_v3";
+    contract_version: "session_context_v5";
     session_open: boolean;
     status: "awaiting_open" | "just_opened" | "result_ready" | "done";
     last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
@@ -559,6 +572,7 @@ export interface SessionContext {
     last_archive_ref?: string;
     last_output_header?: string;
     last_completion?: string;
+    last_receipt?: { archive_ref: string; tool_name: string; action_identity: string; line_count: number; byte_count: number; size_display: string; completion: string; search_hints?: string[] };
     archives?: Array<{ archive_ref: string; header: string }>;
 }
 

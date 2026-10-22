@@ -1038,6 +1038,14 @@ impl ToolSessionExecutionHandle {
                     let signature = send_args_for_summary
                         .as_ref()
                         .map(|args| send_signature(&tool_name, args));
+                    let search_hints = self
+                        .ctx
+                        .tool_registry
+                        .get_metadata(&tool_name)
+                        .map(|metadata| {
+                            archive_refs::search_hints_from_output_schema(&metadata.output_schema)
+                        })
+                        .unwrap_or_default();
                     let entry = archive_refs::ArchiveEntry::new(
                         rendered,
                         tool_name,
@@ -1046,6 +1054,13 @@ impl ToolSessionExecutionHandle {
                         "tool_result".to_string(),
                     )
                     .with_action_identity(action_identity)
+                    .with_completion(
+                        output_value
+                            .get("completion")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                    )
+                    .with_search_hints(search_hints)
                     .with_send_signature(signature);
                     let context_id = plan_scope.context_id().as_str().to_string();
                     let ref_table =
@@ -1083,9 +1098,18 @@ impl ToolSessionExecutionHandle {
                                 })?;
                             (archive_ref, header)
                         };
+                    let receipt = ref_table
+                        .get(archive_ref)
+                        .map(|cell| cell.value().receipt(archive_ref))
+                        .ok_or_else(|| {
+                            BamlRtError::InvalidArgument(
+                                "archive receipt unavailable after archive insert".into(),
+                            )
+                        })?;
                     return Ok(ToolSessionSendBlockingOutcome::Completed(SendResult {
                         archive_ref,
                         header,
+                        receipt,
                         output: output_value,
                         informed_by_tool_activity_anchor,
                     }));
@@ -1114,6 +1138,8 @@ pub struct SendResult {
     pub archive_ref: baml_rt_tools::archive_read::ShortRef,
     /// Display header: `@1 · "found 5 accounts" · 47L · 3.2KB`
     pub header: String,
+    /// Structured, bounded metadata for the next model hop.
+    pub receipt: baml_rt_tools::archive_refs::ArchiveReceipt,
     /// Raw Done output (for drift scoring).
     pub output: serde_json::Value,
     /// Tool completion anchor for provenance `WAS_INFORMED_BY` from this `SendDone`.

@@ -125,7 +125,7 @@ pub fn provenance_item_to_projection_item(
                 tool_name: step.tool_name,
                 op: projection_op,
                 send_done_replay_payload: step.send_done_replay_payload,
-                read_replay_lines: step.read_replay_lines,
+                read_replay_payload: step.read_replay_payload,
             })
         }
     };

@@ -32,6 +32,9 @@ pub struct ConversationPart {
     #[baml(description = "Plain text content for this conversation part.")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[baml(description = "Structured JSON content for this conversation part.")]
+    pub data: Option<OpaqueJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[baml(
         description = "Raw provider-native content when plain text would be lossy or unavailable."
     )]
@@ -44,7 +47,7 @@ pub struct ConversationPart {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[baml(description = "Attachment filename when this part refers to a file.")]
     pub filename: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "media_type")]
     #[baml(description = "MIME type for this part, for example text/plain or image/png.")]
     pub media_type: Option<String>,
 }
@@ -79,15 +82,23 @@ pub struct ConversationChunk {
     pub artifact_update: Option<String>,
 }
 
-/// Completion reason for internal_a2a stream. When INPUT_REQUIRED, the delegated agent
-/// suspended for input; caller can resume with a new Send + Read using the same context_id.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, BamlType)]
+/// Terminal completion reason for the internal_a2a stream.
+///
+/// Mirrors the A2A task terminal states. `Done` is the fallback when a stream ends without an
+/// explicit terminal state. `Failed`/`Canceled`/`Rejected` must surface to the caller as an error —
+/// never as a successful archive. `InputRequired`/`AuthRequired` mean the delegated agent paused
+/// and needs user action.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, BamlType)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum InternalA2aCompletion {
     #[default]
     Done,
-    InputRequired,
+    Completed,
     Failed,
+    Canceled,
+    Rejected,
+    InputRequired,
+    AuthRequired,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BamlType)]
