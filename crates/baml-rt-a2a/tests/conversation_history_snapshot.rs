@@ -611,7 +611,7 @@ async fn delegated_context_send_done_replay_seeds_later_archive_read() {
                     limit: 20,
                 },
                 send_done_replay_payload: None,
-                read_replay_lines: None,
+                read_replay_payload: None,
             }),
         }],
         &registry,

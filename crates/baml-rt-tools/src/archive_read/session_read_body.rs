@@ -13,7 +13,7 @@ use super::{
     grep::grep_paginate,
     render::render_to_lines,
     rendered::RenderedContent,
-    types::{GrepPage, GrepPattern, LineOffset, PageLimit, ShortRef},
+    types::{GrepMatch, GrepPage, GrepPageMode, GrepPattern, LineOffset, PageLimit, ShortRef},
 };
 use crate::archive_refs::RefTable;
 
@@ -31,6 +31,26 @@ impl ArchiveReadPage<'_> {
         if self.page.lines.is_empty() {
             return String::new();
         }
+        if self.page.mode != GrepPageMode::Lines {
+            let noun = if self.page.mode == GrepPageMode::Records {
+                "records"
+            } else {
+                "results"
+            };
+            let shown = self.page.matches.len();
+            let first = self.page.next_offset.saturating_sub(shown) + 1;
+            let last = self.page.next_offset;
+            let continuation = if self.page.has_more {
+                format!("; continue with offset={last}")
+            } else {
+                String::new()
+            };
+            return format!(
+                "  # {total} matching {noun}; showing {noun} {first}-{last}{continuation}",
+                total = self.page.total_matched,
+            );
+        }
+
         let first = self
             .page
             .lines
@@ -80,7 +100,7 @@ pub fn format_grep_page_as_session_read_body(
     archive_ref_str: &str,
     grep_pattern_raw: Option<&str>,
 ) -> String {
-    let formatted = format_cat_n(&page.lines);
+    let formatted = format_page_matches(page);
     let cmd = session_read_command_line(archive_ref_str, grep_pattern_raw);
     if page.lines.is_empty() {
         return format!("{cmd}\n# no matches");
@@ -100,6 +120,38 @@ pub fn format_grep_page_as_session_read_body(
         format!("{cmd}\n{range_comment}\n{formatted}")
     };
     body.trim_end_matches('\n').to_string()
+}
+
+fn format_page_matches(page: &GrepPage) -> String {
+    if page.mode == GrepPageMode::Lines {
+        return format_cat_n(&page.lines);
+    }
+
+    let mut output = String::new();
+    for item in &page.matches {
+        match item {
+            GrepMatch::Line(line) => output.push_str(&format_cat_n(std::slice::from_ref(line))),
+            GrepMatch::Record {
+                start_line_number,
+                end_line_number,
+                matched_line_numbers,
+                lines,
+                truncated,
+            } => {
+                let matched = matched_line_numbers
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let truncation = if *truncated { "; truncated" } else { "" };
+                output.push_str(&format!(
+                    "  # record lines {start_line_number}-{end_line_number}; matched {matched}{truncation}\n"
+                ));
+                output.push_str(&format_cat_n(lines));
+            }
+        }
+    }
+    output
 }
 
 /// Paginate rendered archive lines and format as session read body (grep parse + `grep_paginate` +
@@ -167,6 +219,8 @@ pub fn format_session_read_from_vtable(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{
         super::{rendered::RenderedContent, types::PageLimit},
         *,
@@ -210,6 +264,34 @@ mod tests {
             "numbered content after paging, got: {:?}",
             lines[2]
         );
+    }
+
+    #[test]
+    fn record_search_body_includes_blocks_and_match_lines() {
+        let rendered = render_to_lines(&json!({
+            "tasks": [
+                {"id": "one", "name": "First", "status": "in progress", "url": "https://example.test/one"},
+                {"id": "two", "name": "Second", "status": "to do"}
+            ],
+            "message": "Found two tasks"
+        }));
+        let body = format_session_read_body_from_rendered(
+            &rendered,
+            "@4",
+            Some("in progress"),
+            0,
+            PageLimit::new(50),
+        );
+
+        assert!(body.starts_with("grep -n 'in progress' @4\n"), "{body}");
+        assert!(body.contains("1 matching records"), "{body}");
+        assert!(body.contains("# record lines"), "{body}");
+        assert!(body.contains("matched 4"), "{body}");
+        assert!(body.contains("id: one"), "{body}");
+        assert!(body.contains("name: First"), "{body}");
+        assert!(body.contains("status: in progress"), "{body}");
+        assert!(body.contains("example.test/one"), "{body}");
+        assert!(!body.contains("id: two"), "{body}");
     }
 
     #[test]

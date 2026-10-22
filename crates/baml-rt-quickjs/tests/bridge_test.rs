@@ -1356,7 +1356,7 @@ async fn test_step_executor_loop_entry_send_hands_off_to_consume() {
                     json!({ "step": { "op": "Send", "tool_name": "support/calculate", "input": { "expression": { "left": 2, "operation": "Add", "right": 3 } } } })
                 }
                 1 => {
-                    json!({ "op": "PageRead", "input": { "archive_ref": "@1", "offset": 0, "limit": 10 } })
+                    json!({ "op": "PageRead", "input": { "archive_ref": "@1", "offset": 0, "limit": 1 } })
                 }
                 2 => {
                     json!({ "op": "ReadOnlyFinish", "reply": { "parts": [{ "type": "text", "text": "5" }], "citations": [] } })
@@ -1410,6 +1410,20 @@ async fn test_step_executor_loop_entry_send_hands_off_to_consume() {
     assert!(
         !calls[2].1.contains("Completed tool result:"),
         "a materialized read consumes the receipt before Entry permits another Send"
+    );
+
+    let read = result
+        .steps
+        .iter()
+        .find(|step| step.get("materialized_pages").is_some())
+        .expect("PageRead result");
+    assert_eq!(read.get("has_more").and_then(Value::as_bool), Some(false));
+    assert!(
+        read.get("materialized_pages")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            > 1,
+        "a one-line PageRead must be fully materialized by the host"
     );
 
     let send_done = result.steps.iter().filter(|step| {

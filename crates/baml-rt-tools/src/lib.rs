@@ -112,8 +112,8 @@ pub use tool_error_classify::{
     should_host_retry, should_host_retry_baml_error,
 };
 pub use tool_fsm::{
-    SessionPhase, ToolFailure, ToolFailureKind, ToolSession, ToolSessionError, ToolSessionId,
-    ToolStep, tool_failure_to_baml_tool_execution_error,
+    A2A_DELEGATION_FAILED_CODE, SessionPhase, ToolFailure, ToolFailureKind, ToolSession,
+    ToolSessionError, ToolSessionId, ToolStep, tool_failure_to_baml_tool_execution_error,
 };
 pub use tool_schema::{
     ActionIdentity, DescribeAction, DescribeActionIdentity, ToolType, json_schema_value, ts_decl,

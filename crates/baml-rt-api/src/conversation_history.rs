@@ -390,7 +390,7 @@ pub enum ConversationHistoryContentDto {
         #[serde(skip_serializing_if = "Option::is_none")]
         send_done_replay_payload: Option<Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        read_replay_lines: Option<Vec<String>>,
+        read_replay_payload: Option<Value>,
     },
     OperationalEvent {
         kind: String,
@@ -603,7 +603,7 @@ impl From<ConversationItemContent> for ConversationHistoryContentDto {
                 tool_name: session_step.tool_name,
                 op: session_step.op.into(),
                 send_done_replay_payload: session_step.send_done_replay_payload,
-                read_replay_lines: session_step.read_replay_lines,
+                read_replay_payload: session_step.read_replay_payload,
             },
             ConversationItemContent::Operational(op) => op.into(),
             ConversationItemContent::Planning(plan) => plan.into(),

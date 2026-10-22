@@ -28,7 +28,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     archive_read::{
-        DEFAULT_TOOL_RESULT_INLINE_LINES, PageLimit, RenderedContent, ShortRef,
+        DEFAULT_TOOL_RESULT_INLINE_LINES, PageLimit, ShortRef,
         format_session_read_body_from_rendered, format_session_read_from_vtable, render_to_lines,
         session_read_command_line,
     },
@@ -110,8 +110,9 @@ pub struct SessionStepPayload {
     /// `SendDone` only: graph-hydrated tool `tool_result` JSON for ref-table / `@N` replay seeding;
     /// the `SendDone` step itself is **not** emitted as a projected history row.
     pub send_done_replay_payload: Option<Value>,
-    /// `SearchRead` / `PageRead` only: pre-hydrated window; wins over `archive_reader` when non-empty.
-    pub read_replay_lines: Option<Vec<String>>,
+    /// `SearchRead` / `PageRead` only: pre-hydrated `SendDone` JSON; re-rendered during replay and
+    /// wins over `archive_reader` when present.
+    pub read_replay_payload: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -583,23 +584,21 @@ fn render_projection_content(
                 limit,
             } => {
                 let cmd = session_read_command_line(archive_ref, Some(grep.as_str()));
-                if let Some(ref lines) = s.read_replay_lines
-                    && !lines.is_empty()
-                {
-                    let rendered = RenderedContent::from_lines(
-                        lines.iter().filter(|l| !l.is_empty()).cloned(),
-                    );
-                    let out = format_session_read_body_from_rendered(
-                        &rendered,
-                        archive_ref,
-                        Some(grep.as_str()),
-                        *offset,
-                        PageLimit::new(*limit),
-                    );
-                    return RenderedEntry::One {
-                        content: out,
-                        message_citations: None,
-                    };
+                if let Some(ref payload) = s.read_replay_payload {
+                    let rendered = render_to_lines(payload);
+                    if !rendered.is_empty() {
+                        let out = format_session_read_body_from_rendered(
+                            &rendered,
+                            archive_ref,
+                            Some(grep.as_str()),
+                            *offset,
+                            PageLimit::new(*limit),
+                        );
+                        return RenderedEntry::One {
+                            content: out,
+                            message_citations: None,
+                        };
+                    }
                 }
                 if let Some(output) = format_session_read_from_vtable(
                     ref_table,
@@ -632,23 +631,21 @@ fn render_projection_content(
                 limit,
             } => {
                 let cmd = session_read_command_line(archive_ref, None);
-                if let Some(ref lines) = s.read_replay_lines
-                    && !lines.is_empty()
-                {
-                    let rendered = RenderedContent::from_lines(
-                        lines.iter().filter(|l| !l.is_empty()).cloned(),
-                    );
-                    let out = format_session_read_body_from_rendered(
-                        &rendered,
-                        archive_ref,
-                        None,
-                        *offset,
-                        PageLimit::new(*limit),
-                    );
-                    return RenderedEntry::One {
-                        content: out,
-                        message_citations: None,
-                    };
+                if let Some(ref payload) = s.read_replay_payload {
+                    let rendered = render_to_lines(payload);
+                    if !rendered.is_empty() {
+                        let out = format_session_read_body_from_rendered(
+                            &rendered,
+                            archive_ref,
+                            None,
+                            *offset,
+                            PageLimit::new(*limit),
+                        );
+                        return RenderedEntry::One {
+                            content: out,
+                            message_citations: None,
+                        };
+                    }
                 }
                 if let Some(output) =
                     format_session_read_from_vtable(ref_table, archive_ref, None, *offset, *limit)
@@ -685,7 +682,7 @@ mod tests {
             tool_name: tool_name.to_string(),
             op,
             send_done_replay_payload: None,
-            read_replay_lines: None,
+            read_replay_payload: None,
         })
     }
 
@@ -698,7 +695,7 @@ mod tests {
             tool_name: tool_name.to_string(),
             op,
             send_done_replay_payload: Some(replay_payload),
-            read_replay_lines: None,
+            read_replay_payload: None,
         })
     }
 

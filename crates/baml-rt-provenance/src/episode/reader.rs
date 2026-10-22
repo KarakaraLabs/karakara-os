@@ -22,7 +22,7 @@ use baml_rt_core::{
     ids::{ContextId, TaskId},
 };
 use baml_rt_tools::{
-    archive_read::{PageLimit, RenderedContent, format_session_read_body_from_rendered},
+    archive_read::{PageLimit, format_session_read_body_from_rendered, render_to_lines},
     archive_refs::RefTable,
     prompt_projection::episode_session_history_projection_options,
     tools::ToolRegistry,
@@ -779,8 +779,10 @@ fn conv_item_to_entries(
                 offset,
                 limit,
             } => {
-                if let Some(raw_lines) = ss.read_replay_lines.as_ref().filter(|l| !l.is_empty()) {
-                    let rendered = RenderedContent::from_lines(raw_lines.iter().cloned());
+                if let Some(payload) = ss.read_replay_payload.as_ref()
+                    && let rendered = render_to_lines(payload)
+                    && !rendered.is_empty()
+                {
                     let built = format_session_read_body_from_rendered(
                         &rendered,
                         archive_ref.as_str(),
@@ -832,8 +834,10 @@ fn conv_item_to_entries(
                 offset,
                 limit,
             } => {
-                if let Some(raw_lines) = ss.read_replay_lines.as_ref().filter(|l| !l.is_empty()) {
-                    let rendered = RenderedContent::from_lines(raw_lines.iter().cloned());
+                if let Some(payload) = ss.read_replay_payload.as_ref()
+                    && let rendered = render_to_lines(payload)
+                    && !rendered.is_empty()
+                {
                     let built = format_session_read_body_from_rendered(
                         &rendered,
                         archive_ref.as_str(),

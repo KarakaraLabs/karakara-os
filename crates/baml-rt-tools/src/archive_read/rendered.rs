@@ -7,6 +7,16 @@
 //! One heap allocation for the entire rendered text. Line boundaries
 //! tracked as byte offsets for zero-copy iteration.
 
+/// Half-open, 0-based line span for one rendered array item.
+///
+/// Spans are renderer metadata, not parsed from YAML. They let SearchRead return the complete
+/// record that owns a matching line while preserving the original archive line numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct RecordSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Rendered text content with efficient line access.
 ///
 /// Stores the full rendered text in a single `String` buffer with a
@@ -16,6 +26,8 @@ pub struct RenderedContent {
     buf: String,
     /// Byte offsets of each `\n` in `buf`. Length == line count.
     line_ends: Vec<usize>,
+    /// Non-overlapping top-level record spans, ordered by starting line.
+    record_spans: Vec<RecordSpan>,
 }
 
 impl RenderedContent {
@@ -36,7 +48,51 @@ impl RenderedContent {
                 line_ends.push(buf.len());
             }
         }
-        Self { buf, line_ends }
+        Self {
+            buf,
+            line_ends,
+            record_spans: Vec::new(),
+        }
+    }
+
+    /// Build rendered content and attach record spans produced by the JSON renderer.
+    ///
+    /// Plain-line and legacy archive callers should continue using [`Self::from_lines`].
+    pub fn try_from_lines_with_record_spans(
+        lines: impl IntoIterator<Item = String>,
+        record_spans: Vec<RecordSpan>,
+    ) -> Result<Self, String> {
+        let mut content = Self::from_lines(lines);
+        let mut previous_end = 0;
+        for (index, span) in record_spans.iter().enumerate() {
+            if span.start >= span.end {
+                return Err(format!(
+                    "record span {index} is empty or reversed: {}..{}",
+                    span.start, span.end
+                ));
+            }
+            if span.end > content.line_count() {
+                return Err(format!(
+                    "record span {index} ends beyond rendered content: {} > {}",
+                    span.end,
+                    content.line_count()
+                ));
+            }
+            if index > 0 && span.start < previous_end {
+                return Err(format!(
+                    "record span {index} overlaps or is out of order: {} < {previous_end}",
+                    span.start
+                ));
+            }
+            previous_end = span.end;
+        }
+        content.record_spans = record_spans;
+        Ok(content)
+    }
+
+    /// Renderer-provided record boundaries. Empty means SearchRead uses line filtering.
+    pub fn record_spans(&self) -> &[RecordSpan] {
+        &self.record_spans
     }
 
     /// Number of lines.
@@ -111,5 +167,24 @@ mod tests {
         let split = RenderedContent::from_lines(vec!["a\nb".to_string()]);
         assert_eq!(split.line_count(), 2);
         assert_eq!(split.lines().collect::<Vec<_>>(), vec!["a", "b"]);
+        assert!(split.record_spans().is_empty());
+    }
+
+    #[test]
+    fn record_spans_are_validated() {
+        let content = RenderedContent::try_from_lines_with_record_spans(
+            vec!["- id: one".to_string(), "  name: first".to_string()],
+            vec![RecordSpan { start: 0, end: 2 }],
+        )
+        .expect("valid span");
+        assert_eq!(content.record_spans(), &[RecordSpan { start: 0, end: 2 }]);
+
+        assert!(
+            RenderedContent::try_from_lines_with_record_spans(
+                vec!["one".to_string()],
+                vec![RecordSpan { start: 0, end: 2 }],
+            )
+            .is_err()
+        );
     }
 }

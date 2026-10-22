@@ -2876,15 +2876,7 @@ expression: snapshot
                 "op": {
                   "$ref": "#/components/schemas/SessionStepOpDto"
                 },
-                "read_replay_lines": {
-                  "type": [
-                    "array",
-                    "null"
-                  ],
-                  "items": {
-                    "type": "string"
-                  }
-                },
+                "read_replay_payload": {},
                 "send_done_replay_payload": {},
                 "tool_name": {
                   "type": "string"

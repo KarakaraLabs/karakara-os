@@ -42,13 +42,13 @@ pub(crate) const CITATIONS_SEND_STEP: &str = "Cite what informed this Send. Two 
 
 pub(crate) const ARCHIVE_READ_ARCHIVE_REF: &str = "archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.";
 
-pub(crate) const ARCHIVE_SEARCH_READ_GREP: &str = "Non-empty filter over rendered archive lines. SearchRead is for locating lines that match; use when you have a concrete term. Shape: substring or regex per host (e.g. name, -i error). For full contiguous slices without filtering, use PageRead.";
+pub(crate) const ARCHIVE_SEARCH_READ_GREP: &str = "Non-empty filter over rendered archive lines. When a match belongs to a rendered array record, SearchRead returns that complete record; other content falls back to matching lines. Literal substring by default; a bare `|` means regex alternation (e.g. `in progress|done`); prefix `-E` for full regex, `-F` to force literal, `-i` for case-insensitive. For contiguous unfiltered text, use PageRead.";
 
-pub(crate) const ARCHIVE_SEARCH_READ_OFFSET: &str = "0-based offset over grep matches (after the filter). First window: offset=0; next: previous next_offset while matches remain.";
+pub(crate) const ARCHIVE_SEARCH_READ_OFFSET: &str = "0-based offset over filtered result units. A unit is a complete record when record metadata applies, otherwise one matching line. First window: offset=0; continue with the returned next_offset.";
 
 pub(crate) const ARCHIVE_PAGE_READ_OFFSET: &str = "0-based offset over full rendered archive lines (no grep). First window: offset=0; next: previous next_offset while lines remain.";
 
-pub(crate) const ARCHIVE_READ_LIMIT: &str = "Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).";
+pub(crate) const ARCHIVE_READ_LIMIT: &str = "Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).";
 
 // --- Conversation history (ctx.tags) — must match runtime projection ---
 
@@ -74,7 +74,7 @@ pub(crate) const STEP_DESC_CLAUDE_OR_A2A: &str = "Emit one step. Legal `op` and 
 pub(crate) const STEP_DESC_DEFAULT: &str = "Emit one step. Legal `op` and field shapes: this return type and the `*OpenStep` / `*SendStep` / `SearchRead` / `PageRead` / `Finish` / `Abort` classes in this file — do not paraphrase JSON field lists in the prompt. @N beside a prior Send is an archive handle for PageRead/SearchRead (archive_ref is @ only). Do not use #N as an archive handle — #N indexes transcript lines only.";
 
 /// Field-level hint for `*SearchReadStep` (`ArchiveSearchReadInput`).
-pub(crate) const SEARCH_READ_STEP_INPUT_DESCRIPTION: &str = "SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.";
+pub(crate) const SEARCH_READ_STEP_INPUT_DESCRIPTION: &str = "SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.";
 
 /// Field-level hint for `*PageReadStep` (`ArchivePageReadInput`).
 pub(crate) const PAGE_READ_STEP_INPUT_DESCRIPTION: &str = "PageRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a contiguous window: required archive_ref; omit grep. Why: the summary line is not the body; this step materializes lines. The host line may show offset= for the next page. For line filtering, use SearchRead.";
@@ -185,7 +185,7 @@ type ReplyPart = TextPart | DataPart
 
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {{
-  parts ReplyPart[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")
+  parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
   citations string[] @description("{c_reply}")
 }}
 
