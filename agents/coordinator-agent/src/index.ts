@@ -10,10 +10,11 @@
  *   2. GetDiscoverAgentsPlan — **only if** step 1 chose a delegatable task (skip for greetings/meta).
  *   3. MakeStructuredPlan — LLM plans from history; returns plan_steps or []
  *   4a. FormatCapabilities — if no steps: capability summary (StructuredReply)
- *   4b. DecideDelegationAction × N — FSM: Open→Send→Read→null per delegate
- *   5. CoordinatorSynthesizeReply — LLM synthesizes all results from history
+ *   4b. One delegation — host forwards its terminal structured reply; multiple delegations use the FSM
+ *   5. CoordinatorSynthesizeReply — only for multi-agent plans
  */
 import type {
+  RunContext,
   SessionResult,
   StandardStructuredPlan,
   StructuredReply,
@@ -61,6 +62,112 @@ function isUsableReadyIntent(raw: string): boolean {
   if (s.length < 8) return false;
   if (/^(hi|hello|hey|thanks|thank you)\b/i.test(s)) return false;
   return true;
+}
+
+function delegatedReplyFromOutput(output: unknown): StructuredReply | null {
+  if (!isObject(output) || !Array.isArray(output.chunks)) return null;
+
+  // A terminal A2A response may stream its prose and its structured envelope in separate
+  // message chunks. Keep every valid part in wire order rather than treating one chunk as the
+  // final answer. A data-only reply is valid too.
+  const parts: StructuredReply["parts"] = [];
+  for (const rawChunk of output.chunks) {
+    if (!isObject(rawChunk) || !isObject(rawChunk.message) || !Array.isArray(rawChunk.message.parts)) {
+      continue;
+    }
+    for (const rawPart of rawChunk.message.parts) {
+      if (!isObject(rawPart)) continue;
+      if (typeof rawPart.text === "string") {
+        parts.push({ type: "text", text: rawPart.text });
+      }
+      if (rawPart.data !== undefined) {
+        const mediaType = rawPart.mediaType;
+        parts.push({
+          type: "data",
+          data: JSON.stringify(rawPart.data),
+          media_type: mediaType === "text/plain"
+            || mediaType === "text/markdown"
+            || mediaType === "application/json"
+            || mediaType === "text/csv"
+            ? mediaType
+            : "application/json",
+        });
+      }
+    }
+  }
+
+  if (parts.length === 0) return null;
+
+  // Child archive refs are local to the child context and must not be copied into the parent
+  // response. This direct session has a parent-side provenance edge, but it does not expose an
+  // archive ref that can safely be cited yet.
+  return { parts, citations: [] };
+}
+
+function delegatedPromptFromOutput(output: unknown): string | null {
+  if (!isObject(output) || !Array.isArray(output.chunks)) return null;
+  for (const rawChunk of [...output.chunks].reverse()) {
+    if (!isObject(rawChunk) || !isObject(rawChunk.message) || !Array.isArray(rawChunk.message.parts)) {
+      continue;
+    }
+    for (const rawPart of rawChunk.message.parts) {
+      if (isObject(rawPart) && typeof rawPart.text === "string" && rawPart.text.trim()) {
+        return rawPart.text.trim();
+      }
+    }
+  }
+  return null;
+}
+
+async function forwardSingleDelegation(
+  ctx: RunContext,
+  agent_package: string,
+  agent_instance_id: string,
+  goal: string,
+): Promise<StructuredReply> {
+  const session = await openToolSession("system/internal_a2a", {
+    target: { agent_package, agent_instance_id },
+  });
+  let nextMessage = goal;
+  let finished = false;
+
+  try {
+    while (true) {
+      await session.send({ parts: [{ text: nextMessage }] });
+
+      while (true) {
+        const step = await session.continue();
+        if (step.status === "error") {
+          throw new Error(step.error.message || "Delegated agent failed.");
+        }
+        if (step.status === "suspended") {
+          const prompt = delegatedPromptFromOutput(step.output)
+            ?? "The delegated agent needs more information.";
+          const reply = await ctx.emit.awaitInput(prompt);
+          nextMessage = messageText(reply).trim();
+          if (!nextMessage) throw new Error("A delegated agent requested input but no reply was provided.");
+          break;
+        }
+        if (step.status === "done") {
+          const forwarded = delegatedReplyFromOutput(step.output);
+          if (!forwarded) {
+            throw new Error("Delegated agent completed without a user-ready structured reply.");
+          }
+          await session.finish();
+          finished = true;
+          return forwarded;
+        }
+      }
+    }
+  } finally {
+    if (!finished) {
+      try {
+        await session.abort("delegation did not produce a forwardable terminal reply");
+      } catch {
+        // Best effort. Preserve the original delegation failure.
+      }
+    }
+  }
 }
 
 __chat_register({
@@ -191,6 +298,26 @@ __chat_register({
             })),
           })
         : null;
+
+      if (steps.length === 1) {
+        const step = steps[0];
+        const stepId = "step-0";
+        const agent_package = String(step.agent_package ?? "");
+        const agent_instance_id = String(step.agent_instance_id ?? "default");
+        const goal = String(step.sub_message ?? objective);
+        if (!agent_package) throw new Error("Delegation step did not name an agent package.");
+
+        await delegateExecutable?.startStep(stepId);
+        const forwarded = await forwardSingleDelegation(
+          ctx,
+          agent_package,
+          agent_instance_id,
+          goal,
+        );
+        await delegateExecutable?.completeStep(stepId);
+        await delegateExecutable?.finish();
+        return { message: forwarded };
+      }
 
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];

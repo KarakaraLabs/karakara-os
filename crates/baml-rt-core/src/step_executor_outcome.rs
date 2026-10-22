@@ -31,6 +31,7 @@ pub enum StepPlanViolationCode {
     UnknownToolSessionOp,
     InvalidPlanInputJson,
     MaxStepsExhausted,
+    DelegationFailed,
 }
 
 impl StepPlanViolationCode {
@@ -50,6 +51,7 @@ impl StepPlanViolationCode {
             Self::UnknownToolSessionOp => "unknown_tool_session_op",
             Self::InvalidPlanInputJson => "invalid_plan_input_json",
             Self::MaxStepsExhausted => "max_steps_exhausted",
+            Self::DelegationFailed => "delegation_failed",
         }
     }
 }
@@ -239,6 +241,21 @@ impl StepPlanRecovery {
                 "Use the latest archive receipt to PageRead or SearchRead if result lines are needed."
                     .to_string(),
                 "Otherwise emit the terminal response allowed by the current phase.".to_string(),
+            ],
+        )
+    }
+
+    #[must_use]
+    pub fn delegation_failed(detail: &str) -> Self {
+        Self::new(
+            StepPlanViolationCode::DelegationFailed,
+            format!("The delegated agent could not complete the request: {detail}"),
+            "A delegated agent failure is not a successful result and must be surfaced to the user.",
+            vec![
+                "Report the delegated agent's failure to the user instead of synthesizing an answer."
+                    .to_string(),
+                "Do not treat an empty or failed delegation result as a zero-result answer."
+                    .to_string(),
             ],
         )
     }

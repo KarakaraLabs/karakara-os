@@ -322,20 +322,38 @@ fn to_conversation_chunk(value: Value) -> ConversationChunk {
     }
 }
 
-fn chunk_value_has_input_required(value: &Value) -> bool {
-    let state = value
+/// Detect a terminal A2A task state on a chunk, returning the mapped completion plus the
+/// child-provided status message when one is present.
+fn chunk_terminal_state(value: &Value) -> Option<(InternalA2aCompletion, Option<String>)> {
+    let status = value
         .get("task")
         .and_then(|t| t.get("status"))
+        .or_else(|| value.get("statusUpdate").and_then(|s| s.get("status")));
+    let state = status
         .and_then(|s| s.get("state"))
         .and_then(Value::as_str)
-        .or_else(|| {
-            value
-                .get("statusUpdate")
-                .and_then(|s| s.get("status"))
-                .and_then(|s| s.get("state"))
-                .and_then(Value::as_str)
-        });
-    matches!(state, Some("TASK_STATE_INPUT_REQUIRED"))
+        .map(ToOwned::to_owned);
+    let message = status
+        .and_then(|s| s.get("message"))
+        .and_then(|m| m.get("parts"))
+        .and_then(Value::as_array)
+        .and_then(|parts| {
+            parts
+                .iter()
+                .find_map(|part| part.get("text").and_then(Value::as_str))
+        })
+        .filter(|text| !text.trim().is_empty())
+        .map(ToOwned::to_owned);
+    let completion = match state.as_deref() {
+        Some("TASK_STATE_COMPLETED") => InternalA2aCompletion::Completed,
+        Some("TASK_STATE_FAILED") => InternalA2aCompletion::Failed,
+        Some("TASK_STATE_CANCELED") => InternalA2aCompletion::Canceled,
+        Some("TASK_STATE_REJECTED") => InternalA2aCompletion::Rejected,
+        Some("TASK_STATE_INPUT_REQUIRED") => InternalA2aCompletion::InputRequired,
+        Some("TASK_STATE_AUTH_REQUIRED") => InternalA2aCompletion::AuthRequired,
+        _ => return None,
+    };
+    Some((completion, message))
 }
 
 /// Returns true when a chunk carries actual conversational content from the agent.
@@ -353,27 +371,34 @@ fn is_conversational_chunk(chunk: &ConversationChunk) -> bool {
             .filter(|t| !t.trim().is_empty())
             .filter(|t| !is_history_infrastructure_notice(t))
             .is_some()
+            || part.data.is_some()
     })
+}
+
+/// Priority for merging completions: failure states dominate, then user-action suspensions,
+/// then normal completion.
+fn terminal_priority(completion: &InternalA2aCompletion) -> u8 {
+    match completion {
+        InternalA2aCompletion::Failed
+        | InternalA2aCompletion::Canceled
+        | InternalA2aCompletion::Rejected => 3,
+        InternalA2aCompletion::InputRequired | InternalA2aCompletion::AuthRequired => 2,
+        InternalA2aCompletion::Completed | InternalA2aCompletion::Done => 1,
+    }
 }
 
 fn merge_outputs(outputs: Vec<InternalA2aNextOutput>) -> InternalA2aNextOutput {
     let mut chunks = Vec::new();
-    let mut completion = None;
+    let mut completion: Option<InternalA2aCompletion> = None;
     for out in outputs {
         chunks.extend(out.chunks);
-        match out.completion {
-            Some(InternalA2aCompletion::InputRequired) => {
-                completion = Some(InternalA2aCompletion::InputRequired);
-            }
-            Some(InternalA2aCompletion::Failed)
-                if !matches!(completion, Some(InternalA2aCompletion::InputRequired)) =>
-            {
-                completion = Some(InternalA2aCompletion::Failed);
-            }
-            Some(InternalA2aCompletion::Done) if completion.is_none() => {
-                completion = Some(InternalA2aCompletion::Done);
-            }
-            _ => {}
+        if let Some(next) = out.completion {
+            completion = Some(match &completion {
+                Some(current) if terminal_priority(current) >= terminal_priority(&next) => {
+                    current.clone()
+                }
+                _ => next,
+            });
         }
     }
     InternalA2aNextOutput {
@@ -449,20 +474,40 @@ impl ToolSession for A2aSession {
                     while let Some(response) = stream.next().await {
                         let value = response.into_inner();
                         let chunk = extract_chunk_value(value.clone());
-                        let input_required = chunk_value_has_input_required(&chunk);
+                        let terminal = chunk_terminal_state(&chunk);
+                        let completion =
+                            terminal.as_ref().map(|(completion, _)| completion.clone());
+                        let mut conversational = to_conversation_chunk(value);
+                        if let Some((completion, message)) = &terminal
+                            && matches!(
+                                completion,
+                                InternalA2aCompletion::Failed
+                                    | InternalA2aCompletion::Canceled
+                                    | InternalA2aCompletion::Rejected
+                            )
+                        {
+                            // Surface the child's failure as the conversational text so it is not
+                            // filtered out as an infra status update and never archived as "{}".
+                            let text = message.clone().unwrap_or_else(|| {
+                                format!("delegated agent ended with {completion:?}")
+                            });
+                            conversational.message = Some(ConversationMessage {
+                                role: None,
+                                parts: vec![ConversationPart {
+                                    text: Some(text),
+                                    ..Default::default()
+                                }],
+                            });
+                        }
                         let out = InternalA2aNextOutput {
-                            chunks: vec![to_conversation_chunk(value)],
-                            completion: if input_required {
-                                Some(InternalA2aCompletion::InputRequired)
-                            } else {
-                                None
-                            },
+                            chunks: vec![conversational],
+                            completion,
                             history_context: None,
                         };
                         if tx.send(out).await.is_err() {
                             break;
                         }
-                        if input_required {
+                        if terminal.is_some() {
                             break;
                         }
                     }
@@ -511,9 +556,15 @@ impl ToolSession for A2aSession {
             merged.history_context = Some(HistoryContextV1 {
                 hop: self.read_hop,
                 op: HistoryContextSessionOp::PageRead,
-                status: match merged.completion {
-                    Some(InternalA2aCompletion::InputRequired) => HistoryContextStatus::Suspended,
-                    Some(InternalA2aCompletion::Failed) => HistoryContextStatus::Error,
+                status: match merged.completion.as_ref() {
+                    Some(
+                        InternalA2aCompletion::InputRequired | InternalA2aCompletion::AuthRequired,
+                    ) => HistoryContextStatus::Suspended,
+                    Some(
+                        InternalA2aCompletion::Failed
+                        | InternalA2aCompletion::Canceled
+                        | InternalA2aCompletion::Rejected,
+                    ) => HistoryContextStatus::Error,
                     _ => HistoryContextStatus::Streaming,
                 },
                 truncated: false,
@@ -530,15 +581,22 @@ impl ToolSession for A2aSession {
                 )))
             })?;
             let step = if matches!(
-                merged.completion,
-                Some(InternalA2aCompletion::InputRequired)
+                merged.completion.as_ref(),
+                Some(InternalA2aCompletion::InputRequired | InternalA2aCompletion::AuthRequired)
             ) {
                 self.output_rx = None;
                 ToolStep::Suspended { output: value }
-            } else if matches!(merged.completion, Some(InternalA2aCompletion::Failed)) {
+            } else if matches!(
+                merged.completion.as_ref(),
+                Some(
+                    InternalA2aCompletion::Failed
+                        | InternalA2aCompletion::Canceled
+                        | InternalA2aCompletion::Rejected
+                )
+            ) {
                 self.output_rx = None;
                 ToolStep::Error {
-                    error: ToolFailure::execution_failed(completion_failure_message(&merged)),
+                    error: ToolFailure::a2a_delegation_failed(completion_failure_message(&merged)),
                 }
             } else {
                 self.accumulated_outputs.push(merged.clone());
@@ -560,11 +618,16 @@ impl ToolSession for A2aSession {
                     merged.history_context = Some(HistoryContextV1 {
                         hop: self.read_hop,
                         op: HistoryContextSessionOp::PageRead,
-                        status: match merged.completion {
-                            Some(InternalA2aCompletion::InputRequired) => {
-                                HistoryContextStatus::Suspended
-                            }
-                            Some(InternalA2aCompletion::Failed) => HistoryContextStatus::Error,
+                        status: match merged.completion.as_ref() {
+                            Some(
+                                InternalA2aCompletion::InputRequired
+                                | InternalA2aCompletion::AuthRequired,
+                            ) => HistoryContextStatus::Suspended,
+                            Some(
+                                InternalA2aCompletion::Failed
+                                | InternalA2aCompletion::Canceled
+                                | InternalA2aCompletion::Rejected,
+                            ) => HistoryContextStatus::Error,
                             _ => HistoryContextStatus::Streaming,
                         },
                         truncated: false,
@@ -581,15 +644,25 @@ impl ToolSession for A2aSession {
                         )))
                     })?;
                     let step = if matches!(
-                        merged.completion,
-                        Some(InternalA2aCompletion::InputRequired)
+                        merged.completion.as_ref(),
+                        Some(
+                            InternalA2aCompletion::InputRequired
+                                | InternalA2aCompletion::AuthRequired
+                        )
                     ) {
                         self.output_rx = None;
                         ToolStep::Suspended { output: value }
-                    } else if matches!(merged.completion, Some(InternalA2aCompletion::Failed)) {
+                    } else if matches!(
+                        merged.completion.as_ref(),
+                        Some(
+                            InternalA2aCompletion::Failed
+                                | InternalA2aCompletion::Canceled
+                                | InternalA2aCompletion::Rejected
+                        )
+                    ) {
                         self.output_rx = None;
                         ToolStep::Error {
-                            error: ToolFailure::execution_failed(completion_failure_message(
+                            error: ToolFailure::a2a_delegation_failed(completion_failure_message(
                                 &merged,
                             )),
                         }
@@ -700,6 +773,39 @@ mod tests {
     }
 
     #[test]
+    fn conversation_chunk_preserves_structured_a2a_parts() {
+        let chunk = to_conversation_chunk(serde_json::json!({
+            "message": {
+                "role": "ROLE_AGENT",
+                "parts": [
+                    { "text": "Three tasks found" },
+                    {
+                        "data": { "items": [{ "id": "task-1" }, { "id": "task-2" }, { "id": "task-3" }] },
+                        "media_type": "application/json"
+                    }
+                ]
+            }
+        }));
+
+        let message = chunk.message.expect("conversation message");
+        assert_eq!(message.parts[0].text.as_deref(), Some("Three tasks found"));
+        assert_eq!(
+            message.parts[1]
+                .data
+                .as_ref()
+                .expect("structured data part")
+                .as_value(),
+            &serde_json::json!({
+                "items": [{ "id": "task-1" }, { "id": "task-2" }, { "id": "task-3" }]
+            })
+        );
+        assert_eq!(
+            message.parts[1].media_type.as_deref(),
+            Some("application/json")
+        );
+    }
+
+    #[test]
     fn build_send_stream_request_uses_stable_child_task_id() {
         let target = responder_target();
         let context_id = ContextId::new(1, 1);
@@ -806,5 +912,43 @@ mod tests {
         let a = derive_a2a_child_context_id(&caller, &target, &child_a);
         let b = derive_a2a_child_context_id(&caller, &target, &child_b);
         assert_ne!(a.as_str(), b.as_str());
+    }
+
+    #[test]
+    fn chunk_terminal_state_maps_all_a2a_terminal_states() {
+        let cases = [
+            ("TASK_STATE_COMPLETED", InternalA2aCompletion::Completed),
+            ("TASK_STATE_FAILED", InternalA2aCompletion::Failed),
+            ("TASK_STATE_CANCELED", InternalA2aCompletion::Canceled),
+            ("TASK_STATE_REJECTED", InternalA2aCompletion::Rejected),
+            (
+                "TASK_STATE_INPUT_REQUIRED",
+                InternalA2aCompletion::InputRequired,
+            ),
+            (
+                "TASK_STATE_AUTH_REQUIRED",
+                InternalA2aCompletion::AuthRequired,
+            ),
+        ];
+        for (state, expected) in cases {
+            let chunk = serde_json::json!({
+                "statusUpdate": {
+                    "status": {
+                        "state": state,
+                        "message": { "parts": [{ "text": "child status message" }] }
+                    }
+                }
+            });
+            let (completion, message) = chunk_terminal_state(&chunk).expect("terminal state");
+            assert_eq!(completion, expected);
+            assert_eq!(message.as_deref(), Some("child status message"));
+        }
+
+        // Non-terminal states and non-status chunks are ignored.
+        let working =
+            serde_json::json!({ "statusUpdate": { "status": { "state": "TASK_STATE_WORKING" } } });
+        assert!(chunk_terminal_state(&working).is_none());
+        let missing = serde_json::json!({ "message": { "parts": [{ "text": "hi" }] } });
+        assert!(chunk_terminal_state(&missing).is_none());
     }
 }
