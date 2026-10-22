@@ -24,6 +24,16 @@ offset: number | null;
 limit: number | null;
  }
 
+export interface ArchiveReceipt { archive_ref: string;
+tool_name: string;
+action_identity: string;
+line_count: number;
+byte_count: number;
+size_display: string;
+completion: string;
+search_hints: string[] | null;
+ }
+
 export interface ArchiveSearchReadInput { archive_ref: string;
 grep: string;
 offset: number | null;
@@ -102,6 +112,7 @@ export interface SendEmailInput {
 export interface SessionContext { contract_version: string;
 session_open: boolean;
 status: string;
+last_receipt: ArchiveReceipt | null;
 last_step_op: string | null;
 last_step_status: string | null;
 last_archive_ref: string | null;
@@ -622,7 +633,7 @@ declare global {
 export type StepExecutorFunctionName = "ExecuteStep" | "ExecuteStep__active__support_crm" | "ExecuteStep__active__support_email" | "ExecuteStep__entry";
 
 export interface SessionContext {
-    contract_version: "session_context_v3";
+    contract_version: "session_context_v5";
     session_open: boolean;
     status: "awaiting_open" | "just_opened" | "result_ready" | "done";
     last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
@@ -630,6 +641,7 @@ export interface SessionContext {
     last_archive_ref?: string;
     last_output_header?: string;
     last_completion?: string;
+    last_receipt?: { archive_ref: string; tool_name: string; action_identity: string; line_count: number; byte_count: number; size_display: string; completion: string; search_hints?: string[] };
     archives?: Array<{ archive_ref: string; header: string }>;
 }
 

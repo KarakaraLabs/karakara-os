@@ -58,6 +58,7 @@ export interface ConversationMessage {
 
 export interface ConversationPart {
   text?: string | null;
+  data?: JsonValue | null;
   raw?: string | null;
   url?: string | null;
   filename?: string | null;
@@ -133,7 +134,7 @@ export interface HistoryContextV1 {
   [key: string]: JsonValue | undefined;
 }
 
-export type InternalA2aCompletion = "DONE" | "INPUT_REQUIRED" | "FAILED";
+export type InternalA2aCompletion = "DONE" | "COMPLETED" | "FAILED" | "CANCELED" | "REJECTED" | "INPUT_REQUIRED" | "AUTH_REQUIRED";
 
 export interface InternalA2aNextOutput {
   chunks: ConversationChunk[];

@@ -573,7 +573,7 @@ declare global {
 export type StepExecutorFunctionName = "ChooseCalculatoragentTool" | "ChooseCalculatoragentTool__active__support_calculate" | "ChooseCalculatoragentTool__entry";
 
 export interface SessionContext {
-    contract_version: "session_context_v3";
+    contract_version: "session_context_v5";
     session_open: boolean;
     status: "awaiting_open" | "just_opened" | "result_ready" | "done";
     last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
@@ -581,6 +581,7 @@ export interface SessionContext {
     last_archive_ref?: string;
     last_output_header?: string;
     last_completion?: string;
+    last_receipt?: { archive_ref: string; tool_name: string; action_identity: string; line_count: number; byte_count: number; size_display: string; completion: string; search_hints?: string[] };
     archives?: Array<{ archive_ref: string; header: string }>;
 }
 
@@ -701,12 +702,24 @@ class ArchiveLedgerEntry {
   header string @description("Compact tool/action identity for this Send, without result body")
 }
 
+class ArchiveReceipt {
+  archive_ref string @description("Resolvable archive handle from a completed Send")
+  tool_name string @description("Qualified tool name that produced this archive")
+  action_identity string @description("Bounded Send action and input identity, without result body")
+  line_count int @description("Rendered archive line count")
+  byte_count int @description("Rendered archive byte count")
+  size_display string @description("Human-readable rendered archive size")
+  completion string @description("Completion state for the archived Send")
+  search_hints string[]? @description("Trusted searchable field names when supplied by tool metadata")
+}
+
 /// Runtime session state injected by the step-executor loop.
 /// Do not construct manually — values come from the FSM.
 class SessionContext {
   contract_version string
   session_open bool
   status string @description("FSM status: awaiting_open | just_opened | result_ready | done. result_ready means previous direct Send completed and its archive is available; read it or move on, do not re-Send same input.")
+  last_receipt ArchiveReceipt? @description("Latest completed Send receipt. The archive body is not in this object.")
   last_step_op string? @description("Previous FSM step op when known: open | send | duplicate_send | read | finish | abort")
   last_step_status string? @description("Previous FSM step status when known: open | done | duplicate | finished | aborted")
   last_archive_ref string? @description("Archive ref from the previous Send when available, e.g. @4")
@@ -752,22 +765,22 @@ class StructuredReply {
 /// Line-filtered archive read (emit op SearchRead).
 class ArchiveSearchReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
-  grep string @description("Non-empty filter over rendered archive lines. SearchRead is for locating lines that match; use when you have a concrete term. Shape: substring or regex per host (e.g. name, -i error). For full contiguous slices without filtering, use PageRead.")
-  offset int? @description("0-based offset over grep matches (after the filter). First window: offset=0; next: previous next_offset while matches remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  grep string @description("Non-empty filter over rendered archive lines. When a match belongs to a rendered array record, SearchRead returns that complete record; other content falls back to matching lines. Use a concrete substring or regex per host (e.g. name, -i error). For contiguous unfiltered text, use PageRead.")
+  offset int? @description("0-based offset over filtered result units. A unit is a complete record when record metadata applies, otherwise one matching line. First window: offset=0; continue with the returned next_offset.")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Contiguous archive paging without a line filter (emit op PageRead).
 class ArchivePageReadInput {
   archive_ref string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
   offset int? @description("0-based offset over full rendered archive lines (no grep). First window: offset=0; next: previous next_offset while lines remain.")
-  limit int? @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  limit int? @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 /// Global line-filtered archive read step. Legal before Open, during a session, or after a Send.
 class ArchiveSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 /// Global contiguous archive paging step. Legal before Open, during a session, or after a Send.
@@ -838,7 +851,7 @@ class SupportCalculateSendStep {
 
 class SupportCalculateSearchReadStep {
   op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 class SupportCalculatePageReadStep {
@@ -887,6 +900,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 The user said: { user_message }
@@ -925,6 +948,16 @@ Tool and operation types:
 Session history:
 {{ ctx.tags['conversation_transcript'] }}
 {% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
 Current step instructions:
 
 The user said: { user_message }
@@ -940,8 +973,56 @@ Do not add text before or after the JSON object.
 
 Phase policy:
 - Derived state rule: this active return union has no `Open` variant.
-- After Send completes with status done, use PageRead or SearchRead on last_archive_ref when archive lines are needed; otherwise emit Finish.
-- Never re-Send identical input after a Done; re-Send only for pagination (has_more) or a genuinely different query.
+- After Send completes with status done, the next hop is a consume phase.
+"#
+
+}
+
+/// Result-consumption executor: archive reads or terminal synthesis after Send.
+function ChooseCalculatoragentTool__consume__support_calculate(
+  user_message: string,
+  session_context: SessionContext
+) -> ReadOnlyFinishStep | SupportCalculatePageReadStep | SupportCalculateSearchReadStep {
+
+  client DefaultClient
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
+Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+
+{% if ctx.tags['tool_schema_prelude'] %}
+Tool and operation types:
+{{ ctx.tags['tool_schema_prelude'] }}
+
+{% endif %}
+{% if ctx.tags['conversation_transcript'] %}
+Session history:
+{{ ctx.tags['conversation_transcript'] }}
+{% endif %}
+{% if session_context.last_receipt %}
+Completed tool result:
+{{ session_context.last_receipt.archive_ref }} · {{ session_context.last_receipt.tool_name }}:{{ session_context.last_receipt.action_identity }} · {{ session_context.last_receipt.line_count }}L · {{ session_context.last_receipt.size_display }} · {{ session_context.last_receipt.completion }}
+Result body is archived and is not visible yet.
+{% if session_context.last_receipt.search_hints %}Search hints: {{ session_context.last_receipt.search_hints | join(', ') }}
+{% endif %}Next: SearchRead using this archive ref with a concrete filter, PageRead using this archive ref with a small limit, or finish. Do not repeat the completed Send.
+{% endif %}
+{% if session_context.archives %}Recent archives:
+{% for archive in session_context.archives %}{{ archive.archive_ref }} · {{ archive.header }}
+{% endfor %}{% endif %}
+Current step instructions:
+
+The user said: { user_message }
+Decide whether to use a tool and produce a session plan.
+
+{ user_message }
+
+Return exactly one JSON object of type `ReadOnlyFinishStep | SupportCalculatePageReadStep | SupportCalculateSearchReadStep`.
+
+Use `op` as the discriminator: "PageRead" | "ReadOnlyFinish" | "SearchRead".
+Do not add text before or after the JSON object.
+
+Phase policy:
+- Derived state rule: this is a result-consumption phase and excludes `Send` and `Open`.
+- Use PageRead or SearchRead with the completed archive receipt when result lines are needed.
+- Otherwise emit a terminal response to explicitly consume the receipt.
 "#
 
 }
@@ -967,7 +1048,7 @@ Type definitions:
 type ArchivePageReadInput = {
   archive_ref: string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
   offset?: int @description("0-based offset over full rendered archive lines (no grep). First window: offset=0; next: previous next_offset while lines remain.")
-  limit?: int @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  limit?: int @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 type ArchivePageReadStep = {
@@ -977,14 +1058,14 @@ type ArchivePageReadStep = {
 
 type ArchiveSearchReadInput = {
   archive_ref: string @description("archive_ref names a Send output archive: set it to the exact @N shown on that Send line in the transcript (e.g. @1, @2). Do not use #N or any # prefix — # is for session history lines only and is invalid in this field. Do not invent @N. PageRead/SearchRead materialize line bodies from that handle; allowed with a real visible @N without Open or an active session.")
-  grep: string @description("Non-empty filter over rendered archive lines. SearchRead is for locating lines that match; use when you have a concrete term. Shape: substring or regex per host (e.g. name, -i error). For full contiguous slices without filtering, use PageRead.")
-  offset?: int @description("0-based offset over grep matches (after the filter). First window: offset=0; next: previous next_offset while matches remain.")
-  limit?: int @description("Max lines in this read window. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
+  grep: string @description("Non-empty filter over rendered archive lines. When a match belongs to a rendered array record, SearchRead returns that complete record; other content falls back to matching lines. Use a concrete substring or regex per host (e.g. name, -i error). For contiguous unfiltered text, use PageRead.")
+  offset?: int @description("0-based offset over filtered result units. A unit is a complete record when record metadata applies, otherwise one matching line. First window: offset=0; continue with the returned next_offset.")
+  limit?: int @description("Max result units in this read window. SearchRead units may be complete records; PageRead units are lines. Prefer a small explicit value when exploring. Omitting limit uses the host default (bounded).")
 }
 
 type ArchiveSearchReadStep = {
   op: "SearchRead"
-  input: ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input: ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 type CalculatorInput = {
@@ -1026,7 +1107,7 @@ type SupportCalculatePageReadStep = {
 
 type SupportCalculateSearchReadStep = {
   op: "SearchRead"
-  input: ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. Why: the summary line is not the text; this step materializes matching lines. If the prior read shows offset=, continue with that offset. For contiguous unfiltered text, use PageRead instead.")
+  input: ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
 type SupportCalculateSendStep = {

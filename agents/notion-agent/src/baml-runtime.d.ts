@@ -58,6 +58,7 @@ export interface ConversationMessage {
 
 export interface ConversationPart {
   text?: string | null;
+  data?: JsonValue | null;
   raw?: string | null;
   url?: string | null;
   filename?: string | null;
@@ -119,7 +120,7 @@ export interface HistoryContextV1 {
   [key: string]: JsonValue | undefined;
 }
 
-export type InternalA2aCompletion = "DONE" | "INPUT_REQUIRED" | "FAILED";
+export type InternalA2aCompletion = "DONE" | "COMPLETED" | "FAILED" | "CANCELED" | "REJECTED" | "INPUT_REQUIRED" | "AUTH_REQUIRED";
 
 export interface InternalA2aNextOutput {
   chunks: ConversationChunk[];
@@ -729,7 +730,7 @@ declare global {
 export type StepExecutorFunctionName = "ChooseNotionAction" | "ChooseNotionAction__active__support_notion" | "ChooseNotionAction__entry";
 
 export interface SessionContext {
-    contract_version: "session_context_v3";
+    contract_version: "session_context_v5";
     session_open: boolean;
     status: "awaiting_open" | "just_opened" | "result_ready" | "done";
     last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
@@ -737,6 +738,7 @@ export interface SessionContext {
     last_archive_ref?: string;
     last_output_header?: string;
     last_completion?: string;
+    last_receipt?: { archive_ref: string; tool_name: string; action_identity: string; line_count: number; byte_count: number; size_display: string; completion: string; search_hints?: string[] };
     archives?: Array<{ archive_ref: string; header: string }>;
 }
 
