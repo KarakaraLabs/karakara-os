@@ -7,14 +7,12 @@ expression: snapshot
   "body": [
     {
       "agent_package": "pkg-a",
-      "agent_instance_id": "default",
       "name": "Agent A",
       "version": "0.1.0",
       "agent_card": {
         "name": "Agent A",
         "version": "0.1.0",
         "agent_package": "pkg-a",
-        "agent_instance_id": "default",
         "tools": [],
         "baml_functions": [],
         "capabilities": []
@@ -22,14 +20,12 @@ expression: snapshot
     },
     {
       "agent_package": "pkg-b",
-      "agent_instance_id": "default",
       "name": "Agent B",
       "version": "0.2.0",
       "agent_card": {
         "name": "Agent B",
         "version": "0.2.0",
         "agent_package": "pkg-b",
-        "agent_instance_id": "default",
         "tools": [],
         "baml_functions": [],
         "capabilities": []

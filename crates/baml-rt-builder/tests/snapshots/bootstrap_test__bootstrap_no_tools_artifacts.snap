@@ -484,7 +484,6 @@ export interface ToolFailure {
 // Shared standard planning types
 class StandardAgentPlanStep {
   agent_package string @description("Exact agent_package from discovery results (e.g. 'extrospection-agent'). Copy verbatim — do not truncate or reformat.")
-  agent_instance_id string @description("Agent instance ID, usually 'default'. Copy from discovery results.")
   sub_message string
 }
 
@@ -567,7 +566,7 @@ type ReplyPart = TextPart | DataPart
 
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
-  parts ReplyPart[] @description("Ordered parts: start with TextPart (type \"text\") — set media_type TextMarkdown for rich answers (see TextPart); optionally append DataPart (type \"data\", media_type ApplicationJson) with a JSON string for machine-readable UI payloads.")
+  parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
   citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 

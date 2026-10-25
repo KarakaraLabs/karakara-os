@@ -171,7 +171,10 @@ pub fn route_key_from_request(request: impl AsRef<Value>) -> Result<AgentRouteKe
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentInstanceId, AgentPackageName};
+    use serde_json::json;
+
+    use super::{AgentInstanceId, AgentPackageName, route_key_from_request};
+    use crate::{A2aWireRequest, AgentCard, AgentDiscoveryEntry, BamlRtError};
 
     #[test]
     fn package_name_parse_rejects_invalid_characters() {
@@ -189,5 +192,55 @@ mod tests {
         assert!(AgentInstanceId::parse("").is_none());
         assert!(AgentInstanceId::parse(" staging ").is_none());
         assert!(AgentInstanceId::parse("..\0").is_none());
+    }
+
+    /// The removed instance dimension must be rejected wherever a caller could still supply it,
+    /// for every value including the historical `"default"`. Discovery output must not expose it.
+    #[test]
+    fn agent_instance_id_is_rejected_everywhere() {
+        let base = json!({
+            "params": {
+                "metadata": {
+                    "target": { "agent_package": "coordinator-agent" }
+                }
+            }
+        });
+        let key = route_key_from_request(A2aWireRequest::from(base.clone()))
+            .expect("package-only target parses");
+        assert_eq!(key.agent_package.as_str(), "coordinator-agent");
+
+        for value in ["default", "staging", "anything"] {
+            let mut request = base.clone();
+            request["params"]["metadata"]["target"]["agent_instance_id"] = json!(value);
+            match route_key_from_request(A2aWireRequest::from(request)) {
+                Err(BamlRtError::UnsupportedAgentInstance(_)) => {}
+                other => panic!("expected UnsupportedAgentInstance for {value:?}, got {other:?}"),
+            }
+        }
+
+        // Discovery entries must not serialize the removed field.
+        let entry = AgentDiscoveryEntry {
+            agent_package: "coordinator-agent".to_string(),
+            name: "coordinator-agent".to_string(),
+            version: "1".to_string(),
+            agent_card: AgentCard {
+                name: "coordinator-agent".to_string(),
+                version: "1".to_string(),
+                content_hash: None,
+                repository_version: None,
+                agent_package: "coordinator-agent".to_string(),
+                tools: vec![],
+                baml_functions: vec![],
+                description: None,
+                capabilities: vec![],
+                tags: vec![],
+                subscriptions: vec![],
+            },
+        };
+        let serialized = serde_json::to_string(&entry).expect("discovery entry serializes");
+        assert!(
+            !serialized.contains("agent_instance_id"),
+            "discovery entry must not expose agent_instance_id: {serialized}"
+        );
     }
 }
