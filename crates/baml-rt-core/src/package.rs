@@ -34,7 +34,7 @@ pub struct AgentManifest {
     pub name: String,
     #[serde(default = "default_entry_point")]
     pub entry_point: String,
-    /// Stable archive identity; packager sets to UUID if missing when packaging.
+    /// Legacy archive label. It is optional and does not identify package contents.
     #[serde(default)]
     pub signature: String,
     #[serde(default)]

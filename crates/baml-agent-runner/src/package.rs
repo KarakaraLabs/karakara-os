@@ -61,12 +61,6 @@ fn load_package_blocking(package_path: &Path) -> Result<(PathBuf, AgentManifest)
     let manifest: AgentManifest =
         serde_json::from_str(&manifest_content).map_err(BamlRtError::Json)?;
 
-    if manifest.signature.is_empty() {
-        return Err(BamlRtError::InvalidArgument(
-            "manifest.json missing or empty 'signature' field".to_string(),
-        ));
-    }
-
     info!(
         name = manifest.name,
         version = manifest.version,
@@ -86,12 +80,50 @@ fn load_package_blocking(package_path: &Path) -> Result<(PathBuf, AgentManifest)
 
 #[cfg(test)]
 mod tests {
-    use super::next_extract_dir;
+    use std::fs;
+
+    use super::{load_package, next_extract_dir};
 
     #[test]
     fn next_extract_dir_is_unique() {
         let a = next_extract_dir().expect("first path");
         let b = next_extract_dir().expect("second path");
         assert_ne!(a, b, "extract directories must be unique");
+    }
+
+    #[tokio::test]
+    async fn package_without_a_signature_loads() {
+        let temp = tempfile::tempdir().expect("temporary package directory");
+        let package_path = temp.path().join("agent.tar.gz");
+        let package_file = fs::File::create(&package_path).expect("create package");
+        let encoder = flate2::write::GzEncoder::new(package_file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+
+        append_file(
+            &mut archive,
+            "manifest.json",
+            br#"{
+                "version": "1.0.0",
+                "name": "unsigned-agent",
+                "entry_point": "dist/index.js"
+            }"#,
+        );
+        append_file(&mut archive, "baml_src/agent.baml", b"client Test {}\n");
+        let encoder = archive.into_inner().expect("finish tar archive");
+        encoder.finish().expect("finish gzip package");
+
+        let (extract_dir, manifest) = load_package(&package_path).await.expect("load package");
+        assert_eq!(manifest.name, "unsigned-agent");
+        assert!(manifest.signature.is_empty());
+        fs::remove_dir_all(extract_dir).expect("remove extracted package");
+    }
+
+    fn append_file<W: std::io::Write>(archive: &mut tar::Builder<W>, path: &str, bytes: &[u8]) {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(path).expect("valid archive path");
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append(&header, bytes).expect("append package file");
     }
 }

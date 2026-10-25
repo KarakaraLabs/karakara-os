@@ -13,7 +13,6 @@ use baml_rt_core::AgentManifest;
 use baml_rt_tools::external_tools::EXTERNAL_TOOLS_LOCKFILE_NAME;
 use flate2::{Compression, write::GzEncoder};
 use tar::{Builder, Header};
-use uuid::Uuid;
 
 use crate::builder::{
     error::{BamlBuilderError, Result},
@@ -66,15 +65,12 @@ fn package_blocking(agent_dir: &Path, build_dir: &Path, output: &Path) -> Result
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = Builder::new(enc);
 
-    // Add manifest.json (ensure signature exists; use dist/index.js as entry_point when built)
+    // Add manifest.json. Signature is optional; use dist/index.js as entry_point when built.
     let manifest_path = agent_dir.join("manifest.json");
     if manifest_path.exists() {
         let content = fs::read_to_string(&manifest_path)?;
         let mut manifest: AgentManifest =
             serde_json::from_str(&content).map_err(BamlBuilderError::Json)?;
-        if manifest.signature.is_empty() {
-            manifest.signature = Uuid::new_v4().to_string();
-        }
         if build_dir.join("dist").join("index.js").exists() {
             manifest.entry_point = "dist/index.js".to_string();
         }
