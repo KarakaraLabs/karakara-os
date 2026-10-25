@@ -28,10 +28,15 @@
 //! are excluded. Two packages with identical authored source produce
 //! identical hashes.
 
+mod agent_identity;
 mod artifact_hash;
 mod content_hash;
 mod hasher;
 
+pub use agent_identity::{
+    AgentIdentityDigest, AgentIdentityDigestParseError, AgentIdentityEntry, AgentIdentityError,
+    compute_agent_identity_digest,
+};
 pub use artifact_hash::{ArtifactHash, ArtifactHashParseError};
 pub use content_hash::{ContentHash, ContentHashParseError};
 pub use hasher::{CanonicalHasher, HashInput, HashInputFile};

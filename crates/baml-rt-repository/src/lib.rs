@@ -40,6 +40,7 @@ pub mod search;
 pub mod commands;
 pub mod dev_artifacts;
 pub mod error;
+pub mod identity;
 pub mod package;
 
 // --- Storage trait boundaries ---
@@ -76,6 +77,9 @@ pub use entry::{
 pub use error::{RepositoryError, Result};
 pub use external_tool::{
     ExternalToolRegistryTool, ExternalToolRegistryToolVersion, ExternalToolSnapshotBlob,
+};
+pub use identity::{
+    PackageIdentityError, identity_entries_from_extracted_package, identity_entries_from_tar_gz,
 };
 pub use ids::{AgentName, ArtifactHash, ContentHash, Generation, Version, VersionRef};
 pub use lineage::{LineageEdge, LineageKind, LineageSubgraph, Parentage};

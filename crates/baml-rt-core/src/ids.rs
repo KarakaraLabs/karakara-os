@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use baml_rt_hash::AgentIdentityDigest;
 pub use baml_rt_id::{
     ConstantConstructible, ConstantId, DerivedConstructible, DerivedId, ExternalConstructible,
     ExternalId, MonotonicConstructible, MonotonicId, ProvActivitySemantics, ProvAgentSemantics,
@@ -18,6 +19,15 @@ pub use baml_rt_id::{
     ProvKind, ProvVocabularyType, TemporalConstructible, TemporalId, UuidConstructible, UuidId,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// RFC 4122 URL namespace. Used only to derive [`AGENTIUM_AGENT_NAMESPACE`].
+#[cfg(test)]
+const NAMESPACE_URL: Uuid = uuid::uuid!("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+
+/// Fixed domain separator for every Agentium agent identity.
+/// UUIDv5(`NAMESPACE_URL`, `"urn:agentium:agent-id"`).
+pub const AGENTIUM_AGENT_NAMESPACE: Uuid = uuid::uuid!("901413be-e052-5702-98d9-9e382499c0b0");
 
 macro_rules! define_id_type {
     ($(#[$doc:meta])* $name:ident) => {
@@ -265,6 +275,17 @@ impl AgentId {
     pub fn from_uuid(id: UuidId) -> Self {
         Self(id.to_string())
     }
+
+    /// Derive the stable identity of a packaged agent from its behavior digest.
+    pub fn from_identity_digest(digest: &AgentIdentityDigest) -> Self {
+        Self(
+            Uuid::new_v5(
+                &AGENTIUM_AGENT_NAMESPACE,
+                format!("urn:agentium:agent-id:{}", digest.as_str()).as_bytes(),
+            )
+            .to_string(),
+        )
+    }
 }
 
 impl From<String> for IntentId {
@@ -430,6 +451,14 @@ mod tests {
             assert_ne!(PlanId::from(a.clone()),   PlanId::from(b.clone()));
             assert_ne!(PlanStepId::from(a.clone()), PlanStepId::from(b.clone()));
         }
+    }
+
+    #[test]
+    fn namespace_matches_documented_derivation() {
+        assert_eq!(
+            AGENTIUM_AGENT_NAMESPACE,
+            Uuid::new_v5(&NAMESPACE_URL, b"urn:agentium:agent-id"),
+        );
     }
 
     #[test]
