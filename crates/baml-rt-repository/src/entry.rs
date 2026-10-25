@@ -12,7 +12,7 @@ use baml_rt_hash::{ArtifactHash, CanonicalHasher, ContentHash, HashInput, HashIn
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::{AgentName, Generation, VersionRef},
+    ids::{AgentName, Generation, Version, VersionRef},
     lineage::Parentage,
 };
 
@@ -338,6 +338,22 @@ pub struct NewEntry {
     pub change_rationale: ChangeRationale,
     /// Initial tags to attach.
     pub tags: Vec<Tag>,
+}
+
+// ---------------------------------------------------------------------------
+// VersionReservation — one publisher holding the version it will build
+// ---------------------------------------------------------------------------
+
+/// A version held by one publisher between reservation and entry insert.
+///
+/// Reserving before a build keeps two concurrent publishes from building for the same
+/// version. Reservations expire, so a crashed publisher cannot block a version forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionReservation {
+    pub name: AgentName,
+    pub version: Version,
+    /// Opaque token identifying the holder. Only the holder can consume or release it.
+    pub holder: String,
 }
 
 // ---------------------------------------------------------------------------

@@ -69,7 +69,10 @@ mod spans;
 // --- Re-exports for public API ---
 pub use commands::{ForkCommand, PublishCommand, PublishResult};
 pub use dev_artifacts::{DevArtifactsBundle, dev_artifacts_blob_hash, resolve_package_hash};
-pub use entry::{ChangeRationale, NewEntry, RepositoryEntry, RepositoryEntryHeader, SourceBundle};
+pub use entry::{
+    ChangeRationale, NewEntry, RepositoryEntry, RepositoryEntryHeader, SourceBundle,
+    VersionReservation,
+};
 pub use error::{RepositoryError, Result};
 pub use external_tool::{
     ExternalToolRegistryTool, ExternalToolRegistryToolVersion, ExternalToolSnapshotBlob,
@@ -88,7 +91,7 @@ pub use router::{
     repository_mutation_router, repository_read_router, repository_router,
     repository_router_without_publish,
 };
-pub use service::RepositoryService;
+pub use service::{DEFAULT_VERSION_RESERVATION_TTL_MS, RepositoryService};
 pub use storage::{
     BlobStore, ExternalToolRegistryStore, LineageStore, McpRegistryStore, MetadataStore,
     SearchStore,

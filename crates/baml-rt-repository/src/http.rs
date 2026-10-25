@@ -75,6 +75,13 @@ impl From<RepositoryError> for HttpApiProblem {
                     .detail(e.to_string())
             }
 
+            RepositoryError::VersionReservationExhausted { .. } => {
+                HttpApiProblem::new(ProblemStatusCode::CONFLICT)
+                    .title("Version reservation failed")
+                    .type_url(VERSION_CONFLICT)
+                    .detail(e.to_string())
+            }
+
             RepositoryError::InvalidSourceBundle { .. } => {
                 HttpApiProblem::new(ProblemStatusCode::BAD_REQUEST)
                     .title("Invalid source bundle")

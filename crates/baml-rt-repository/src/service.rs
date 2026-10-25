@@ -18,7 +18,7 @@ use baml_rt_tools::{
 
 use crate::{
     commands::{ForkCommand, PublishCommand, PublishOrigin, PublishResult},
-    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp},
+    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp, VersionReservation},
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
     ids::{AgentName, ArtifactHash, ContentHash, Generation, LineageEdgeId, Version},
@@ -30,6 +30,13 @@ use crate::{
         SearchStore,
     },
 };
+
+/// Default lifetime of a version reservation held by one publisher.
+///
+/// A publisher reserves before building, so this must comfortably exceed a full build. A
+/// crashed publisher blocks its version for at most this long. A gap left behind costs
+/// nothing: versions are monotonic labels, not dense counters.
+pub const DEFAULT_VERSION_RESERVATION_TTL_MS: u64 = 600_000;
 
 /// The main repository service.
 ///
@@ -202,26 +209,78 @@ impl RepositoryService {
 
     /// Publish a new agent version.
     ///
-    /// 1. Determine parentage and generation from origin.
-    /// 2. Insert metadata (store atomically assigns version, writes it into
-    ///    the manifest, and computes the content hash).
-    /// 3. Record lineage edges (using the hash returned by the store).
+    /// Reserves the version, then records parentage, inserts the entry at the reserved
+    /// version, and writes lineage edges. The reservation is released on failure.
     pub async fn publish(&self, cmd: PublishCommand) -> Result<PublishResult> {
-        self.publish_with_artifact(cmd, None).await
+        let reservation = self.reserve_version(&cmd.name).await?;
+        self.publish_reserved(cmd, &reservation, None).await
     }
 
-    /// Publish a source entry that realizes an already-built package artifact.
+    /// Reserve the next free version for `name`.
+    ///
+    /// Callers that build an artifact before publishing reserve first so the artifact's
+    /// manifest and the stored entry carry the same version.
+    pub async fn reserve_version(&self, name: &AgentName) -> Result<VersionReservation> {
+        self.metadata
+            .reserve_version(name, DEFAULT_VERSION_RESERVATION_TTL_MS)
+            .await
+    }
+
+    /// Release a reservation that will not produce an entry.
+    pub async fn release_version(&self, reservation: &VersionReservation) -> Result<()> {
+        self.metadata.release_version(reservation).await
+    }
+
+    /// Publish a source bundle that realizes an already-built package artifact.
+    ///
+    /// The artifact must already be stored under `artifact_hash`. Prefer this over
+    /// [`publish`](Self::publish) after a build: the caller holds the version reservation
+    /// so the artifact manifest and the entry agree.
     pub async fn publish_built(
         &self,
         cmd: PublishCommand,
+        reservation: &VersionReservation,
         artifact_hash: ArtifactHash,
     ) -> Result<PublishResult> {
-        self.publish_with_artifact(cmd, Some(artifact_hash)).await
+        self.publish_reserved(cmd, reservation, Some(artifact_hash))
+            .await
     }
 
-    async fn publish_with_artifact(
+    /// Publish at an explicitly reserved version.
+    ///
+    /// The reservation is released on failure. On success the store consumes it together
+    /// with the entry insert.
+    pub async fn publish_reserved(
         &self,
         cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: Option<ArtifactHash>,
+    ) -> Result<PublishResult> {
+        if reservation.name != cmd.name {
+            let _ = self.release_version(reservation).await;
+            return Err(RepositoryError::VersionConflict {
+                name: cmd.name.clone(),
+                version: reservation.version,
+            });
+        }
+        let result = self.finish_publish(cmd, reservation, artifact_hash).await;
+        if result.is_err()
+            && let Err(e) = self.release_version(reservation).await
+        {
+            tracing::warn!(
+                agent = %reservation.name,
+                version = reservation.version.as_u32(),
+                error = %e,
+                "failed to release version reservation after publish failure; it will expire"
+            );
+        }
+        result
+    }
+
+    async fn finish_publish(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
         artifact_hash: Option<ArtifactHash>,
     ) -> Result<PublishResult> {
         let _span = crate::spans::publish(cmd.name.as_str());
@@ -300,8 +359,12 @@ impl RepositoryService {
             tags,
         };
 
-        // Store atomically assigns version, writes it into manifest, computes hash.
-        let stored = self.metadata.insert_entry(&new_entry).await?;
+        // Insert at the reserved version. The store fails if the lineage no longer
+        // agrees with it, so a concurrent publisher cannot steal this version.
+        let stored = self
+            .metadata
+            .insert_reserved_entry(&new_entry, reservation)
+            .await?;
 
         // Now create lineage edges using the store-assigned hash as target.
         if !edge_descriptors.is_empty() {
@@ -429,13 +492,11 @@ impl RepositoryService {
         self.metadata.list_agents().await
     }
 
-    /// Version number the next [`publish`](Self::publish) for this agent will receive
-    /// (matches [`MetadataStore::insert_entry`](crate::storage::MetadataStore::insert_entry) logic).
+    /// Version number the next [`publish`](Self::publish) for this agent will receive.
+    ///
+    /// Counts live reservations as well as stored entries.
     pub async fn next_version_for_agent(&self, name: &AgentName) -> Result<u32> {
-        Ok(match self.get_latest(name).await? {
-            Some(prev) => prev.version_ref.version.as_u32().saturating_add(1),
-            None => 1,
-        })
+        Ok(self.metadata.next_version(name).await?.as_u32())
     }
 
     // -----------------------------------------------------------------------

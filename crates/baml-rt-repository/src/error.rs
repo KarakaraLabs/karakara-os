@@ -38,6 +38,9 @@ pub enum RepositoryError {
     #[error("Version conflict: {name}@{version} already exists")]
     VersionConflict { name: AgentName, version: Version },
 
+    #[error("Could not reserve a version for {name} after {attempts} attempts")]
+    VersionReservationExhausted { name: AgentName, attempts: u32 },
+
     // --- Validation failures ---
     #[error("Invalid source bundle: {reason}")]
     InvalidSourceBundle { reason: String },

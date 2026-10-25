@@ -39,6 +39,10 @@ async fn artifact_hash_verified_from_publish_to_boot() {
 
     let blob = b"packaged agent bytes".to_vec();
     let artifact_hash = ArtifactHash::from_bytes(&blob);
+    let reservation = svc
+        .reserve_version(&"artifact-agent".parse().expect("valid agent name"))
+        .await
+        .expect("reserve version");
 
     let published = svc
         .publish_built(
@@ -54,6 +58,7 @@ async fn artifact_hash_verified_from_publish_to_boot() {
                 rationale: ChangeRationale::new("artifact handoff").expect("rationale"),
                 origin: PublishOrigin::Original,
             },
+            &reservation,
             artifact_hash.clone(),
         )
         .await

@@ -13,7 +13,7 @@ use baml_rt_core::{ArtifactHash, join_error_message};
 use baml_rt_repository::{
     RepositoryService,
     commands::{PublishCommand, PublishResult},
-    entry::SourceBundle,
+    entry::{SourceBundle, VersionReservation},
     package::source_bundle_from_tar_gz,
 };
 // Register tool inventory for repository-side artifact builds (POST /repository/publish).
@@ -25,19 +25,45 @@ use baml_tools_security_eval as _;
 use http_api_problem::HttpApiProblem;
 
 /// Publish an agent: build from source and store in repository (POST /repository/publish, operator-authenticated).
+///
+/// The version is reserved before the build, so the artifact manifest and the stored entry
+/// carry the same version even when several publishes run at once. The blob is written
+/// before the entry; an orphan blob is harmless because blob storage is content addressed.
 pub async fn publish_with_build(
     State(svc): State<Arc<RepositoryService>>,
     Json(cmd): Json<PublishCommand>,
 ) -> Result<Json<PublishResult>, HttpApiProblem> {
-    let next_version = svc
-        .next_version_for_agent(&cmd.name)
+    let reservation = svc
+        .reserve_version(&cmd.name)
         .await
         .map_err(HttpApiProblem::from)?;
 
-    let source_versioned = cmd.source.with_manifest_version(next_version);
+    let outcome = publish_reserved_artifact(svc.clone(), cmd, &reservation).await;
+    if outcome.is_err() {
+        // `publish_reserved` releases its own failures; this covers build, parse, and blob
+        // failures that happen before it. Releasing a consumed reservation is a no-op.
+        if let Err(e) = svc.release_version(&reservation).await {
+            tracing::warn!(
+                agent = %reservation.name,
+                version = reservation.version.as_u32(),
+                error = %e,
+                "failed to release version reservation after publish failure; it will expire"
+            );
+        }
+    }
+    outcome.map(Json)
+}
+
+async fn publish_reserved_artifact(
+    svc: Arc<RepositoryService>,
+    cmd: PublishCommand,
+    reservation: &VersionReservation,
+) -> Result<PublishResult, HttpApiProblem> {
+    let repository_version = reservation.version.as_u32();
+    let source_versioned = cmd.source.with_manifest_version(repository_version);
     tracing::info!(
         agent = %cmd.name,
-        repository_version = next_version,
+        repository_version,
         "building repository artifact"
     );
     let (built, dev_artifacts): (Arc<[u8]>, Option<baml_rt_repository::DevArtifactsBundle>) = {
@@ -67,16 +93,24 @@ pub async fn publish_with_build(
                     .detail(e.to_string())
             })?;
 
-    let expected = extracted.with_manifest_version(next_version).compute_hash();
+    let expected = extracted
+        .with_manifest_version(repository_version)
+        .compute_hash();
 
-    let cmd2 = PublishCommand {
+    // Blob first: a failure here leaves neither an entry nor a claim on one, and an orphan
+    // blob is harmless because it is content addressed.
+    svc.put_built_blob(&artifact_hash, built.as_ref())
+        .await
+        .map_err(HttpApiProblem::from)?;
+
+    let cmd = PublishCommand {
         name: cmd.name,
         source: extracted,
         rationale: cmd.rationale,
         origin: cmd.origin,
     };
     let result = svc
-        .publish_built(cmd2, artifact_hash.clone())
+        .publish_built(cmd, reservation, artifact_hash)
         .await
         .map_err(HttpApiProblem::from)?;
     if expected.as_str() != result.hash.as_str() {
@@ -91,17 +125,13 @@ pub async fn publish_with_build(
         );
     }
 
-    svc.put_built_blob(&artifact_hash, built.as_ref())
-        .await
-        .map_err(HttpApiProblem::from)?;
-
     if let Some(artifacts) = dev_artifacts {
         svc.put_dev_artifacts(&result.hash, &artifacts)
             .await
             .map_err(HttpApiProblem::from)?;
     }
 
-    Ok(Json(result))
+    Ok(result)
 }
 
 async fn build_artifact(
