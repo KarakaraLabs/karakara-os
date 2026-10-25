@@ -18,6 +18,7 @@ path = "src/bin/baml-agent-runner.rs"
 baml-rt-a2a = { path = "../baml-rt-a2a" }
 baml-rt-api = { path = "../baml-rt-api" }
 baml-rt-core = { path = "../baml-rt-core" }
+baml-rt-hash = { path = "../baml-rt-hash" }
 baml-rt-router = { path = "../baml-rt-router" }
 baml-rt-observability = { path = "../baml-rt-observability" }
 baml-rt-quickjs = { path = "../baml-rt-quickjs" }

@@ -922,7 +922,7 @@ enum ProvenanceWriterConfig {
     Default,
 }
 
-/// Agent ID configuration: either provided or auto-generated.
+/// Agent ID configuration: provided for hosted agents or generated for ephemeral ones.
 enum AgentIdConfig {
     Provided(baml_rt_core::ids::AgentId),
     AutoGenerate,
@@ -980,7 +980,8 @@ impl A2aAgentBuilder {
     /// - `register_baml_functions`: `true`
     /// - `init_js`: Empty vec
     /// - `task_store` / `provenance_writer`: default pair mounts an **in-memory Surreal** graph
-    /// - `agent_id`: Auto-generated UUID
+    /// - `agent_id`: Auto-generated UUID for ephemeral agents. Hosts that provide a package
+    ///   identity must also provide a stable agent ID.
     ///
     /// **REQUIRED**: Call `with_effect_emitter()` before `build()`.
     pub fn new() -> Self {
@@ -1293,7 +1294,13 @@ impl A2aAgentBuilderWithEffectEmitter {
                 id
             }
             AgentIdConfig::AutoGenerate => {
-                tracing::debug!("A2aAgentBuilder::build: Auto-generating agent_id");
+                if matches!(&self.agent_identity, AgentIdentityConfig::Provided { .. }) {
+                    return Err(BamlRtError::InvalidArgument(
+                        "hosted A2A agents must provide a stable agent ID; auto-generation is reserved for ephemeral agents"
+                            .to_string(),
+                    ));
+                }
+                tracing::debug!("A2aAgentBuilder::build: Auto-generating ephemeral agent_id");
                 baml_rt_core::ids::AgentId::from_uuid(
                     baml_rt_core::ids::UuidId::new(Uuid::new_v4()),
                 )
@@ -2776,7 +2783,7 @@ mod tests {
     use std::sync::Arc;
 
     use baml_rt_core::{
-        BamlRtError,
+        AgentInstanceId, AgentPackageName, BamlRtError,
         context::InvocationScope,
         ids::{ContextId, ExternalId, MessageId, TaskId},
         stream_completion::StreamCompletion,
@@ -2790,6 +2797,21 @@ mod tests {
         synthetic_input_required_chunk,
     };
     use crate::a2a_types::{A2aMessageId, Message, MessageRole, Part};
+
+    #[tokio::test]
+    async fn hosted_agent_rejects_auto_generated_identity() {
+        let package = AgentPackageName::parse("hosted-agent").expect("valid package name");
+        let result = A2aAgent::builder()
+            .with_agent_identity(package, AgentInstanceId::default_id())
+            .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
+            .build()
+            .await;
+
+        assert!(
+            matches!(result, Err(BamlRtError::InvalidArgument(message)) if message.contains("must provide a stable agent ID")),
+            "hosted agents must not silently receive a random identity"
+        );
+    }
 
     #[test]
     fn synthetic_input_required_chunk_wire_shape_and_not_wire_final() {

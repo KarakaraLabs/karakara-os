@@ -23,6 +23,7 @@ use baml_rt_core::{
     ids::{AgentId, ContextId, TaskId},
     scheduling_scope_from_dispatch_metadata,
 };
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_observability::spans;
 use baml_rt_provenance::{ProvEvent, ProvenanceWriter};
 use baml_rt_repository::{ContentHash, RepositoryService, manifest_package_name_from_tar_gz};
@@ -66,6 +67,12 @@ fn callback_dispatch_context_link_event(
         dispatch_task.clone(),
         agent_id.clone(),
     ))
+}
+
+struct RepositoryDeploymentMetadata {
+    repository_version: u32,
+    artifact_hash: ArtifactHash,
+    expected_agent_id: Option<AgentId>,
 }
 
 fn parse_repository_entry_version(value: &serde_json::Value) -> Option<u32> {
@@ -278,10 +285,10 @@ impl AgentRunner {
         })
     }
 
-    pub(crate) async fn fetch_repository_version(
+    async fn fetch_repository_version(
         &self,
         content_hash: &DeploymentContentHash,
-    ) -> Result<Option<(u32, ArtifactHash)>> {
+    ) -> Result<Option<RepositoryDeploymentMetadata>> {
         if let Some(repo) = &self.embedded_repository {
             let hash = ContentHash::from_str(content_hash.as_str()).map_err(|e| {
                 BamlRtError::Io(std::io::Error::other(format!(
@@ -303,7 +310,14 @@ impl AgentRunner {
                         repository_version,
                         "repository entry read from embedded store"
                     );
-                    return Ok(Some((repository_version, artifact_hash)));
+                    return Ok(Some(RepositoryDeploymentMetadata {
+                        repository_version,
+                        artifact_hash,
+                        expected_agent_id: entry
+                            .identity_digest
+                            .as_ref()
+                            .map(AgentId::from_identity_digest),
+                    }));
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -374,7 +388,24 @@ impl AgentRunner {
                     content_hash.as_str()
                 ))
             })?;
-        Ok(Some((version, artifact_hash)))
+        let expected_agent_id = value
+            .get("identity_digest")
+            .and_then(serde_json::Value::as_str)
+            .map(str::parse::<AgentIdentityDigest>)
+            .transpose()
+            .map_err(|e| {
+                BamlRtError::InvalidArgument(format!(
+                    "repository entry JSON has invalid identity_digest for {}: {e}",
+                    content_hash.as_str()
+                ))
+            })?
+            .as_ref()
+            .map(AgentId::from_identity_digest);
+        Ok(Some(RepositoryDeploymentMetadata {
+            repository_version: version,
+            artifact_hash,
+            expected_agent_id,
+        }))
     }
 
     /// Verifies that blob bytes are a valid packaged agent and that the canonical
@@ -425,7 +456,14 @@ impl AgentRunner {
         content_hash: &DeploymentContentHash,
         artifact_hash: &ArtifactHash,
         repository_version: u32,
+        expected_agent_id: Option<&AgentId>,
     ) -> Result<(String, AgentRouteKey, BootedAgent)> {
+        let computed_artifact_hash = ArtifactHash::from_bytes(bytes);
+        if &computed_artifact_hash != artifact_hash {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: expected artifact hash {artifact_hash}, computed {computed_artifact_hash}"
+            )));
+        }
         let mut package_file = tempfile::Builder::new()
             .prefix("baml-deploy-")
             .suffix(".tar.gz")
@@ -436,6 +474,14 @@ impl AgentRunner {
         package_file.flush().map_err(BamlRtError::Io)?;
 
         let package = AgentPackage::load_from_file(package_file.path()).await?;
+        let agent_id = package.derived_agent_id()?;
+        if let Some(expected_agent_id) = expected_agent_id
+            && &agent_id != expected_agent_id
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Agent identity mismatch: deployment expects {expected_agent_id}, package derives {agent_id}"
+            )));
+        }
         let name = package.name().to_string();
         let package_name = AgentPackageName::parse(&name).ok_or_else(|| {
             BamlRtError::InvalidArgument(format!(
@@ -455,8 +501,9 @@ impl AgentRunner {
                     entries: self.discovery_entries(),
                 })
             };
-        let (agent, _agent_id) = package
+        let (agent, booted_agent_id) = package
             .boot(AgentPackageBootArgs {
+                agent_id: agent_id.clone(),
                 artifact_hash: artifact_hash.clone(),
                 shared_context_ref_store: self.shared_context_ref_store.clone(),
                 provenance_config: self.provenance_config(),
@@ -472,6 +519,11 @@ impl AgentRunner {
                 compaction_summarizer: Arc::clone(&self.compaction_summarizer),
             })
             .await?;
+        if booted_agent_id != agent_id {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "agent boot identity mismatch: expected {agent_id}, booted {booted_agent_id}"
+            )));
+        }
         let manifest = package.manifest().clone();
         let baml_functions: Vec<String> = {
             let bridge_arc = agent.bridge();
@@ -895,10 +947,7 @@ impl DeploymentManager for AgentRunner {
             }
         }
 
-        let (repository_version, artifact_hash) = match self
-            .fetch_repository_version(content_hash)
-            .await
-        {
+        let deployment = match self.fetch_repository_version(content_hash).await {
             Ok(Some(metadata)) => metadata,
             Ok(None) => {
                 return Err(BamlRtError::InvalidArgument(format!(
@@ -913,6 +962,11 @@ impl DeploymentManager for AgentRunner {
                 ))));
             }
         };
+        let RepositoryDeploymentMetadata {
+            repository_version,
+            artifact_hash,
+            expected_agent_id,
+        } = deployment;
 
         let bytes = self.fetch_blob_from_repository(&artifact_hash).await?;
         AgentRunner::verify_artifact_integrity(
@@ -957,7 +1011,13 @@ impl DeploymentManager for AgentRunner {
         }
 
         let (name, route_key, booted) = self
-            .boot_from_blob_bytes(&bytes, content_hash, &artifact_hash, repository_version)
+            .boot_from_blob_bytes(
+                &bytes,
+                content_hash,
+                &artifact_hash,
+                repository_version,
+                expected_agent_id.as_ref(),
+            )
             .await?;
         let booted_artifact_hash = booted.artifact_hash().cloned().ok_or_else(|| {
             BamlRtError::InvalidArgument(

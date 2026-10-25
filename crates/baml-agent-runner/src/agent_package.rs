@@ -22,6 +22,7 @@ use baml_rt_core::{
     context::{InvocationScope, generate_context_id},
     ids::AgentId,
 };
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_mcp::{
     composite::CompositeResolver, importer::SecretResolver as McpSecretResolver,
     resolver::default_mcp_resolver_for_agent,
@@ -95,6 +96,8 @@ pub(crate) struct JsInitialized {
 
 /// Inputs for [`AgentPackage::boot`], grouped to satisfy clippy `too_many_arguments`.
 pub(crate) struct AgentPackageBootArgs<'a> {
+    /// Stable identity derived from the extracted package before bridge construction.
+    pub(crate) agent_id: AgentId,
     /// Exact artifact bytes being booted. Production callers must provide the verified hash.
     pub(crate) artifact_hash: ArtifactHash,
     pub(crate) shared_context_ref_store: SharedContextRefStore,
@@ -352,6 +355,7 @@ impl AgentPackage {
     async fn build_agent_phase(
         &self,
         registered: ToolsRegistered,
+        agent_id: AgentId,
         provenance_config: &ProvenanceConfig,
         stream_idle_secs: Option<u64>,
         observation_notify: Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
@@ -451,6 +455,7 @@ impl AgentPackage {
         })?;
         let agent_instance_id = AgentInstanceId::default_id();
         let mut agent_builder = A2aAgent::builder()
+            .with_agent_id(agent_id)
             .with_runtime_handle(runtime_manager_arc.clone())
             .with_quickjs_config(quickjs_config)
             .with_baml_helpers(true)
@@ -534,6 +539,7 @@ impl AgentPackage {
             let built = self
                 .build_agent_phase(
                     registered,
+                    args.agent_id.clone(),
                     args.provenance_config,
                     args.stream_idle_secs,
                     args.observation_notify.clone(),
@@ -568,6 +574,12 @@ impl AgentPackage {
             }
 
             let agent_id = agent.agent_id().clone();
+            if agent_id != args.agent_id {
+                return Err(BamlRtError::InvalidArgument(format!(
+                    "agent bridge identity mismatch: expected {}, built {}",
+                    args.agent_id, agent_id
+                )));
+            }
             let writer = args.provenance_config.store().clone() as Arc<dyn ProvenanceWriter>;
             let archive_path = args.artifact_hash.to_string();
             let agent_type_parsed =
@@ -602,6 +614,27 @@ impl AgentPackage {
 
     pub(crate) fn manifest(&self) -> &AgentManifest {
         &self.manifest
+    }
+
+    /// Derive the stable identity digest from this fresh packaged-artifact extraction.
+    pub(crate) fn identity_digest(&self) -> Result<AgentIdentityDigest> {
+        let entries =
+            baml_rt_repository::identity_entries_from_extracted_package(&self.extract_dir)
+                .map_err(|error| {
+                    BamlRtError::InvalidArgument(format!(
+                        "failed to collect packaged agent identity entries: {error}"
+                    ))
+                })?;
+        baml_rt_hash::compute_agent_identity_digest(&entries).map_err(|error| {
+            BamlRtError::InvalidArgument(format!(
+                "failed to compute packaged agent identity digest: {error}"
+            ))
+        })
+    }
+
+    /// Derive the stable agent ID before constructing the bridge.
+    pub(crate) fn derived_agent_id(&self) -> Result<AgentId> {
+        Ok(AgentId::from_identity_digest(&self.identity_digest()?))
     }
 }
 
@@ -1036,7 +1069,53 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    use super::{EXTERNAL_TOOLS_LOCKFILE_NAME, ExternalLockfileMode, build_allowed_dirs_resolver};
+    use super::{
+        AgentPackage, EXTERNAL_TOOLS_LOCKFILE_NAME, ExternalLockfileMode,
+        build_allowed_dirs_resolver,
+    };
+
+    fn packaged_identity_fixture(root: &Path, source: &str) -> AgentPackage {
+        let baml_src = root.join("baml_src");
+        fs::create_dir_all(root.join("src")).expect("create source directory");
+        fs::create_dir_all(root.join("dist")).expect("create output directory");
+        fs::create_dir_all(&baml_src).expect("create BAML directory");
+        fs::write(
+            root.join("manifest.json"),
+            r#"{"name":"stable-agent","version":"1","entry_point":"dist/index.js"}"#,
+        )
+        .expect("write manifest");
+        fs::write(root.join("src/index.ts"), source).expect("write source");
+        fs::write(root.join("dist/index.js"), "compiled output").expect("write entry point");
+        fs::write(baml_src.join("agent.baml"), "function Run() -> string").expect("write BAML");
+        let manifest =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).expect("read manifest"))
+                .expect("parse manifest");
+        AgentPackage {
+            manifest,
+            extract_dir: root.to_path_buf(),
+            baml_src,
+        }
+    }
+
+    #[test]
+    fn boot_derives_stable_agent_id() {
+        let temp = tempdir().expect("tempdir");
+        let first =
+            packaged_identity_fixture(&temp.path().join("first"), "export const run = 1;\n");
+        let second =
+            packaged_identity_fixture(&temp.path().join("second"), "export const run = 1;\n");
+        let changed =
+            packaged_identity_fixture(&temp.path().join("changed"), "export const run = 2;\n");
+
+        assert_eq!(
+            first.derived_agent_id().expect("derive first ID"),
+            second.derived_agent_id().expect("derive second ID"),
+        );
+        assert_ne!(
+            first.derived_agent_id().expect("derive first ID"),
+            changed.derived_agent_id().expect("derive changed ID"),
+        );
+    }
 
     fn env_lock() -> &'static tokio::sync::Mutex<()> {
         static ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
