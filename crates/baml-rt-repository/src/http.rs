@@ -96,6 +96,13 @@ impl From<RepositoryError> for HttpApiProblem {
                     .detail(e.to_string())
             }
 
+            RepositoryError::ArtifactHashMismatch { .. } => {
+                HttpApiProblem::new(ProblemStatusCode::INTERNAL_SERVER_ERROR)
+                    .title("Artifact integrity failure")
+                    .type_url(HASH_MISMATCH)
+                    .detail(e.to_string())
+            }
+
             RepositoryError::ForkParentNotFound { .. }
             | RepositoryError::InfluenceSourceNotFound { .. }
             | RepositoryError::LineageCycle { .. } => {

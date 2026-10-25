@@ -17,7 +17,7 @@ use baml_rt_a2a::{A2aAgent, A2aRequestHandler};
 use baml_rt_api::RuntimeProgressMeter;
 use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentDiscoveryEntry, AgentInstanceId, AgentLister,
-    AgentManifest, AgentPackageName, BamlRtError, DeploymentContentHash, Result,
+    AgentManifest, AgentPackageName, ArtifactHash, BamlRtError, DeploymentContentHash, Result,
     bus::BusStream,
     context::{InvocationScope, generate_context_id},
     ids::AgentId,
@@ -95,6 +95,8 @@ pub(crate) struct JsInitialized {
 
 /// Inputs for [`AgentPackage::boot`], grouped to satisfy clippy `too_many_arguments`.
 pub(crate) struct AgentPackageBootArgs<'a> {
+    /// Exact artifact bytes being booted. Production callers must provide the verified hash.
+    pub(crate) artifact_hash: ArtifactHash,
     pub(crate) shared_context_ref_store: SharedContextRefStore,
     pub(crate) provenance_config: &'a ProvenanceConfig,
     pub(crate) policy: &'a ToolAccessPolicy,
@@ -567,7 +569,7 @@ impl AgentPackage {
 
             let agent_id = agent.agent_id().clone();
             let writer = args.provenance_config.store().clone() as Arc<dyn ProvenanceWriter>;
-            let archive_path = self.manifest.signature.clone();
+            let archive_path = args.artifact_hash.to_string();
             let agent_type_parsed =
                 AgentType::new(self.manifest.name.clone()).ok_or_else(|| {
                     BamlRtError::InvalidArgument("agent_type cannot be empty".to_string())
@@ -623,6 +625,7 @@ impl AgentLifecycleState {
 pub(crate) enum DeploymentProvenance {
     Repository {
         content_hash: DeploymentContentHash,
+        artifact_hash: ArtifactHash,
         version: u32,
     },
     #[allow(dead_code)] // constructed in test code only (bin target doesn't see cfg(test) usage)
@@ -643,6 +646,13 @@ impl BootedAgent {
     pub(crate) fn content_hash(&self) -> Option<&DeploymentContentHash> {
         match &self.provenance {
             DeploymentProvenance::Repository { content_hash, .. } => Some(content_hash),
+            DeploymentProvenance::Ephemeral => None,
+        }
+    }
+
+    pub(crate) fn artifact_hash(&self) -> Option<&ArtifactHash> {
+        match &self.provenance {
+            DeploymentProvenance::Repository { artifact_hash, .. } => Some(artifact_hash),
             DeploymentProvenance::Ephemeral => None,
         }
     }

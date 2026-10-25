@@ -22,7 +22,7 @@ use crate::{
     entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag},
     error::Result,
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Version, VersionRef},
+    ids::{AgentName, ArtifactHash, ContentHash, Version, VersionRef},
     lineage::{AncestryNode, LineageEdge, LineageSubgraph},
     mcp::{McpRegistryServer, McpRegistryServerVersion, McpRegistryToolVersion},
     search::SearchQuery,
@@ -32,10 +32,8 @@ use crate::{
 // BlobStore — tar.gz storage
 // ---------------------------------------------------------------------------
 
-/// Stores and retrieves distributable tar.gz packages by content hash.
-///
-/// The blob store is content-addressable: the `ContentHash` determines the
-/// storage path. The store does not interpret the blob contents.
+/// Stores content-addressed bytes. Agent package artifacts use [`ArtifactHash`], while
+/// legacy repository-owned auxiliary data uses [`ContentHash`].
 #[async_trait]
 pub trait BlobStore: Send + Sync {
     /// Write a tar.gz blob for the given hash. Overwrites if already present
@@ -50,6 +48,12 @@ pub trait BlobStore: Send + Sync {
 
     /// Delete a blob. No-op if the blob does not exist.
     async fn delete(&self, hash: &ContentHash) -> Result<()>;
+
+    /// Write an exact package blob, keyed by its [`ArtifactHash`].
+    async fn put_artifact(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()>;
+
+    /// Retrieve an exact package blob by [`ArtifactHash`].
+    async fn get_artifact(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>>;
 }
 
 // ---------------------------------------------------------------------------

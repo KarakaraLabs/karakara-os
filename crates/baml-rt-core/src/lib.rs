@@ -79,8 +79,8 @@ pub use context::{
 pub use deferred::DeferredHolder;
 pub use deployed_agent_lookup::DeployedAgentLookup;
 pub use deployment::{
-    DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord, DeploymentStatus,
-    UndeployResult,
+    ArtifactHash, DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    DeploymentStatus, UndeployResult,
 };
 pub use dispatch::{
     AgentDispatchAck, AgentDispatchRequest, AgentDispatchRoutingKey,

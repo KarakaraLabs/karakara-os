@@ -74,7 +74,7 @@ pub use error::{RepositoryError, Result};
 pub use external_tool::{
     ExternalToolRegistryTool, ExternalToolRegistryToolVersion, ExternalToolSnapshotBlob,
 };
-pub use ids::{AgentName, ContentHash, Generation, Version, VersionRef};
+pub use ids::{AgentName, ArtifactHash, ContentHash, Generation, Version, VersionRef};
 pub use lineage::{LineageEdge, LineageKind, LineageSubgraph, Parentage};
 pub use mcp::{
     McpRegistryServer, McpRegistryServerVersion, McpRegistryToolVersion, McpSnapshotBlob,

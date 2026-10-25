@@ -1526,6 +1526,20 @@ globalThis.onChatMessage = async function(_message) {
 
     // ── deploy idempotency guard ────────────────────────────────────────────
 
+    #[test]
+    fn boot_rejects_bytes_that_do_not_match_the_artifact_hash() {
+        let artifact_hash = baml_rt_core::ArtifactHash::from_bytes(b"published package");
+        let content_hash: baml_rt_core::DeploymentContentHash = "a".repeat(64).parse().unwrap();
+        let error = AgentRunner::verify_artifact_integrity(
+            &content_hash,
+            &artifact_hash,
+            b"tampered package",
+            1,
+        )
+        .expect_err("boot must reject bytes that differ from their published artifact hash");
+        assert!(error.to_string().contains("Artifact integrity failure"));
+    }
+
     #[tokio::test]
     async fn test_deploy_by_hash_returns_already_deployed_for_existing() {
         use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey, DeploymentManager};
@@ -1552,6 +1566,7 @@ globalThis.onChatMessage = async function(_message) {
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Repository {
                 content_hash: hash.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"idempotent artifact"),
                 version: 1,
             },
             lifecycle: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
@@ -1584,6 +1599,7 @@ globalThis.onChatMessage = async function(_message) {
         store
             .save_deployment(&DeploymentRecord {
                 content_hash: h_old.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"old artifact"),
                 agent_name: "dup-agent".into(),
                 deployed_at: "100".into(),
                 status: DeploymentStatus::Active,
@@ -1596,6 +1612,7 @@ globalThis.onChatMessage = async function(_message) {
         store
             .save_deployment(&DeploymentRecord {
                 content_hash: h_new.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"new artifact"),
                 agent_name: "dup-agent".into(),
                 deployed_at: "200".into(),
                 status: DeploymentStatus::Active,

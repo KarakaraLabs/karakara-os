@@ -48,6 +48,7 @@ const OPEN_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60
 const SCHEMA_QUERIES: &[&str] = &[
     "DEFINE TABLE IF NOT EXISTS deployments SCHEMAFULL",
     "DEFINE FIELD IF NOT EXISTS content_hash ON deployments TYPE string",
+    "DEFINE FIELD IF NOT EXISTS artifact_hash ON deployments TYPE string",
     "DEFINE FIELD IF NOT EXISTS agent_name ON deployments TYPE string",
     "DEFINE FIELD IF NOT EXISTS deployed_at ON deployments TYPE string",
     "DEFINE FIELD IF NOT EXISTS status ON deployments TYPE string",
@@ -193,6 +194,7 @@ impl DeploymentStateStore {
             .query(format!(
                 "UPSERT {TBL_DEPLOYMENTS} SET \
                     content_hash = $content_hash, \
+                    artifact_hash = $artifact_hash, \
                     agent_name = $agent_name, \
                     deployed_at = $deployed_at, \
                     status = $status, \
@@ -202,6 +204,7 @@ impl DeploymentStateStore {
                  WHERE content_hash = $content_hash"
             ))
             .bind(("content_hash", record.content_hash.as_str().to_string()))
+            .bind(("artifact_hash", record.artifact_hash.as_str().to_string()))
             .bind(("agent_name", record.agent_name.clone()))
             .bind(("deployed_at", record.deployed_at.clone()))
             .bind(("status", status))
@@ -230,7 +233,7 @@ impl DeploymentStateStore {
         let mut resp = self
             .db
             .query(format!(
-                "SELECT content_hash,agent_name,deployed_at,status,last_error,last_attempt_at,failure_count FROM {TBL_DEPLOYMENTS}"
+                "SELECT content_hash,artifact_hash,agent_name,deployed_at,status,last_error,last_attempt_at,failure_count FROM {TBL_DEPLOYMENTS}"
             ))
             .await
             .map_err(to_read_err)?;
@@ -871,6 +874,7 @@ fn parse_deployment_row(row: serde_json::Value) -> Result<DeploymentRecord> {
     #[derive(Deserialize)]
     struct DeploymentRow {
         content_hash: String,
+        artifact_hash: String,
         agent_name: String,
         deployed_at: String,
         status: DeploymentStatus,
@@ -889,6 +893,9 @@ fn parse_deployment_row(row: serde_json::Value) -> Result<DeploymentRecord> {
     Ok(DeploymentRecord {
         content_hash: parsed.content_hash.parse().map_err(|e| {
             BamlRtError::InvalidArgument(format!("invalid content_hash in deployment row: {e}"))
+        })?,
+        artifact_hash: parsed.artifact_hash.parse().map_err(|e| {
+            BamlRtError::InvalidArgument(format!("invalid artifact_hash in deployment row: {e}"))
         })?,
         agent_name: parsed.agent_name,
         deployed_at: parsed.deployed_at,
@@ -1129,6 +1136,7 @@ mod tests {
                 .unwrap();
         let record = DeploymentRecord {
             content_hash: hash.clone(),
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"clickup artifact"),
             agent_name: "clickup-agent".to_string(),
             deployed_at: "2026-03-25T16:30:00Z".to_string(),
             status: DeploymentStatus::Active,
@@ -1156,6 +1164,7 @@ mod tests {
             content_hash: "2222222222222222222222222222222222222222222222222222222222222222"
                 .parse()
                 .unwrap(),
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"persist artifact"),
             agent_name: "persist-agent".to_string(),
             deployed_at: "2026-03-25T17:00:00Z".to_string(),
             status: DeploymentStatus::Failed,

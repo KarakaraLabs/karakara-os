@@ -8,7 +8,7 @@
 //! content (ts + baml + manifest.json) with mutable metadata (tags) and
 //! structural lineage information.
 
-use baml_rt_hash::{CanonicalHasher, ContentHash, HashInput, HashInputFile};
+use baml_rt_hash::{ArtifactHash, CanonicalHasher, ContentHash, HashInput, HashInputFile};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -326,6 +326,8 @@ impl std::fmt::Display for Timestamp {
 pub struct NewEntry {
     /// Agent lineage name — determines which version sequence this belongs to.
     pub name: AgentName,
+    /// Exact built package blob for this entry, when publication produced one.
+    pub artifact_hash: Option<ArtifactHash>,
     /// Complete source content (manifest version will be overwritten by the store).
     pub source: SourceBundle,
     /// How this entry relates to existing entries.
@@ -357,6 +359,9 @@ pub struct RepositoryEntry {
     // --- Identity ---
     pub hash: ContentHash,
     pub version_ref: VersionRef,
+    /// Exact built package blob for this repository entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<ArtifactHash>,
 
     // --- Content ---
     pub source: SourceBundle,

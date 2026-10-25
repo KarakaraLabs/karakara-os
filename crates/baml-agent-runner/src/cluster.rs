@@ -16,7 +16,9 @@ use baml_rt_api::{
     ClusterDirectoryError, ClusterDirectoryService, ClusterHeartbeatHealth, ClusterPlacementInfo,
     ClusterRunnerInfo,
 };
-use baml_rt_core::{AgentRouteKey, BamlRtError, DeploymentContentHash, HeartbeatErrorKind};
+use baml_rt_core::{
+    AgentRouteKey, ArtifactHash, BamlRtError, DeploymentContentHash, HeartbeatErrorKind,
+};
 use baml_rt_observability::UNKNOWN_SERVICE_INSTANCE_ID;
 use surrealdb::{Surreal, engine::any::Any};
 
@@ -388,10 +390,22 @@ impl ClusterManager {
     }
 
     /// Record that this runner now hosts the given agent.
+    #[cfg(test)]
     pub(crate) async fn record_placement(
         &self,
         key: &AgentRouteKey,
         content_hash: &DeploymentContentHash,
+    ) -> Result<(), BamlRtError> {
+        self.record_placement_with_artifact(key, content_hash, None)
+            .await
+    }
+
+    /// Record a placement with the exact package hash used for the boot.
+    pub(crate) async fn record_placement_with_artifact(
+        &self,
+        key: &AgentRouteKey,
+        content_hash: &DeploymentContentHash,
+        artifact_hash: Option<&ArtifactHash>,
     ) -> Result<(), BamlRtError> {
         // `/` is rejected by both ID validators and `runner_id` is a UUID,
         // so the triple round-trips unambiguously.
@@ -408,6 +422,7 @@ impl ClusterManager {
                  agent_package = $pkg, \
                  agent_instance_id = $inst, \
                  content_hash = $hash, \
+                 artifact_hash = $artifact_hash, \
                  runner_id = $runner_id, \
                  runner_endpoint = $endpoint, \
                  status = 'active', \
@@ -417,6 +432,10 @@ impl ClusterManager {
             .bind(("pkg", key.agent_package.as_str().to_string()))
             .bind(("inst", key.agent_instance_id.as_str().to_string()))
             .bind(("hash", content_hash.as_str().to_string()))
+            .bind((
+                "artifact_hash",
+                artifact_hash.map(|hash| hash.as_str().to_string()),
+            ))
             .bind(("runner_id", self.identity.runner_id.to_string()))
             .bind(("endpoint", self.identity.endpoint.clone()))
             .await

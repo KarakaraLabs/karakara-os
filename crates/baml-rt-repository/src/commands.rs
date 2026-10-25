@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entry::{ChangeRationale, SourceBundle, Tag},
-    ids::{AgentName, ContentHash},
+    ids::{AgentName, ArtifactHash, ContentHash},
     lineage::{EdgeDescription, InfluenceRef},
 };
 
@@ -77,6 +77,8 @@ pub struct ForkCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishResult {
     pub hash: ContentHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<ArtifactHash>,
     pub version_ref: crate::ids::VersionRef,
     pub generation: crate::ids::Generation,
 }

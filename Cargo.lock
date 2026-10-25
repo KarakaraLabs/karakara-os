@@ -1792,6 +1792,7 @@ dependencies = [
  "async-trait",
  "baml-derive-core",
  "baml-rt-citation",
+ "baml-rt-hash",
  "baml-rt-id",
  "futures-util",
  "insta",

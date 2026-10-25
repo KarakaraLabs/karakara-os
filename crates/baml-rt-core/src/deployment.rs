@@ -7,6 +7,7 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
+pub use baml_rt_hash::ArtifactHash;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -56,6 +57,7 @@ pub enum DeploymentStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeploymentRecord {
     pub content_hash: DeploymentContentHash,
+    pub artifact_hash: ArtifactHash,
     pub agent_name: String,
     pub deployed_at: String,
     pub status: DeploymentStatus,

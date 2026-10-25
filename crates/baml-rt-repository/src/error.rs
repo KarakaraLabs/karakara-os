@@ -10,7 +10,7 @@
 
 use thiserror::Error;
 
-use crate::ids::{AgentName, ContentHash, Version};
+use crate::ids::{AgentName, ArtifactHash, ContentHash, Version};
 
 /// Repository operation errors.
 #[derive(Error, Debug)]
@@ -49,6 +49,12 @@ pub enum RepositoryError {
     HashMismatch {
         expected: ContentHash,
         computed: ContentHash,
+    },
+
+    #[error("Artifact hash mismatch: expected {expected}, computed {computed}")]
+    ArtifactHashMismatch {
+        expected: ArtifactHash,
+        computed: ArtifactHash,
     },
 
     // --- Lineage violations ---

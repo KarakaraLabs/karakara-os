@@ -12,7 +12,7 @@
 use std::{fmt, str::FromStr};
 
 // Re-export ContentHash from the dedicated hash crate.
-pub use baml_rt_hash::{ContentHash, ContentHashParseError};
+pub use baml_rt_hash::{ArtifactHash, ArtifactHashParseError, ContentHash, ContentHashParseError};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

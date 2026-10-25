@@ -9,7 +9,7 @@ use baml_rt_builder::builder::{
     AgentDir, BuildDir, BuilderService, FileSystem, RuntimeTypeGenerator, StdFileSystem,
     StdPackager, TscCompiler,
 };
-use baml_rt_core::join_error_message;
+use baml_rt_core::{ArtifactHash, join_error_message};
 use baml_rt_repository::{
     RepositoryService,
     commands::{PublishCommand, PublishResult},
@@ -51,6 +51,7 @@ pub async fn publish_with_build(
         (Arc::from(bytes), artifacts)
     };
 
+    let artifact_hash = ArtifactHash::from_bytes(built.as_ref());
     let parse_bytes = Arc::clone(&built);
     let (_, extracted) =
         tokio::task::spawn_blocking(move || source_bundle_from_tar_gz(parse_bytes.as_ref()))
@@ -74,7 +75,10 @@ pub async fn publish_with_build(
         rationale: cmd.rationale,
         origin: cmd.origin,
     };
-    let result = svc.publish(cmd2).await.map_err(HttpApiProblem::from)?;
+    let result = svc
+        .publish_built(cmd2, artifact_hash.clone())
+        .await
+        .map_err(HttpApiProblem::from)?;
     if expected.as_str() != result.hash.as_str() {
         return Err(
             HttpApiProblem::new(http_api_problem::StatusCode::INTERNAL_SERVER_ERROR).detail(
@@ -87,7 +91,7 @@ pub async fn publish_with_build(
         );
     }
 
-    svc.put_built_blob(&result.hash, built.as_ref())
+    svc.put_built_blob(&artifact_hash, built.as_ref())
         .await
         .map_err(HttpApiProblem::from)?;
 

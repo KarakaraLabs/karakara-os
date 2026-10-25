@@ -21,7 +21,7 @@ use crate::{
     entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp},
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Generation, LineageEdgeId, Version},
+    ids::{AgentName, ArtifactHash, ContentHash, Generation, LineageEdgeId, Version},
     lineage::{EdgeDescription, LineageEdge, LineageKind, LineageSubgraph, Parentage},
     mcp::{McpRegistryServer, McpRegistryServerVersion, McpRegistryToolVersion},
     search::SearchQuery,
@@ -207,6 +207,23 @@ impl RepositoryService {
     ///    the manifest, and computes the content hash).
     /// 3. Record lineage edges (using the hash returned by the store).
     pub async fn publish(&self, cmd: PublishCommand) -> Result<PublishResult> {
+        self.publish_with_artifact(cmd, None).await
+    }
+
+    /// Publish a source entry that realizes an already-built package artifact.
+    pub async fn publish_built(
+        &self,
+        cmd: PublishCommand,
+        artifact_hash: ArtifactHash,
+    ) -> Result<PublishResult> {
+        self.publish_with_artifact(cmd, Some(artifact_hash)).await
+    }
+
+    async fn publish_with_artifact(
+        &self,
+        cmd: PublishCommand,
+        artifact_hash: Option<ArtifactHash>,
+    ) -> Result<PublishResult> {
         let _span = crate::spans::publish(cmd.name.as_str());
 
         // Determine parentage, generation, and deferred edge descriptors.
@@ -275,6 +292,7 @@ impl RepositoryService {
         let tags = manifest_tags(&source);
         let new_entry = NewEntry {
             name: cmd.name.clone(),
+            artifact_hash,
             source,
             parentage,
             generation,
@@ -309,6 +327,7 @@ impl RepositoryService {
 
         Ok(PublishResult {
             hash: stored.hash,
+            artifact_hash: stored.artifact_hash,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })
@@ -340,6 +359,7 @@ impl RepositoryService {
 
         let new_entry = NewEntry {
             name: cmd.new_name.clone(),
+            artifact_hash: None,
             source: cmd.source,
             parentage,
             generation,
@@ -370,6 +390,7 @@ impl RepositoryService {
 
         Ok(PublishResult {
             hash: stored.hash,
+            artifact_hash: stored.artifact_hash,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })
@@ -421,16 +442,33 @@ impl RepositoryService {
     // Blob operations
     // -----------------------------------------------------------------------
 
-    /// Retrieve a tar.gz blob.
-    pub async fn get_blob(&self, hash: &ContentHash) -> Result<Option<Vec<u8>>> {
-        self.blobs.get(hash).await
+    /// Retrieve a tar.gz package by its exact artifact hash and verify it before returning it.
+    pub async fn get_blob(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>> {
+        let Some(bytes) = self.blobs.get_artifact(hash).await? else {
+            return Ok(None);
+        };
+        let computed = ArtifactHash::from_bytes(&bytes);
+        if &computed != hash {
+            return Err(RepositoryError::ArtifactHashMismatch {
+                expected: hash.clone(),
+                computed,
+            });
+        }
+        Ok(Some(bytes))
     }
 
-    /// Store a repository-built tar.gz blob under content hash.
+    /// Store a repository-built tar.gz blob under its exact byte hash.
     ///
     /// This is intended for trusted in-process orchestrators (not public HTTP upload).
-    pub async fn put_built_blob(&self, hash: &ContentHash, data: &[u8]) -> Result<()> {
-        self.blobs.put(hash, data).await
+    pub async fn put_built_blob(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()> {
+        let computed = ArtifactHash::from_bytes(data);
+        if &computed != hash {
+            return Err(RepositoryError::ArtifactHashMismatch {
+                expected: hash.clone(),
+                computed,
+            });
+        }
+        self.blobs.put_artifact(hash, data).await
     }
 
     /// Persist server-generated dev artifacts for a published package hash.

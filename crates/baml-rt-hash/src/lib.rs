@@ -6,7 +6,7 @@
 //!
 //! This crate owns two things:
 //!
-//! 1. The `ContentHash` newtype — a validated SHA-256 hex-64 digest.
+//! 1. The `ContentHash` and `ArtifactHash` newtypes, both validated SHA-256 hex-64 digests.
 //! 2. The canonical hashing function that turns authored source content into
 //!    a deterministic `ContentHash`.
 //!
@@ -28,8 +28,10 @@
 //! are excluded. Two packages with identical authored source produce
 //! identical hashes.
 
+mod artifact_hash;
 mod content_hash;
 mod hasher;
 
+pub use artifact_hash::{ArtifactHash, ArtifactHashParseError};
 pub use content_hash::{ContentHash, ContentHashParseError};
 pub use hasher::{CanonicalHasher, HashInput, HashInputFile};

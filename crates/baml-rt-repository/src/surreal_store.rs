@@ -30,7 +30,7 @@ use crate::{
     },
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Generation, LineageEdgeId, Version, VersionRef},
+    ids::{AgentName, ArtifactHash, ContentHash, Generation, LineageEdgeId, Version, VersionRef},
     lineage::{
         AncestryNode, EdgeDescription, LineageEdge, LineageKind, LineageSubgraph, Parentage,
     },
@@ -65,6 +65,7 @@ const TBL_EXT_SNAPSHOT_BLOBS: &str = "external_tool_snapshot_blobs";
 const SCHEMA_QUERIES: &[&str] = &[
     "DEFINE TABLE IF NOT EXISTS entries SCHEMAFULL",
     "DEFINE FIELD IF NOT EXISTS hash ON entries TYPE string",
+    "DEFINE FIELD IF NOT EXISTS artifact_hash ON entries TYPE option<string>",
     "DEFINE FIELD IF NOT EXISTS agent_name ON entries TYPE string",
     "DEFINE FIELD IF NOT EXISTS version ON entries TYPE int",
     "DEFINE FIELD IF NOT EXISTS generation ON entries TYPE int",
@@ -502,9 +503,18 @@ impl SurrealStore {
         let source_json = get_required_str(row, "source_json")?;
         let source: SourceBundle = serde_json::from_str(source_json)
             .map_err(|e| decode_err(format!("invalid source_json: {e}")))?;
+        let artifact_hash = match get_optional_str(row, "artifact_hash") {
+            Some(value) => Some(
+                value
+                    .parse::<ArtifactHash>()
+                    .map_err(|e| decode_err(format!("invalid artifact_hash: {e}")))?,
+            ),
+            None => None,
+        };
         Ok(RepositoryEntry {
             hash: header.hash,
             version_ref: header.version_ref,
+            artifact_hash,
             source,
             parentage: header.parentage,
             generation: header.generation,
@@ -714,6 +724,38 @@ impl BlobStore for SurrealStore {
             .map_err(map_surreal_write)?;
         Ok(())
     }
+
+    async fn put_artifact(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()> {
+        self.db
+            .query(format!(
+                "UPSERT {TBL_BLOBS} SET hash = $hash, data_hex = $data_hex WHERE hash = $hash"
+            ))
+            .bind(("hash", hash.as_str().to_string()))
+            .bind(("data_hex", encode_hex(data)))
+            .await
+            .map_err(map_surreal_write)?;
+        Ok(())
+    }
+
+    async fn get_artifact(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>> {
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT data_hex FROM {TBL_BLOBS} WHERE hash = $hash LIMIT 1"
+            ))
+            .bind(("hash", hash.as_str().to_string()))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        let Some(hex) = rows
+            .first()
+            .and_then(|row| row.get("data_hex"))
+            .and_then(Value::as_str)
+        else {
+            return Ok(None);
+        };
+        Ok(decode_hex(hex))
+    }
 }
 
 #[async_trait]
@@ -803,6 +845,7 @@ impl MetadataStore for SurrealStore {
             .query(format!(
                 "CREATE {TBL_ENTRIES} SET \
                     hash = $hash, \
+                    artifact_hash = $artifact_hash, \
                     agent_name = $name, \
                     version = $version, \
                     generation = $generation, \
@@ -817,6 +860,10 @@ impl MetadataStore for SurrealStore {
                     source_text = $source_text"
             ))
             .bind(("hash", hash_str))
+            .bind((
+                "artifact_hash",
+                entry.artifact_hash.as_ref().map(ToString::to_string),
+            ))
             .bind(("name", name))
             .bind(("version", next_version as i64))
             .bind(("generation", entry.generation.as_u32() as i64))
@@ -852,6 +899,7 @@ impl MetadataStore for SurrealStore {
                 name: entry.name.clone(),
                 version,
             },
+            artifact_hash: entry.artifact_hash.clone(),
             source: source_for_storage,
             parentage: entry.parentage.clone(),
             generation: entry.generation,
