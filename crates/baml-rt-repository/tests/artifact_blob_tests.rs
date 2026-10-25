@@ -60,6 +60,7 @@ async fn artifact_hash_verified_from_publish_to_boot() {
             },
             &reservation,
             artifact_hash.clone(),
+            None,
         )
         .await
         .expect("publish built artifact");

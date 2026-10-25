@@ -78,6 +78,23 @@ async fn publish_reserved_artifact(
     };
 
     let artifact_hash = ArtifactHash::from_bytes(built.as_ref());
+
+    let identity_bytes = Arc::clone(&built);
+    let identity_digest = tokio::task::spawn_blocking(move || {
+        baml_rt_repository::identity_digest_from_tar_gz(identity_bytes.as_ref())
+    })
+    .await
+    .map_err(|e| {
+        HttpApiProblem::new(http_api_problem::StatusCode::INTERNAL_SERVER_ERROR)
+            .title("Artifact identity failed")
+            .detail(join_error_message("identity digest", e))
+    })?
+    .map_err(|e| {
+        HttpApiProblem::new(http_api_problem::StatusCode::INTERNAL_SERVER_ERROR)
+            .title("Artifact identity failed")
+            .detail(format!("stage=identity: {}", e))
+    })?;
+
     let parse_bytes = Arc::clone(&built);
     let (_, extracted) =
         tokio::task::spawn_blocking(move || source_bundle_from_tar_gz(parse_bytes.as_ref()))
@@ -110,7 +127,7 @@ async fn publish_reserved_artifact(
         origin: cmd.origin,
     };
     let result = svc
-        .publish_built(cmd, reservation, artifact_hash)
+        .publish_built(cmd, reservation, artifact_hash, Some(identity_digest))
         .await
         .map_err(HttpApiProblem::from)?;
     if expected.as_str() != result.hash.as_str() {

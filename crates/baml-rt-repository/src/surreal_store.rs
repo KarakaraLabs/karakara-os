@@ -13,6 +13,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_tools::{
     external_tools::ExternalToolSnapshot,
     mcp_snapshot::{Digest, McpApprovalState, McpServerSnapshot},
@@ -67,6 +68,7 @@ const SCHEMA_QUERIES: &[&str] = &[
     "DEFINE TABLE IF NOT EXISTS entries SCHEMAFULL",
     "DEFINE FIELD IF NOT EXISTS hash ON entries TYPE string",
     "DEFINE FIELD IF NOT EXISTS artifact_hash ON entries TYPE option<string>",
+    "DEFINE FIELD IF NOT EXISTS identity_digest ON entries TYPE option<string>",
     "DEFINE FIELD IF NOT EXISTS agent_name ON entries TYPE string",
     "DEFINE FIELD IF NOT EXISTS version ON entries TYPE int",
     "DEFINE FIELD IF NOT EXISTS generation ON entries TYPE int",
@@ -494,6 +496,7 @@ impl SurrealStore {
                 "CREATE {TBL_ENTRIES} SET \
                     hash = $hash, \
                     artifact_hash = $artifact_hash, \
+                    identity_digest = $identity_digest, \
                     agent_name = $name, \
                     version = $version, \
                     generation = $generation, \
@@ -511,6 +514,10 @@ impl SurrealStore {
             .bind((
                 "artifact_hash",
                 entry.artifact_hash.as_ref().map(ToString::to_string),
+            ))
+            .bind((
+                "identity_digest",
+                entry.identity_digest.as_ref().map(ToString::to_string),
             ))
             .bind(("name", name))
             .bind(("version", next_version as i64))
@@ -564,6 +571,7 @@ impl SurrealStore {
                 version,
             },
             artifact_hash: entry.artifact_hash.clone(),
+            identity_digest: entry.identity_digest.clone(),
             source: source_for_storage,
             parentage: entry.parentage.clone(),
             generation: entry.generation,
@@ -795,10 +803,19 @@ impl SurrealStore {
             ),
             None => None,
         };
+        let identity_digest = match get_optional_str(row, "identity_digest") {
+            Some(value) => Some(
+                value
+                    .parse::<AgentIdentityDigest>()
+                    .map_err(|e| decode_err(format!("invalid identity_digest: {e}")))?,
+            ),
+            None => None,
+        };
         Ok(RepositoryEntry {
             hash: header.hash,
             version_ref: header.version_ref,
             artifact_hash,
+            identity_digest,
             source,
             parentage: header.parentage,
             generation: header.generation,

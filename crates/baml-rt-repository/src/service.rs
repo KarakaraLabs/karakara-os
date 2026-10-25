@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use baml_rt_core::clock_events;
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_tools::{
     StaticToolCatalogResponse, external_tools::ExternalToolSnapshot,
     mcp_snapshot::McpServerSnapshot,
@@ -213,7 +214,7 @@ impl RepositoryService {
     /// version, and writes lineage edges. The reservation is released on failure.
     pub async fn publish(&self, cmd: PublishCommand) -> Result<PublishResult> {
         let reservation = self.reserve_version(&cmd.name).await?;
-        self.publish_reserved(cmd, &reservation, None).await
+        self.publish_reserved(cmd, &reservation, None, None).await
     }
 
     /// Reserve the next free version for `name`.
@@ -241,8 +242,9 @@ impl RepositoryService {
         cmd: PublishCommand,
         reservation: &VersionReservation,
         artifact_hash: ArtifactHash,
+        identity_digest: Option<AgentIdentityDigest>,
     ) -> Result<PublishResult> {
-        self.publish_reserved(cmd, reservation, Some(artifact_hash))
+        self.publish_reserved(cmd, reservation, Some(artifact_hash), identity_digest)
             .await
     }
 
@@ -255,6 +257,7 @@ impl RepositoryService {
         cmd: PublishCommand,
         reservation: &VersionReservation,
         artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
     ) -> Result<PublishResult> {
         if reservation.name != cmd.name {
             let _ = self.release_version(reservation).await;
@@ -263,7 +266,9 @@ impl RepositoryService {
                 version: reservation.version,
             });
         }
-        let result = self.finish_publish(cmd, reservation, artifact_hash).await;
+        let result = self
+            .finish_publish(cmd, reservation, artifact_hash, identity_digest)
+            .await;
         if result.is_err()
             && let Err(e) = self.release_version(reservation).await
         {
@@ -282,6 +287,7 @@ impl RepositoryService {
         cmd: PublishCommand,
         reservation: &VersionReservation,
         artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
     ) -> Result<PublishResult> {
         let _span = crate::spans::publish(cmd.name.as_str());
 
@@ -352,6 +358,7 @@ impl RepositoryService {
         let new_entry = NewEntry {
             name: cmd.name.clone(),
             artifact_hash,
+            identity_digest,
             source,
             parentage,
             generation,
@@ -391,6 +398,7 @@ impl RepositoryService {
         Ok(PublishResult {
             hash: stored.hash,
             artifact_hash: stored.artifact_hash,
+            identity_digest: stored.identity_digest,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })
@@ -423,6 +431,7 @@ impl RepositoryService {
         let new_entry = NewEntry {
             name: cmd.new_name.clone(),
             artifact_hash: None,
+            identity_digest: None,
             source: cmd.source,
             parentage,
             generation,
@@ -454,6 +463,7 @@ impl RepositoryService {
         Ok(PublishResult {
             hash: stored.hash,
             artifact_hash: stored.artifact_hash,
+            identity_digest: stored.identity_digest,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })

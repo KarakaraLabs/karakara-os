@@ -12,7 +12,9 @@ use std::{
 };
 
 use baml_rt_core::AgentManifest;
-use baml_rt_hash::{AgentIdentityEntry, AgentIdentityError};
+use baml_rt_hash::{
+    AgentIdentityDigest, AgentIdentityEntry, AgentIdentityError, compute_agent_identity_digest,
+};
 use flate2::read::GzDecoder;
 use serde_json::{Map, Value};
 use tar::Archive;
@@ -93,6 +95,18 @@ pub fn identity_entries_from_tar_gz(
         files.insert(path, content);
     }
     entries_from_files(files, has_baml_dir)
+}
+
+/// Compute the identity digest for a packaged `.tar.gz` artifact.
+///
+/// This is the value the repository stores on the published entry. It is derived from the exact
+/// packaged bytes, so it agrees with the digest a runner recomputes from the extracted package
+/// at boot.
+pub fn identity_digest_from_tar_gz(
+    bytes: &[u8],
+) -> Result<AgentIdentityDigest, PackageIdentityError> {
+    let entries = identity_entries_from_tar_gz(bytes)?;
+    compute_agent_identity_digest(&entries).map_err(PackageIdentityError::Entry)
 }
 
 /// Collect the canonical behavior entries from a freshly extracted package directory.

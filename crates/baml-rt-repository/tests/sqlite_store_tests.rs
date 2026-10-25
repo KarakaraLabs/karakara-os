@@ -52,6 +52,7 @@ fn test_new_entry(name: &str) -> NewEntry {
     NewEntry {
         name: name.parse().unwrap(),
         artifact_hash: None,
+        identity_digest: None,
         source: test_source_bundle_with(name),
         parentage: Parentage::Original,
         generation: Generation::ROOT,
@@ -66,6 +67,7 @@ fn test_new_entry_unique(name: &str, suffix: &str) -> NewEntry {
     NewEntry {
         name: name.parse().unwrap(),
         artifact_hash: None,
+        identity_digest: None,
         source: test_source_bundle_with(suffix),
         parentage: Parentage::Original,
         generation: Generation::ROOT,
@@ -232,6 +234,7 @@ async fn duplicate_hash_is_rejected() {
     let dup = NewEntry {
         name: "other-agent".parse().unwrap(),
         artifact_hash: None,
+        identity_digest: None,
         source: test_source_bundle_with("dup-agent"), // same source as above
         parentage: Parentage::Original,
         generation: Generation::ROOT,
@@ -689,6 +692,7 @@ async fn search_by_full_text_matches_manifest_tags() {
     let entry = NewEntry {
         name: "fts-tag-hit".parse().unwrap(),
         artifact_hash: None,
+        identity_digest: None,
         source: SourceBundle {
             manifest: ManifestSource::new(serde_json::json!({
                 "name": "fts-tag-hit",

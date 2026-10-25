@@ -61,7 +61,8 @@ async fn publish_one(
         rationale: ChangeRationale::new(format!("publisher {index}")).expect("rationale"),
         origin: PublishOrigin::Original,
     };
-    svc.publish_built(cmd, &reservation, artifact_hash).await
+    svc.publish_built(cmd, &reservation, artifact_hash, None)
+        .await
 }
 
 #[tokio::test]

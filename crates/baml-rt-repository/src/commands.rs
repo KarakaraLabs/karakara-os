@@ -8,6 +8,7 @@
 //! Commands are distinct types (not a god-enum with optional fields) so that
 //! invalid operations are unrepresentable.
 
+use baml_rt_hash::AgentIdentityDigest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -79,6 +80,8 @@ pub struct PublishResult {
     pub hash: ContentHash,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_hash: Option<ArtifactHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_digest: Option<AgentIdentityDigest>,
     pub version_ref: crate::ids::VersionRef,
     pub generation: crate::ids::Generation,
 }
