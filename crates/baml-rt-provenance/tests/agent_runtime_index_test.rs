@@ -5,7 +5,7 @@
 //! Agent runtime index registry behavior.
 
 use baml_rt_core::{
-    AgentInstanceId, AgentPackageName, AgentRouteKey, DispatchTarget, Outcome,
+    AgentPackageName, AgentRouteKey, DispatchTarget, Outcome,
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_provenance::{
@@ -59,10 +59,7 @@ async fn dispatch_without_boot_does_not_index_route_stub() {
             "event:intake".to_string(),
             "host.source-records.v1".to_string(),
             DispatchTarget::with_optional_agent(
-                AgentRouteKey::new(
-                    AgentPackageName::parse("orphan-agent").expect("package"),
-                    AgentInstanceId::default(),
-                ),
+                AgentRouteKey::new(AgentPackageName::parse("orphan-agent").expect("package")),
                 None,
             ),
             "clickup".to_string(),

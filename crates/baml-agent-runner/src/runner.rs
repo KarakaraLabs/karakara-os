@@ -15,9 +15,9 @@ use baml_rt_a2a::{A2aRequestHandler, a2a};
 use baml_rt_api::RuntimeProgressMeter;
 use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentCard, AgentDiscoveryEntry, AgentDispatchAck,
-    AgentDispatchRequest, AgentInstanceId, AgentLister, AgentPackageName, AgentRouteKey,
-    ArtifactHash, BamlRtError, DeployedAgentLookup, DeploymentContentHash, DeploymentManager,
-    DeploymentRecord, DeploymentStatus, DispatchTarget, ObservationUpdate, Result, UndeployResult,
+    AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, ArtifactHash, BamlRtError,
+    DeployedAgentLookup, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    DeploymentStatus, DispatchTarget, ObservationUpdate, Result, UndeployResult,
     bus::BusStream,
     callback_scheduling_scopes_differ_from_dispatch, context, ensure_dispatch_task_scope,
     ids::{AgentId, ContextId, TaskId},
@@ -442,7 +442,7 @@ impl AgentRunner {
                 "Agent package name '{name}' is invalid; allowed characters: [A-Za-z0-9_-]"
             ))
         })?;
-        let route_key = AgentRouteKey::new(package_name, AgentInstanceId::default());
+        let route_key = AgentRouteKey::new(package_name);
         let scoped_router: Arc<dyn A2aRequestHandler> = Arc::new(ScopedInternalA2aRouter::new(
             route_key.clone(),
             self.internal_a2a_router().clone(),
@@ -544,7 +544,6 @@ impl AgentRunner {
                     content_hash: booted.content_hash().map(|h| h.as_str().to_string()),
                     repository_version: booted.repository_version(),
                     agent_package: pkg.clone(),
-                    agent_instance_id: AgentInstanceId::DEFAULT.to_string(),
                     tools: m.tools.clone(),
                     baml_functions: booted.baml_functions.clone(),
                     description: m.discovery.as_ref().and_then(|d| d.description.clone()),
@@ -562,7 +561,6 @@ impl AgentRunner {
                 };
                 AgentDiscoveryEntry {
                     agent_package: pkg.clone(),
-                    agent_instance_id: AgentInstanceId::DEFAULT.to_string(),
                     name: m.name.clone(),
                     version,
                     agent_card,
@@ -628,9 +626,8 @@ impl AgentRunner {
                 }
                 Err(e) => {
                     let pkg = key.agent_package.as_str();
-                    let inst = key.agent_instance_id.as_str();
                     return Err(BamlRtError::Io(std::io::Error::other(format!(
-                        "cluster placement lookup failed for {pkg}/{inst}: {e}"
+                        "cluster placement lookup failed for {pkg}: {e}"
                     ))));
                 }
                 Ok(None) => {}
@@ -638,10 +635,7 @@ impl AgentRunner {
         }
 
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
-        Err(BamlRtError::AgentNotFound(format!(
-            "Agent {pkg}/{inst} not found"
-        )))
+        Err(BamlRtError::AgentNotFound(format!("Agent {pkg} not found")))
     }
 
     pub(crate) async fn handle_dispatch_by_key(
@@ -662,8 +656,7 @@ impl AgentRunner {
             let routed_agents = self.routed_agents.read().expect("RwLock poison");
             routed_agents.get(key).cloned().ok_or_else(|| {
                 let pkg = key.agent_package.as_str();
-                let inst = key.agent_instance_id.as_str();
-                BamlRtError::AgentNotFound(format!("Agent {pkg}/{inst} not found"))
+                BamlRtError::AgentNotFound(format!("Agent {pkg} not found"))
             })?
         };
         ensure_dispatch_task_scope(&mut request, key);
@@ -1104,7 +1097,7 @@ impl DeploymentManager for AgentRunner {
             agents.remove(&target_name);
             match AgentPackageName::parse(&booted.manifest.name) {
                 Some(package_name) => {
-                    let rk = AgentRouteKey::new(package_name, AgentInstanceId::default());
+                    let rk = AgentRouteKey::new(package_name);
                     routed.remove(&rk);
                 }
                 None => {
@@ -1120,7 +1113,7 @@ impl DeploymentManager for AgentRunner {
         if let Some(cluster_mgr) = self.cluster_manager.get()
             && let Some(package_name) = AgentPackageName::parse(&target_name)
         {
-            let rk = AgentRouteKey::new(package_name, AgentInstanceId::default());
+            let rk = AgentRouteKey::new(package_name);
             if let Err(e) = cluster_mgr.remove_placement(&rk).await {
                 tracing::warn!(
                     agent = %target_name,

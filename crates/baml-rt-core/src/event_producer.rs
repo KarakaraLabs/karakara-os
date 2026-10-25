@@ -133,7 +133,6 @@ impl SubscriberDeliveryFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriberAcceptance {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub detail: String,
 }
 

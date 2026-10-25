@@ -175,14 +175,12 @@ impl ContextId {
     pub fn for_a2a_child(
         caller_context_id: &ContextId,
         target_package: &str,
-        target_instance_id: &str,
         child_task_id: &TaskId,
     ) -> Self {
         Self(format!(
-            "a2a:{caller}:{pkg}/{inst}:{child}",
+            "a2a:{caller}:{pkg}:{child}",
             caller = caller_context_id.as_str(),
             pkg = target_package,
-            inst = target_instance_id,
             child = child_task_id.as_str(),
         ))
     }
@@ -496,11 +494,10 @@ mod tests {
     fn context_id_a2a_child_constructor_is_stable_per_child_task() {
         let caller = ContextId::new(88, 1);
         let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let context_id =
-            ContextId::for_a2a_child(&caller, "responder-agent", "default", &child_task_id);
+        let context_id = ContextId::for_a2a_child(&caller, "responder-agent", &child_task_id);
         assert_eq!(
             context_id.as_str(),
-            "a2a:ctx-88-1:responder-agent/default:a2a-child-fixed"
+            "a2a:ctx-88-1:responder-agent:a2a-child-fixed"
         );
     }
 

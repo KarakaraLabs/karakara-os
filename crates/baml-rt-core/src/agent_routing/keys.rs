@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Typed route identity: package name, instance id, and route key parsing from A2A requests.
+//! Typed route identity: package name and route key parsing from A2A requests.
+//!
+//! The instance dimension was removed from routing. [`AgentInstanceId`] remains only as a
+//! telemetry label carried by the serving runner; it is not an address and must not be used
+//! to select an agent.
 
 use std::fmt;
 
@@ -54,7 +58,10 @@ impl PartialEq<&str> for AgentPackageName {
     }
 }
 
-/// Strongly-typed agent instance identifier.
+/// Telemetry label for the historical agent instance dimension.
+///
+/// Kept only because A2A serving spans and metrics still emit it. Routing no longer accepts or
+/// exposes an instance id: an [`AgentRouteKey`] is the package name alone.
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AgentInstanceId(String);
@@ -103,20 +110,20 @@ impl PartialEq<&str> for AgentInstanceId {
     }
 }
 
-/// Route key for an agent instance: agent_package (e.g. manifest name) + agent_instance_id.
-/// Used in HTTP paths: `/agents/{agent_package}/{agent_instance_id}/...`
+/// Route key for an agent: the package name alone.
+/// Used in HTTP paths: `/agents/{agent_package}/...`
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AgentRouteKey {
     pub agent_package: AgentPackageName,
-    pub agent_instance_id: AgentInstanceId,
 }
 
 impl AgentRouteKey {
-    pub fn new(agent_package: AgentPackageName, agent_instance_id: AgentInstanceId) -> Self {
-        Self {
-            agent_package,
-            agent_instance_id,
-        }
+    pub fn new(agent_package: AgentPackageName) -> Self {
+        Self { agent_package }
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.agent_package.as_str()
     }
 }
 
@@ -148,19 +155,18 @@ pub fn route_key_from_request(request: impl AsRef<Value>) -> Result<AgentRouteKe
                 "params.metadata.target.agent_package required".to_string(),
             )
         })?;
-    let agent_instance_id_str = target
-        .get("agent_instance_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("default");
+    // The instance dimension is removed. Reject any request that still carries it, for every
+    // value including the historical `"default"`, so no caller lands silently on a binding.
+    if target.contains_key("agent_instance_id") {
+        return Err(BamlRtError::UnsupportedAgentInstance(
+            "params.metadata.target.agent_instance_id was removed; address agents by package only"
+                .to_string(),
+        ));
+    }
     let agent_package = AgentPackageName::parse(agent_package_str).ok_or_else(|| {
         BamlRtError::InvalidArgument(format!("invalid agent_package '{agent_package_str}'"))
     })?;
-    let agent_instance_id = AgentInstanceId::parse(agent_instance_id_str).ok_or_else(|| {
-        BamlRtError::InvalidArgument(format!(
-            "invalid agent_instance_id '{agent_instance_id_str}'"
-        ))
-    })?;
-    Ok(AgentRouteKey::new(agent_package, agent_instance_id))
+    Ok(AgentRouteKey::new(agent_package))
 }
 
 #[cfg(test)]

@@ -161,7 +161,6 @@ impl PlacementResolver {
 impl ClusterEndpointResolver for PlacementResolver {
     async fn resolve(&self, key: &AgentRouteKey) -> baml_rt_core::Result<Option<Placement>> {
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
         let ttl = self.placement_ttl_ms as i64;
         // Two-stage lookup: fetch the placement, then the serving runner's
         // `service_instance_id`. A correlated sub-select on `cluster_runners`
@@ -180,7 +179,6 @@ impl ClusterEndpointResolver for PlacementResolver {
             .query(
                 "SELECT * FROM cluster_agent_placements \
                  WHERE agent_package = $pkg \
-                 AND agent_instance_id = $inst \
                  AND status = 'active' \
                  AND runner_id IN (\
                    SELECT VALUE runner_id FROM cluster_runners \
@@ -190,7 +188,6 @@ impl ClusterEndpointResolver for PlacementResolver {
                  LIMIT 1",
             )
             .bind(("pkg", pkg.to_string()))
-            .bind(("inst", inst.to_string()))
             .bind(("ttl", ttl))
             .await
             .and_then(|mut r| r.take(0));
@@ -201,7 +198,6 @@ impl ClusterEndpointResolver for PlacementResolver {
                 tracing::warn!(
                     error = %e,
                     agent = %pkg,
-                    instance = %inst,
                     "cluster placement lookup failed"
                 );
                 return Err(BamlRtError::Io(std::io::Error::other(format!(
@@ -223,7 +219,7 @@ impl ClusterEndpointResolver for PlacementResolver {
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 BamlRtError::Io(std::io::Error::other(format!(
-                    "placement for {pkg}/{inst} on runner {runner_id} missing runner_endpoint (data corruption)"
+                    "placement for {pkg} on runner {runner_id} missing runner_endpoint (data corruption)"
                 )))
             })?;
 
@@ -281,18 +277,10 @@ impl ClusterManager {
     }
 
     async fn init_schema(&self) -> Result<(), BamlRtError> {
-        // `REMOVE INDEX IF EXISTS idx_placement_agent` retires the
-        // (agent_package, agent_instance_id) UNIQUE that collapsed
-        // multi-runner placements. The wider replacement is safe to apply
-        // in place: the narrower UNIQUE prevented any row that would now
-        // violate the new key.
-        //
-        // `DELETE cluster_agent_placements WHERE ...` clears rows written
-        // under the old key shape (`{pkg}/{inst}`) so the table is not
-        // left holding graveyard entries whose `runner_id` field references
-        // a long-dead process. Post-PR rows have id
-        // `{pkg}/{inst}/{runner_id}` (three slash-separated segments);
-        // legacy rows have two and are discarded.
+        // The placement key collapsed from `{pkg}/{inst}/{runner_id}` to
+        // `{pkg}/{runner_id}` once the instance dimension was removed. The
+        // unique index moves to `(agent_package, runner_id)`, and rows still
+        // keyed by the old three-segment shape are swept.
         //
         // The trailing `UPDATE cluster_runners UNSET last_heartbeat_at`
         // drops an orphan column left over from an earlier write path. No
@@ -303,8 +291,9 @@ impl ClusterManager {
                 "DEFINE TABLE IF NOT EXISTS cluster_runners SCHEMALESS;\
                  DEFINE TABLE IF NOT EXISTS cluster_agent_placements SCHEMALESS;\
                  REMOVE INDEX IF EXISTS idx_placement_agent ON cluster_agent_placements;\
-                 DEFINE INDEX IF NOT EXISTS idx_placement_agent_runner ON cluster_agent_placements FIELDS agent_package, agent_instance_id, runner_id UNIQUE;\
-                 DELETE cluster_agent_placements WHERE !string::matches(meta::id(id), '^[^/]+/[^/]+/[^/]+$');\
+                 REMOVE INDEX IF EXISTS idx_placement_agent_runner ON cluster_agent_placements;\
+                 DEFINE INDEX IF NOT EXISTS idx_placement_agent_runner ON cluster_agent_placements FIELDS agent_package, runner_id UNIQUE;\
+                 DELETE cluster_agent_placements WHERE string::matches(meta::id(id), '^[^/]+/[^/]+/[^/]+$');\
                  UPDATE cluster_runners UNSET last_heartbeat_at",
             )
             .await
@@ -408,11 +397,10 @@ impl ClusterManager {
         artifact_hash: Option<&ArtifactHash>,
     ) -> Result<(), BamlRtError> {
         // `/` is rejected by both ID validators and `runner_id` is a UUID,
-        // so the triple round-trips unambiguously.
+        // so the pair round-trips unambiguously.
         let placement_key = format!(
-            "{pkg}/{inst}/{runner}",
+            "{pkg}/{runner}",
             pkg = key.agent_package.as_str(),
-            inst = key.agent_instance_id.as_str(),
             runner = self.identity.runner_id,
         );
         let mut resp = self
@@ -420,7 +408,6 @@ impl ClusterManager {
             .query(
                 "UPSERT type::record('cluster_agent_placements', $placement_key) SET \
                  agent_package = $pkg, \
-                 agent_instance_id = $inst, \
                  content_hash = $hash, \
                  artifact_hash = $artifact_hash, \
                  runner_id = $runner_id, \
@@ -430,7 +417,6 @@ impl ClusterManager {
             )
             .bind(("placement_key", placement_key))
             .bind(("pkg", key.agent_package.as_str().to_string()))
-            .bind(("inst", key.agent_instance_id.as_str().to_string()))
             .bind(("hash", content_hash.as_str().to_string()))
             .bind((
                 "artifact_hash",
@@ -462,10 +448,9 @@ impl ClusterManager {
         let mut resp = self
             .db
             .query(
-                "DELETE cluster_agent_placements WHERE agent_package = $pkg AND agent_instance_id = $inst AND runner_id = $runner_id",
+                "DELETE cluster_agent_placements WHERE agent_package = $pkg AND runner_id = $runner_id",
             )
             .bind(("pkg", key.agent_package.as_str().to_string()))
-            .bind(("inst", key.agent_instance_id.as_str().to_string()))
             .bind(("runner_id", self.identity.runner_id.to_string()))
             .await
             .map_err(|e| BamlRtError::Io(std::io::Error::other(format!("cluster: remove placement transport: {e}"))))?;
@@ -629,7 +614,7 @@ impl ClusterDirectoryService for ClusterDirectory {
         let rows: Vec<serde_json::Value> = self
             .db
             .query(
-                "SELECT agent_package, agent_instance_id, runner_id, runner_endpoint, \
+                "SELECT agent_package, runner_id, runner_endpoint, \
                  content_hash, status, updated_at_ms \
                  FROM cluster_agent_placements \
                  WHERE status = $status",
@@ -645,10 +630,6 @@ impl ClusterDirectoryService for ClusterDirectory {
                 Some(ClusterPlacementInfo {
                     agent_package: row
                         .get("agent_package")
-                        .and_then(|v| v.as_str())?
-                        .to_string(),
-                    agent_instance_id: row
-                        .get("agent_instance_id")
                         .and_then(|v| v.as_str())?
                         .to_string(),
                     runner_id: row.get("runner_id").and_then(|v| v.as_str())?.to_string(),
@@ -675,7 +656,7 @@ impl ClusterDirectoryService for ClusterDirectory {
 
 #[cfg(test)]
 mod tests {
-    use baml_rt_core::{AgentInstanceId, AgentPackageName};
+    use baml_rt_core::AgentPackageName;
 
     use super::*;
     use crate::routing::ClusterEndpointResolver;
@@ -692,10 +673,7 @@ mod tests {
     }
 
     fn test_route_key() -> AgentRouteKey {
-        AgentRouteKey::new(
-            AgentPackageName::parse("test-agent").unwrap(),
-            AgentInstanceId::default(),
-        )
+        AgentRouteKey::new(AgentPackageName::parse("test-agent").unwrap())
     }
 
     fn test_hash() -> DeploymentContentHash {
@@ -930,10 +908,9 @@ mod tests {
         let rows: Vec<serde_json::Value> = db
             .query(
                 "SELECT updated_at_ms FROM cluster_agent_placements \
-                 WHERE agent_package = $pkg AND agent_instance_id = $inst",
+                 WHERE agent_package = $pkg",
             )
             .bind(("pkg", key.agent_package.as_str().to_string()))
-            .bind(("inst", key.agent_instance_id.as_str().to_string()))
             .await
             .unwrap()
             .take(0)
@@ -1031,11 +1008,10 @@ mod tests {
         let rows: Vec<serde_json::Value> = db
             .query(
                 "SELECT runner_endpoint FROM cluster_agent_placements \
-                 WHERE agent_package = $pkg AND agent_instance_id = $inst \
+                 WHERE agent_package = $pkg \
                  ORDER BY runner_endpoint ASC",
             )
             .bind(("pkg", key.agent_package.as_str().to_string()))
-            .bind(("inst", key.agent_instance_id.as_str().to_string()))
             .await
             .unwrap()
             .take(0)
@@ -1051,18 +1027,19 @@ mod tests {
     }
 
     /// Booting against a cluster that already carries the pre-migration
-    /// schema (narrower UNIQUE index plus rows keyed by `{pkg}/{inst}`)
-    /// must succeed, install the wider index, sweep the legacy rows, and
-    /// allow new placements without a uniqueness collision.
+    /// schema (instance-scoped UNIQUE index plus rows keyed by
+    /// `{pkg}/{inst}/{runner}`) must succeed, install the runner-scoped
+    /// index, sweep the legacy rows, and allow new placements without a
+    /// uniqueness collision.
     #[tokio::test]
     async fn init_schema_migrates_pre_existing_narrow_index_and_rows() {
         let db = test_db().await;
 
         db.query(
             "DEFINE TABLE cluster_agent_placements SCHEMALESS;\
-             DEFINE INDEX idx_placement_agent ON cluster_agent_placements \
-               FIELDS agent_package, agent_instance_id UNIQUE;\
-             CREATE cluster_agent_placements:`legacy-agent/default` SET \
+             DEFINE INDEX idx_placement_agent_runner ON cluster_agent_placements \
+               FIELDS agent_package, agent_instance_id, runner_id UNIQUE;\
+             CREATE cluster_agent_placements:`legacy-agent/default/dead-uuid-from-a-prior-process` SET \
                agent_package = 'legacy-agent', \
                agent_instance_id = 'default', \
                runner_id = 'dead-uuid-from-a-prior-process', \
@@ -1086,7 +1063,7 @@ mod tests {
             .unwrap();
         assert!(
             legacy_rows.is_empty(),
-            "legacy two-segment-id rows must be swept; found {legacy_rows:?}"
+            "legacy three-segment-id rows must be swept; found {legacy_rows:?}"
         );
 
         let indexes: Vec<serde_json::Value> = db
@@ -1098,19 +1075,16 @@ mod tests {
         let indexes_json = serde_json::to_string(&indexes).unwrap();
         assert!(
             indexes_json.contains("idx_placement_agent_runner"),
-            "wider index must be present after migration: {indexes_json}"
+            "runner-scoped index must be present after migration: {indexes_json}"
         );
         assert!(
-            !indexes_json.contains("idx_placement_agent ON"),
-            "narrower index must be removed after migration: {indexes_json}"
+            !indexes_json.contains("agent_instance_id"),
+            "no index may reference the removed agent_instance_id: {indexes_json}"
         );
 
         // record_placement on the same logical key as the legacy row must
         // succeed under the wider UNIQUE without colliding.
-        let key = AgentRouteKey::new(
-            AgentPackageName::parse("legacy-agent").unwrap(),
-            AgentInstanceId::default(),
-        );
+        let key = AgentRouteKey::new(AgentPackageName::parse("legacy-agent").unwrap());
         mgr.record_placement(&key, &test_hash()).await.unwrap();
     }
 
@@ -1130,7 +1104,6 @@ mod tests {
         let (rid_b, endpoint_b, ts_b) = runner_b;
         let key = test_route_key();
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
         let hash = test_hash().as_str().to_string();
         db.query(
             "CREATE type::record('cluster_runners', $rid_a) SET \
@@ -1142,12 +1115,12 @@ mod tests {
                service_instance_id = $sid_b, pod_name = $sid_b, \
                last_heartbeat_ms = time::millis(time::now());\
              CREATE type::record('cluster_agent_placements', $key_a) SET \
-               agent_package = $pkg, agent_instance_id = $inst, \
+               agent_package = $pkg, \
                content_hash = $hash, runner_id = $rid_a, \
                runner_endpoint = $endpoint_a, status = $status, \
                updated_at_ms = $ts_a;\
              CREATE type::record('cluster_agent_placements', $key_b) SET \
-               agent_package = $pkg, agent_instance_id = $inst, \
+               agent_package = $pkg, \
                content_hash = $hash, runner_id = $rid_b, \
                runner_endpoint = $endpoint_b, status = $status, \
                updated_at_ms = $ts_b",
@@ -1158,10 +1131,9 @@ mod tests {
         .bind(("endpoint_b", endpoint_b.to_string()))
         .bind(("sid_a", format!("sid-{rid_a}")))
         .bind(("sid_b", format!("sid-{rid_b}")))
-        .bind(("key_a", format!("{pkg}/{inst}/{rid_a}")))
-        .bind(("key_b", format!("{pkg}/{inst}/{rid_b}")))
+        .bind(("key_a", format!("{pkg}/{rid_a}")))
+        .bind(("key_b", format!("{pkg}/{rid_b}")))
         .bind(("pkg", pkg.to_string()))
-        .bind(("inst", inst.to_string()))
         .bind(("hash", hash))
         .bind(("status", PLACEMENT_STATUS_ACTIVE.to_string()))
         .bind(("ts_a", ts_a))

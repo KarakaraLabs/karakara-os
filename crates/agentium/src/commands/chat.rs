@@ -32,7 +32,6 @@ struct SseRequest<'a> {
     client: &'a reqwest::Client,
     base_url: &'a str,
     agent: &'a str,
-    instance: &'a str,
     context_id: &'a str,
     task_id: Option<&'a str>,
     message_text: &'a str,
@@ -233,11 +232,10 @@ fn classify_event_label(event: &Value) -> (&'static str, console::StyledObject<&
     ("event", style("[event]").dim())
 }
 
-fn validate_target(entries: &[AgentDiscoveryEntry], agent: &str, instance: &str) -> Result<()> {
-    let found = entries.iter().any(|entry| {
-        (entry.agent_card.name == agent || entry.agent_card.agent_package == agent)
-            && entry.agent_card.agent_instance_id == instance
-    });
+fn validate_target(entries: &[AgentDiscoveryEntry], agent: &str) -> Result<()> {
+    let found = entries
+        .iter()
+        .any(|entry| entry.agent_card.name == agent || entry.agent_card.agent_package == agent);
     if found {
         return Ok(());
     }
@@ -246,16 +244,15 @@ fn validate_target(entries: &[AgentDiscoveryEntry], agent: &str, instance: &str)
         .iter()
         .map(|e| {
             format!(
-                "{} (package={}, instance={})",
-                e.agent_card.name, e.agent_card.agent_package, e.agent_card.agent_instance_id
+                "{} (package={})",
+                e.agent_card.name, e.agent_card.agent_package
             )
         })
         .collect();
 
     bail!(
-        "Agent target not found: agent='{}', instance='{}'. Available: {}",
+        "Agent target not found: agent='{}'. Available: {}",
         agent,
-        instance,
         if available.is_empty() {
             "(none)".to_string()
         } else {
@@ -300,7 +297,6 @@ async fn send_message_http(
         &SendStreamParams {
             base_url: req.base_url,
             agent: req.agent,
-            instance: req.instance,
             context_id: req.context_id,
             task_id: req.task_id,
             text: req.message_text,
@@ -431,23 +427,21 @@ fn classify_error(e: &anyhow::Error) -> (&'static str, String) {
     ("UNK", format!("{e:#}"))
 }
 
-pub fn run(agent: &str, base_url: &str, instance: &str, verbose: bool) -> Result<()> {
+pub fn run(agent: &str, base_url: &str, verbose: bool) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("Failed to create async runtime")?;
 
     // One client for discovery + chat turns.
     let client = build_http_client(Some(Duration::from_secs(10)))?;
 
     let agents = rt.block_on(list_agents(&client, base_url))?;
-    validate_target(&agents, agent, instance)?;
+    validate_target(&agents, agent)?;
 
     // Session-scoped UUID: stable across all turns in this CLI session.
     let context_id = Uuid::new_v4().to_string();
 
     println!(
         "{}",
-        style(format!("Connected to {} (instance: {})", agent, instance))
-            .green()
-            .bold()
+        style(format!("Connected to {}", agent)).green().bold()
     );
     println!("{}", style(format!("  context_id: {context_id}")).dim());
     println!(
@@ -505,7 +499,6 @@ pub fn run(agent: &str, base_url: &str, instance: &str, verbose: bool) -> Result
             client: &client,
             base_url,
             agent,
-            instance,
             context_id: &context_id,
             task_id: task_id.as_deref(),
             message_text: input,

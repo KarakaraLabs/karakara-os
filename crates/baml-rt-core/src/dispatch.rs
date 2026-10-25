@@ -192,7 +192,6 @@ pub fn ensure_dispatch_task_scope(request: &mut AgentDispatchRequest, target: &A
             source_kind,
             source_key,
             target.agent_package.as_str(),
-            target.agent_instance_id.as_str(),
         ],
     ))));
 }
@@ -238,7 +237,7 @@ mod tests {
         scheduling_scope_from_dispatch_metadata,
     };
     use crate::{
-        AgentInstanceId, AgentPackageName, AgentRouteKey, EventSchemaVersion,
+        AgentPackageName, AgentRouteKey, EventSchemaVersion,
         event_subscription::{EventSourceKey, EventSourceKind},
         ids::{ContextId, TaskId},
     };
@@ -314,7 +313,6 @@ mod tests {
     fn ensure_dispatch_task_scope_mints_stable_task_for_context_message_event() {
         let target = AgentRouteKey::new(
             AgentPackageName::parse("observability-coordinator").expect("package"),
-            AgentInstanceId::default(),
         );
         let mut request = AgentDispatchRequest {
             routing_key: AgentDispatchRoutingKey::parse("grafana:intake").expect("routing"),
@@ -342,7 +340,6 @@ mod tests {
     fn ensure_dispatch_task_scope_preserves_explicit_task() {
         let target = AgentRouteKey::new(
             AgentPackageName::parse("observability-coordinator").expect("package"),
-            AgentInstanceId::default(),
         );
         let explicit = TaskId::from_external(crate::ids::ExternalId::new("caller-task"));
         let mut request = AgentDispatchRequest {

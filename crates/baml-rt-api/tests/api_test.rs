@@ -1174,14 +1174,13 @@ impl AgentRegistry for MockRegistry {
     }
 }
 
-fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDiscoveryEntry {
+fn discovery_entry(pkg: &str, _inst: &str, name: &str, version: &str) -> AgentDiscoveryEntry {
     let card = AgentCard {
         name: name.to_string(),
         version: version.to_string(),
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec![],
         baml_functions: vec![],
         description: None,
@@ -1191,7 +1190,6 @@ fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDis
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1200,7 +1198,7 @@ fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDis
 
 fn discovery_entry_with_card(
     pkg: &str,
-    inst: &str,
+    _inst: &str,
     name: &str,
     version: &str,
     description: Option<&str>,
@@ -1212,7 +1210,6 @@ fn discovery_entry_with_card(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec![
             "system/internal_a2a".to_string(),
             "support/calculate".to_string(),
@@ -1225,7 +1222,6 @@ fn discovery_entry_with_card(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1234,7 +1230,7 @@ fn discovery_entry_with_card(
 
 fn discovery_entry_with_subscriptions(
     pkg: &str,
-    inst: &str,
+    _inst: &str,
     name: &str,
     version: &str,
     subscriptions: Vec<EventSubscription>,
@@ -1245,7 +1241,6 @@ fn discovery_entry_with_subscriptions(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec!["system/internal_a2a".to_string()],
         baml_functions: vec![],
         description: Some(format!("{name} subscribes to task-daemon events")),
@@ -1255,7 +1250,6 @@ fn discovery_entry_with_subscriptions(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1423,7 +1417,6 @@ async fn get_agents_includes_provenance_fields_when_present() {
         ),
         repository_version: Some(7),
         agent_package: "clickup-agent".to_string(),
-        agent_instance_id: "default".to_string(),
         tools: vec!["support/clickup".to_string()],
         baml_functions: vec![],
         description: Some("ClickUp automation".to_string()),
@@ -1433,7 +1426,6 @@ async fn get_agents_includes_provenance_fields_when_present() {
     };
     let entries = vec![AgentDiscoveryEntry {
         agent_package: "clickup-agent".to_string(),
-        agent_instance_id: "default".to_string(),
         name: "ClickUp Agent".to_string(),
         version: "1.2.3".to_string(),
         agent_card: card,
@@ -3141,7 +3133,6 @@ async fn post_event_dispatch_validate_rejects_unknown_agent() {
 
     let body = serde_json::json!({
         "agent_package": "missing",
-        "agent_instance_id": "default",
         "routing_key": "clickup:intake",
         "message_type": "host.source-records.v1",
         "messages": [{ "event_id": "e1" }],

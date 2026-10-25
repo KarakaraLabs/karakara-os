@@ -174,8 +174,7 @@ impl InternalA2aRouter {
         let key = extract_internal_a2a_target(request.as_ref())
             .or_else(|| {
                 a2a::extract_agent_name(request.as_ref()).and_then(|agent_package| {
-                    AgentPackageName::parse(agent_package)
-                        .map(|pkg| AgentRouteKey::new(pkg, AgentInstanceId::default()))
+                    AgentPackageName::parse(agent_package).map(AgentRouteKey::new)
                 })
             })
             .ok_or_else(|| {
@@ -184,12 +183,6 @@ impl InternalA2aRouter {
                 )
             })?;
 
-        if key.agent_instance_id.as_str() != AgentInstanceId::DEFAULT {
-            let instance_id = key.agent_instance_id.as_str();
-            return Err(BamlRtError::InvalidArgument(format!(
-                "system/internal_a2a only supports agent_instance_id=default, got '{instance_id}'"
-            )));
-        }
         if key == *caller {
             return Err(BamlRtError::InvalidArgument(
                 "system/internal_a2a self-routing is not allowed".to_string(),
@@ -227,9 +220,8 @@ impl InternalA2aRouter {
                 }
                 Err(e) => {
                     let pkg = key.agent_package.as_str();
-                    let inst = key.agent_instance_id.as_str();
                     return Err(BamlRtError::Io(std::io::Error::other(format!(
-                        "cluster placement lookup failed for {pkg}/{inst}: {e}"
+                        "cluster placement lookup failed for {pkg}: {e}"
                     ))));
                 }
                 Ok(None) => {}
@@ -237,9 +229,8 @@ impl InternalA2aRouter {
         }
 
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
         Err(BamlRtError::AgentNotFound(format!(
-            "Agent {pkg}/{inst} not found locally or in cluster"
+            "Agent {pkg} not found locally or in cluster"
         )))
     }
 
@@ -256,16 +247,16 @@ impl InternalA2aRouter {
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
         let target =
-            baml_rt_router::forward::resolve_forward_target(&placement.endpoint, pkg, inst).await?;
+            baml_rt_router::forward::resolve_forward_target(&placement.endpoint, pkg).await?;
         let body = request.into_inner();
         let ingress_service_instance_id = baml_rt_observability::service_instance_id();
+        let telemetry_instance = AgentInstanceId::default_id();
         baml_rt_router::forward::forward_stream_request(
             &target,
             &body,
             &key.agent_package,
-            &key.agent_instance_id,
+            &telemetry_instance,
             ingress_service_instance_id,
             Some(placement.service_instance_id.as_str()),
         )
@@ -305,13 +296,7 @@ pub(crate) fn extract_internal_a2a_target(request: &Value) -> Option<AgentRouteK
     let metadata = params.get("metadata")?.as_object()?;
     let target = metadata.get("target")?.as_object()?;
     let agent_package = AgentPackageName::parse(target.get("agent_package")?.as_str()?)?;
-    let agent_instance_id = AgentInstanceId::parse(
-        target
-            .get("agent_instance_id")
-            .and_then(Value::as_str)
-            .unwrap_or(AgentInstanceId::DEFAULT),
-    )?;
-    Some(AgentRouteKey::new(agent_package, agent_instance_id))
+    Some(AgentRouteKey::new(agent_package))
 }
 
 #[async_trait]
@@ -352,15 +337,13 @@ mod tests {
             "params": {
                 "metadata": {
                     "target": {
-                        "agent_package": "remote-agent",
-                        "agent_instance_id": "default"
+                        "agent_package": "remote-agent"
                     }
                 }
             }
         });
         let key = extract_internal_a2a_target(&request).expect("target route key");
         assert_eq!(key.agent_package.as_str(), "remote-agent");
-        assert_eq!(key.agent_instance_id.as_str(), "default");
     }
 
     #[tokio::test]
@@ -401,10 +384,7 @@ mod tests {
             endpoint: format!("http://{cluster_ip}:{port}"),
             service_instance_id: "runner-serving".to_string(),
         };
-        let key = AgentRouteKey::new(
-            AgentPackageName::parse("remote-agent").unwrap(),
-            AgentInstanceId::default(),
-        );
+        let key = AgentRouteKey::new(AgentPackageName::parse("remote-agent").unwrap());
         let request = A2aWireRequest::from(serde_json::json!({
             "jsonrpc": "2.0",
             "id": "corr",

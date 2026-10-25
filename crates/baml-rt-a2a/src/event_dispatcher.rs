@@ -95,7 +95,6 @@ impl EventDispatcher {
         for (target, failure) in &outcome.failures {
             warn!(
                 agent_package = %target.agent_package,
-                agent_instance = %target.agent_instance_id,
                 detail = %failure.detail(),
                 "subscriber dispatch failed or rejected"
             );

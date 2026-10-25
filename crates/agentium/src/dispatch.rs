@@ -372,8 +372,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat {
             agent,
             url,
-            instance,
             verbose,
-        } => commands::chat::run(&agent, &url, &instance, verbose),
+        } => commands::chat::run(&agent, &url, verbose),
     }
 }

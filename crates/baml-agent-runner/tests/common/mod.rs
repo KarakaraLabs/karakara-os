@@ -242,7 +242,6 @@ impl AgentLister for SingleAgentRegistry {
             content_hash: None,
             repository_version: None,
             agent_package: self.package.clone(),
-            agent_instance_id: self.instance_id.clone(),
             tools: Vec::new(),
             baml_functions: Vec::new(),
             description: None,
@@ -252,7 +251,6 @@ impl AgentLister for SingleAgentRegistry {
         };
         vec![AgentDiscoveryEntry {
             agent_package: self.package.clone(),
-            agent_instance_id: self.instance_id.clone(),
             name: self.name.clone(),
             version: self.version.clone(),
             agent_card,
@@ -273,13 +271,10 @@ impl AgentRegistry for SingleAgentRegistry {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> baml_rt_core::Result<baml_rt_core::bus::BusStream<A2aStreamChunk>> {
-        if key.agent_package.as_str() != self.package
-            || key.agent_instance_id.as_str() != self.instance_id
-        {
+        if key.agent_package.as_str() != self.package {
             let pkg = key.agent_package.as_str();
-            let inst = key.agent_instance_id.as_str();
             return Err(baml_rt_core::BamlRtError::InvalidArgument(format!(
-                "Agent {pkg}/{inst} not found",
+                "Agent {pkg} not found",
             )));
         }
         self.agent.handle_a2a_stream(request).await
@@ -290,13 +285,10 @@ impl AgentRegistry for SingleAgentRegistry {
         key: &AgentRouteKey,
         request: AgentDispatchRequest,
     ) -> baml_rt_core::Result<AgentDispatchAck> {
-        if key.agent_package.as_str() != self.package
-            || key.agent_instance_id.as_str() != self.instance_id
-        {
+        if key.agent_package.as_str() != self.package {
             let pkg = key.agent_package.as_str();
-            let inst = key.agent_instance_id.as_str();
             return Err(baml_rt_core::BamlRtError::InvalidArgument(format!(
-                "Agent {pkg}/{inst} not found",
+                "Agent {pkg} not found",
             )));
         }
         self.agent.handle_dispatch(request).await
@@ -367,7 +359,6 @@ impl AgentLister for DispatchRegistry {
             content_hash: None,
             repository_version: None,
             agent_package: self.package.clone(),
-            agent_instance_id: self.instance_id.clone(),
             tools: Vec::new(),
             baml_functions: Vec::new(),
             description: None,
@@ -377,7 +368,6 @@ impl AgentLister for DispatchRegistry {
         };
         vec![AgentDiscoveryEntry {
             agent_package: self.package.clone(),
-            agent_instance_id: self.instance_id.clone(),
             name: self.name.clone(),
             version: self.version.clone(),
             agent_card,
@@ -398,13 +388,10 @@ impl AgentRegistry for DispatchRegistry {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> baml_rt_core::Result<baml_rt_core::bus::BusStream<A2aStreamChunk>> {
-        if key.agent_package.as_str() != self.package
-            || key.agent_instance_id.as_str() != self.instance_id
-        {
+        if key.agent_package.as_str() != self.package {
             let pkg = key.agent_package.as_str();
-            let inst = key.agent_instance_id.as_str();
             return Err(baml_rt_core::BamlRtError::InvalidArgument(format!(
-                "Agent {pkg}/{inst} not found",
+                "Agent {pkg} not found",
             )));
         }
         self.agent.handle_a2a_stream(request).await
@@ -415,13 +402,10 @@ impl AgentRegistry for DispatchRegistry {
         key: &AgentRouteKey,
         request: AgentDispatchRequest,
     ) -> baml_rt_core::Result<AgentDispatchAck> {
-        if key.agent_package.as_str() != self.package
-            || key.agent_instance_id.as_str() != self.instance_id
-        {
+        if key.agent_package.as_str() != self.package {
             let pkg = key.agent_package.as_str();
-            let inst = key.agent_instance_id.as_str();
             return Err(baml_rt_core::BamlRtError::InvalidArgument(format!(
-                "Agent {pkg}/{inst} not found",
+                "Agent {pkg} not found",
             )));
         }
         self.agent.handle_dispatch(request).await
@@ -462,7 +446,6 @@ impl AgentLister for StaticAgentList {
 #[allow(dead_code)] // Shared optional test helper; not every integration binary uses it.
 pub struct DelegationCall {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub prompt: String,
 }
 
@@ -510,12 +493,6 @@ impl A2aRequestHandler for CapturingA2aHandler {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let target_instance = request
-            .as_ref()
-            .pointer("/params/metadata/target/agent_instance_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
         let prompt = request
             .as_ref()
             .pointer("/params/message/parts/0/text")
@@ -525,7 +502,6 @@ impl A2aRequestHandler for CapturingA2aHandler {
 
         self.calls.lock().await.push(DelegationCall {
             agent_package: target_package.clone(),
-            agent_instance_id: target_instance,
             prompt,
         });
 
@@ -615,7 +591,6 @@ pub fn discovery_entry(package: &str, capabilities: &[&str]) -> AgentDiscoveryEn
         content_hash: None,
         repository_version: None,
         agent_package: package.to_string(),
-        agent_instance_id: "default".to_string(),
         tools: Vec::new(),
         baml_functions: Vec::new(),
         description: Some(format!("{package} test agent")),
@@ -626,7 +601,6 @@ pub fn discovery_entry(package: &str, capabilities: &[&str]) -> AgentDiscoveryEn
 
     AgentDiscoveryEntry {
         agent_package: package.to_string(),
-        agent_instance_id: "default".to_string(),
         name: package.to_string(),
         version: "1.0.0".to_string(),
         agent_card: card,

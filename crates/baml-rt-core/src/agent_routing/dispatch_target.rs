@@ -9,7 +9,7 @@ use crate::ids::AgentId;
 
 /// Host dispatch routing target with the live booted [`AgentId`] for graph edges.
 ///
-/// Route (`package` + `instance`) keys transcript idempotency; `agent_id` is the
+/// Route (package name) keys transcript idempotency; `agent_id` is the
 /// authoritative runtime identity for `HOST_DISPATCH_TARGET` and execution attribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchTarget {
@@ -35,9 +35,5 @@ impl DispatchTarget {
 
     pub fn package(&self) -> &str {
         self.route.agent_package.as_str()
-    }
-
-    pub fn instance(&self) -> &str {
-        self.route.agent_instance_id.as_str()
     }
 }

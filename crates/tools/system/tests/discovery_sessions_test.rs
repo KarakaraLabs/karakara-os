@@ -456,7 +456,6 @@ fn entry_with_capabilities(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: "default".to_string(),
         tools: vec!["system/internal_a2a".to_string()],
         baml_functions: vec![],
         description: description.map(str::to_string),
@@ -466,7 +465,6 @@ fn entry_with_capabilities(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: "default".to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -486,7 +484,6 @@ fn entry_with_subscriptions(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: "default".to_string(),
         tools: vec!["system/internal_a2a".to_string()],
         baml_functions: vec![],
         description: description.map(str::to_string),
@@ -496,7 +493,6 @@ fn entry_with_subscriptions(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: "default".to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,

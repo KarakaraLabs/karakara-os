@@ -67,7 +67,6 @@ pub struct ClusterRunnerInfo {
 #[derive(Debug, Clone)]
 pub struct ClusterPlacementInfo {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub runner_id: String,
     pub runner_endpoint: String,
     /// `None` when the row carries no content hash (legacy or partial write).
@@ -87,8 +86,8 @@ pub struct ClusterPlacementInfo {
 pub struct ClusterAgentsResponseDto {
     /// One entry per known runner, with reachability for this fan-out.
     pub runners: Vec<ClusterRunnerStatusDto>,
-    /// One entry per `(agent_package, agent_instance_id)` observed in the
-    /// cluster, with the per-runner placements that back it.
+    /// One entry per `agent_package` observed in the cluster, with the
+    /// per-runner placements that back it.
     pub agents: Vec<ClusterAgentRowDto>,
 }
 
@@ -107,11 +106,10 @@ pub struct ClusterRunnerStatusDto {
     pub error: Option<String>,
 }
 
-/// One row in the cluster-wide agent view, aggregated by package+instance.
+/// One row in the cluster-wide agent view, aggregated by package.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ClusterAgentRowDto {
     pub agent_package: String,
-    pub agent_instance_id: String,
     /// `true` when the placements report more than one distinct `content_hash`.
     pub version_skew: bool,
     pub placements: Vec<ClusterAgentPlacementDto>,
@@ -280,10 +278,9 @@ where
     }
 
     let mut runner_statuses: BTreeMap<String, ClusterRunnerStatusDto> = BTreeMap::new();
-    // Aggregate keyed on `(package, instance, runner_id)` to dedupe between
-    // the runner fan-out result and the placement table fallback.
-    let mut rows: BTreeMap<(String, String), BTreeMap<String, ClusterAgentPlacementDto>> =
-        BTreeMap::new();
+    // Aggregate keyed on `(package, runner_id)` to dedupe between the runner
+    // fan-out result and the placement table fallback.
+    let mut rows: BTreeMap<String, BTreeMap<String, ClusterAgentPlacementDto>> = BTreeMap::new();
 
     if let Some((runner, outcome)) = local_pair.take() {
         record_outcome(runner, outcome, &mut runner_statuses, &mut rows);
@@ -327,10 +324,7 @@ where
                     ),
                 });
         }
-        let key = (
-            placement.agent_package.clone(),
-            placement.agent_instance_id.clone(),
-        );
+        let key = placement.agent_package.clone();
         let per_runner = rows.entry(key).or_default();
         if per_runner.contains_key(&placement.runner_id) {
             continue;
@@ -352,7 +346,7 @@ where
 
     let mut agents: Vec<ClusterAgentRowDto> = rows
         .into_iter()
-        .map(|((agent_package, agent_instance_id), per_runner)| {
+        .map(|(agent_package, per_runner)| {
             let placements: Vec<ClusterAgentPlacementDto> = per_runner.into_values().collect();
             // Unknown hashes (`None`) are excluded so a missing-hash row never
             // pairs with another missing-hash row to falsely report parity.
@@ -365,17 +359,12 @@ where
             let version_skew = hashes.len() > 1;
             ClusterAgentRowDto {
                 agent_package,
-                agent_instance_id,
                 version_skew,
                 placements,
             }
         })
         .collect();
-    agents.sort_by(|a, b| {
-        a.agent_package
-            .cmp(&b.agent_package)
-            .then(a.agent_instance_id.cmp(&b.agent_instance_id))
-    });
+    agents.sort_by(|a, b| a.agent_package.cmp(&b.agent_package));
 
     ClusterAgentsResponseDto {
         // BTreeMap iteration yields ascending runner_id, giving callers a
@@ -392,7 +381,7 @@ fn record_outcome(
     runner: ClusterRunnerInfo,
     outcome: FanOutOutcome,
     runner_statuses: &mut BTreeMap<String, ClusterRunnerStatusDto>,
-    rows: &mut BTreeMap<(String, String), BTreeMap<String, ClusterAgentPlacementDto>>,
+    rows: &mut BTreeMap<String, BTreeMap<String, ClusterAgentPlacementDto>>,
 ) {
     match outcome {
         FanOutOutcome::Reachable(entries) => {
@@ -409,7 +398,7 @@ fn record_outcome(
             );
             for entry in entries {
                 let content_hash = entry.agent_card.content_hash.clone();
-                let key = (entry.agent_package.clone(), entry.agent_instance_id.clone());
+                let key = entry.agent_package.clone();
                 let placement = ClusterAgentPlacementDto {
                     runner_id: runner.runner_id.clone(),
                     service_instance_id: runner.service_instance_id.clone(),
@@ -521,10 +510,9 @@ mod tests {
     /// self-fetch short-circuit.
     const NO_LOCAL: &str = "no-local-runner";
 
-    fn entry(pkg: &str, inst: &str, hash: &str, version: &str) -> AgentDiscoveryEntryDto {
+    fn entry(pkg: &str, hash: &str, version: &str) -> AgentDiscoveryEntryDto {
         AgentDiscoveryEntryDto {
             agent_package: pkg.to_string(),
-            agent_instance_id: inst.to_string(),
             name: pkg.to_string(),
             version: version.to_string(),
             agent_card: AgentCardDto {
@@ -533,7 +521,6 @@ mod tests {
                 content_hash: Some(hash.to_string()),
                 repository_version: None,
                 agent_package: pkg.to_string(),
-                agent_instance_id: inst.to_string(),
                 tools: Vec::new(),
                 baml_functions: Vec::new(),
                 description: None,
@@ -554,7 +541,7 @@ mod tests {
         ];
         let placements = Vec::new();
         let fetch = |_r: ClusterRunnerInfo| async move {
-            FanOutOutcome::Reachable(vec![entry("echo", "default", "hash-A", "v1")])
+            FanOutOutcome::Reachable(vec![entry("echo", "hash-A", "v1")])
         };
 
         let view = build_cluster_view(&runners, &placements, NO_LOCAL, Vec::new(), fetch).await;
@@ -582,7 +569,7 @@ mod tests {
                 "hash-v1"
             };
             let ver = if r.runner_id == "r0" { "v2" } else { "v1" };
-            FanOutOutcome::Reachable(vec![entry("dispatch-echo", "default", hash, ver)])
+            FanOutOutcome::Reachable(vec![entry("dispatch-echo", hash, ver)])
         };
 
         let view = build_cluster_view(&runners, &placements, NO_LOCAL, Vec::new(), fetch).await;
@@ -617,7 +604,6 @@ mod tests {
         ];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "dispatch-echo".to_string(),
-            agent_instance_id: "default".to_string(),
             runner_id: "r1".to_string(),
             runner_endpoint: "http://r1:18080".to_string(),
             content_hash: Some("hash-from-placement".to_string()),
@@ -626,12 +612,7 @@ mod tests {
         }];
         let fetch = |r: ClusterRunnerInfo| async move {
             if r.runner_id == "r0" {
-                FanOutOutcome::Reachable(vec![entry(
-                    "dispatch-echo",
-                    "default",
-                    "hash-from-runner",
-                    "v2",
-                )])
+                FanOutOutcome::Reachable(vec![entry("dispatch-echo", "hash-from-runner", "v2")])
             } else {
                 FanOutOutcome::Unreachable("connection refused".to_string())
             }
@@ -673,7 +654,6 @@ mod tests {
         let runners = vec![runner("r0", "agentium-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
-            agent_instance_id: "default".to_string(),
             runner_id: "r0".to_string(),
             runner_endpoint: "http://r0:18080".to_string(),
             content_hash: Some("stale-hash".to_string()),
@@ -681,7 +661,7 @@ mod tests {
             updated_at_ms: Some(500),
         }];
         let fetch = |_r: ClusterRunnerInfo| async move {
-            FanOutOutcome::Reachable(vec![entry("echo", "default", "fresh-hash", "v3")])
+            FanOutOutcome::Reachable(vec![entry("echo", "fresh-hash", "v3")])
         };
 
         let view = build_cluster_view(&runners, &placements, NO_LOCAL, Vec::new(), fetch).await;
@@ -708,7 +688,7 @@ mod tests {
         ];
         let placements = Vec::new();
         let fetch = |_r: ClusterRunnerInfo| async move {
-            let mut e = entry("echo", "default", "", "v1");
+            let mut e = entry("echo", "", "v1");
             e.agent_card.content_hash = None;
             FanOutOutcome::Reachable(vec![e])
         };
@@ -733,7 +713,6 @@ mod tests {
         let runners = vec![runner("r0", "agentium-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
-            agent_instance_id: "default".to_string(),
             runner_id: "ghost-uuid".to_string(),
             runner_endpoint: "http://10.0.0.99:18080".to_string(),
             content_hash: Some("hash-from-dead-runner".to_string()),
@@ -774,13 +753,13 @@ mod tests {
             runner("r1", "agentium-runner-1"),
         ];
         let placements = Vec::new();
-        let local_agents = vec![entry("echo", "default", "local-hash", "v1")];
+        let local_agents = vec![entry("echo", "local-hash", "v1")];
         let fetch = |r: ClusterRunnerInfo| async move {
             assert_ne!(
                 r.runner_id, "r0",
                 "fetch must never be called for the local runner"
             );
-            FanOutOutcome::Reachable(vec![entry("echo", "default", "remote-hash", "v1")])
+            FanOutOutcome::Reachable(vec![entry("echo", "remote-hash", "v1")])
         };
 
         let view = build_cluster_view(&runners, &placements, "r0", local_agents, fetch).await;
@@ -812,7 +791,6 @@ mod tests {
         let runners = vec![runner("r0", "agentium-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
-            agent_instance_id: "default".to_string(),
             runner_id: "r0".to_string(),
             runner_endpoint: "http://r0:18080".to_string(),
             content_hash: Some("h".to_string()),
@@ -829,7 +807,7 @@ mod tests {
 
         // Inverse case: a runner-sourced row must NOT carry updated_at_ms.
         let fetch_ok = |_r: ClusterRunnerInfo| async move {
-            FanOutOutcome::Reachable(vec![entry("echo", "default", "h", "v")])
+            FanOutOutcome::Reachable(vec![entry("echo", "h", "v")])
         };
         let view2 = build_cluster_view(&runners, &Vec::new(), NO_LOCAL, Vec::new(), fetch_ok).await;
         assert!(view2.agents[0].placements[0].updated_at_ms.is_none());
@@ -841,7 +819,6 @@ mod tests {
         let runners = vec![runner("r0", "agentium-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "ghost".to_string(),
-            agent_instance_id: "default".to_string(),
             runner_id: "r0".to_string(),
             runner_endpoint: "http://r0:18080".to_string(),
             content_hash: Some("tombstone-hash".to_string()),

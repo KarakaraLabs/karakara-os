@@ -48,10 +48,9 @@ pub fn run(base_url: &str) -> Result<()> {
     println!("{}", style("Deployed instances").bold());
     for entry in output.entries {
         println!(
-            "- {}  package={} instance={}",
+            "- {}  package={}",
             style(entry.agent_card.name).cyan(),
             entry.agent_card.agent_package,
-            entry.agent_card.agent_instance_id
         );
     }
     println!("  url: {}", style(output.agents_url).dim());

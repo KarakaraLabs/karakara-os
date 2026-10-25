@@ -1737,7 +1737,7 @@ impl ProvEvent {
             HostIngressKind::DispatchAccepted,
             &routing_key,
             target.package(),
-            target.instance(),
+            baml_rt_core::AgentInstanceId::DEFAULT,
             HostIngressSourceRef::from_fields(&source_kind, &source_key),
         );
         ProvEvent::Global(GlobalEvent {
@@ -1748,7 +1748,7 @@ impl ProvEvent {
                 routing_key,
                 schema_version,
                 target_package: target.package().to_string(),
-                target_instance: target.instance().to_string(),
+                target_instance: baml_rt_core::AgentInstanceId::DEFAULT.to_string(),
                 source_kind,
                 source_key,
                 producer_key,
@@ -1773,7 +1773,7 @@ impl ProvEvent {
             HostIngressKind::from_dispatch_failure(failure_kind),
             routing_key,
             target.package(),
-            target.instance(),
+            baml_rt_core::AgentInstanceId::DEFAULT,
             source,
         );
         let (source_kind, source_key) = match &outcome.source {

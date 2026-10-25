@@ -535,7 +535,7 @@ async fn test_a2a_session_send_returns_fast_and_next_drains() {
                 .open_tool_session(
                     &sc,
                     SYSTEM_A2A_TOOL,
-                    json!({ "target": { "agent_package": "self", "agent_instance_id": "default" } }),
+                    json!({ "target": { "agent_package": "self" } }),
                 )
                 .await
                 .expect("open system/internal_a2a");
@@ -621,7 +621,7 @@ async fn test_a2a_session_send_after_finish_fails() {
             .open_tool_session(
                 &scope_for_open,
                 SYSTEM_A2A_TOOL,
-                json!({ "target": { "agent_package": "self", "agent_instance_id": "default" } }),
+                json!({ "target": { "agent_package": "self" } }),
             )
             .await
             .expect("open system/internal_a2a");

@@ -13,5 +13,4 @@ pub struct AgentDiscoveryEntry {
 pub struct AgentCard {
     pub name: String,
     pub agent_package: String,
-    pub agent_instance_id: String,
 }

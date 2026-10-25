@@ -435,10 +435,6 @@ pub enum Commands {
         #[arg(long, default_value = "http://127.0.0.1:18080")]
         url: String,
 
-        /// Agent instance identifier
-        #[arg(long, default_value = "default")]
-        instance: String,
-
         /// Print debug diagnostics
         #[arg(long, short)]
         verbose: bool,

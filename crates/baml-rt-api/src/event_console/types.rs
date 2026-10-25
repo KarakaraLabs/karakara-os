@@ -78,7 +78,6 @@ pub enum EventDispatchScopeDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EventDispatchValidateRequestDto {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub routing_key: String,
     /// Wire-level message type (`AgentDispatchRequest.message_type`).
     pub message_type: String,
