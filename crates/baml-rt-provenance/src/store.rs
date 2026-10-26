@@ -276,6 +276,52 @@ pub trait ProvenanceQueryApi: Send + Sync {
 /// Planning snapshot for explainability. `intent_id` is the **task-scoped planning alias** from
 /// the execution-session wire (often agent-chosen or LLM-suggested text), **not** a standalone
 /// global provenance key; pair with `task_id` (and derived intent entity id in the graph).
+/// Opaque cursor over `(event_order, node_id)`, the durable ordering key of the
+/// transcript rows. Offsets are not usable: concurrent appends shift them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextHistoryCursor {
+    pub event_order: u64,
+    pub node_id: String,
+}
+
+impl ContextHistoryCursor {
+    #[must_use]
+    pub fn new(event_order: u64, node_id: impl Into<String>) -> Self {
+        Self {
+            event_order,
+            node_id: node_id.into(),
+        }
+    }
+
+    /// Encode for transport. Callers must treat this as opaque.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        format!("{}:{}", self.event_order, self.node_id)
+    }
+
+    /// Decode a cursor produced by [`Self::encode`].
+    #[must_use]
+    pub fn decode(raw: &str) -> Option<Self> {
+        let (order, node_id) = raw.split_once(':')?;
+        Some(Self {
+            event_order: order.parse().ok()?,
+            node_id: node_id.to_string(),
+        })
+    }
+}
+
+/// One page of [`ContextHistoryView`](crate::SurrealProvenanceStore::context_history_view):
+/// the prompt-facing projection of one agent's participation in a context.
+#[derive(Debug, Clone, Default)]
+pub struct ContextHistoryPage {
+    /// Newest visible rows, oldest-first, bounded by the requested window.
+    pub items: Vec<baml_rt_conversation::view::ProvenanceConversationContextItem>,
+    /// Opaque cursor identifying the oldest row in this page, for paging older-ward.
+    pub cursor: Option<String>,
+    /// True when older visible rows exist outside the window.
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanningIntentRecord {
     pub context_id: ContextId,

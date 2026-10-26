@@ -118,33 +118,50 @@ impl ProjectingConversationContextProvider {
     ) -> Result<Option<Value>> {
         let context_id = scope.context_id();
         let task_id = scope.task_id_opt();
-        let items = if let Some(store) = self.provenance_store.as_ref() {
-            store
-                .conversation_context_for_agent_prompt(context_id, item_limit, task_id)
+        let agent_id = scope.agent_id().clone();
+        // Agent prompts read this agent's participation across every task in the
+        // context, so the store path is agent-scoped and deliberately not
+        // task-filtered. A task filter is still correct for replay and inspection.
+        let (items, truncated) = if let Some(store) = self.provenance_store.as_ref() {
+            let page = store
+                .context_history_view(context_id, &agent_id, item_limit, None, None)
                 .await
                 .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                     source: Box::new(e),
-                })?
+                })?;
+            (page.items, page.truncated)
         } else {
-            self.source
-                .conversation_context_with_task(context_id, item_limit, task_id)
-                .await?
+            (
+                self.source
+                    .conversation_context_with_task(context_id, item_limit, task_id)
+                    .await?,
+                false,
+            )
         };
         tracing::debug!(
             context_id = %context_id,
+            agent_id = %agent_id,
             task_id = ?task_id.map(|t| t.as_str()),
             item_count = items.len(),
             item_limit = ?item_limit,
+            truncated,
             "project_conversation_to_json: context source returned items"
         );
         if items.is_empty() {
             return Ok(None);
         }
 
-        let projection_items = items
+        let mut projection_items = items
             .into_iter()
-            .filter_map(to_projection_item)
+            .filter_map(|item| {
+                baml_rt_conversation::projection::agent_view_projection_item(item, &agent_id)
+            })
             .collect::<Vec<_>>();
+        if truncated {
+            projection_items.push(baml_rt_conversation::projection::truncation_marker(
+                item_limit.unwrap_or_default(),
+            ));
+        }
         if projection_items.is_empty() {
             return Ok(None);
         }
