@@ -70,6 +70,7 @@ mod tests {
         status: Option<&str>,
     ) -> ProvenanceConversationContextItem {
         ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from("plan-a"),
             role: "system".into(),
@@ -97,6 +98,7 @@ mod tests {
                 Some("in_progress"),
             ),
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 2,
                 activity_anchor: ActivityAnchorId::from("msg-a"),
                 role: "user".into(),
@@ -116,6 +118,7 @@ mod tests {
     #[test]
     fn format_planning_digest_none_when_no_live_obligations() {
         let items = vec![ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from("msg-a"),
             role: "user".into(),
@@ -131,6 +134,7 @@ mod tests {
     #[test]
     fn format_tail_preview_renders_messages() {
         let items = vec![ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from("msg-a"),
             role: "user".into(),

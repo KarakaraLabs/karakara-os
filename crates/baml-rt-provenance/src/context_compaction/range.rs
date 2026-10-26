@@ -106,6 +106,7 @@ mod tests {
     fn dummy_items(count: usize) -> Vec<ProvenanceConversationContextItem> {
         (0..count)
             .map(|i| ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: (i as u64 + 1) * 10,
                 activity_anchor: ActivityAnchorId::from(format!("a{i}")),
                 role: "user".into(),
@@ -137,6 +138,7 @@ mod tests {
     fn live_planning_obligation_detected() {
         use baml_rt_conversation::planning::{PlanningEventContent, PlanningEventKind};
         let item = ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from("a1"),
             role: "system".into(),

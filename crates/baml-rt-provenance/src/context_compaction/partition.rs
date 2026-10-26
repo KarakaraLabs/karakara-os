@@ -48,6 +48,7 @@ mod tests {
 
     fn msg(order: u64, text: &str) -> ProvenanceConversationContextItem {
         ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: order,
             activity_anchor: ActivityAnchorId::from(format!("a{order}")),
             role: "user".into(),
@@ -61,6 +62,7 @@ mod tests {
 
     fn live_plan(order: u64) -> ProvenanceConversationContextItem {
         ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: order,
             activity_anchor: ActivityAnchorId::from(format!("p{order}")),
             role: "system".into(),

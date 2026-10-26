@@ -23,6 +23,7 @@ pub struct CompactionSummaryItem {
 impl CompactionSummaryItem {
     pub fn to_conversation_item(&self) -> ProvenanceConversationContextItem {
         ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: self.timestamp_ms,
             activity_anchor: self.activity_anchor.clone(),
             role: "system".to_string(),
@@ -99,6 +100,7 @@ fn enrich_operator_timeline(
         return items;
     };
     let marker = ProvenanceConversationContextItem {
+        attribution: None,
         timestamp_ms: head.event_order,
         activity_anchor: head.activity_anchor.clone(),
         role: "system".to_string(),
@@ -128,6 +130,7 @@ mod tests {
 
     fn msg(order: u64, text: &str) -> ProvenanceConversationContextItem {
         ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: order,
             activity_anchor: ActivityAnchorId::from(format!("a{order}")),
             role: "user".into(),

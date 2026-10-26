@@ -286,6 +286,7 @@ impl SurrealProvenanceStore {
             };
 
             items.push(ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms,
                 activity_anchor: ActivityAnchorId::from(event_id),
                 role: "system".to_string(),
@@ -310,6 +311,7 @@ impl SurrealProvenanceStore {
             let anchor = intent.activity_anchor_id.as_str().to_string();
             if !existing_anchors.contains(&anchor) {
                 items.push(ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: intent.event_order,
                     activity_anchor: intent.activity_anchor_id.clone(),
                     role: "system".to_string(),
@@ -334,6 +336,7 @@ impl SurrealProvenanceStore {
             let plan_anchor = plan.activity_anchor_id.as_str().to_string();
             if !existing_anchors.contains(&plan_anchor) {
                 items.push(ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: plan.event_order,
                     activity_anchor: plan.activity_anchor_id.clone(),
                     role: "system".to_string(),
@@ -362,6 +365,7 @@ impl SurrealProvenanceStore {
                     continue;
                 }
                 items.push(ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: plan.event_order.saturating_add(step.order as u64),
                     activity_anchor: ActivityAnchorId::from(step_anchor),
                     role: "system".to_string(),

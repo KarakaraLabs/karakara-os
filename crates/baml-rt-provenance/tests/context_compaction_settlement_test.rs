@@ -328,6 +328,7 @@ async fn planning_agent_prefix_non_empty_with_live_step_in_tail() {
 
 fn msg(order: u64, text: &str) -> ProvenanceConversationContextItem {
     ProvenanceConversationContextItem {
+        attribution: None,
         timestamp_ms: order,
         activity_anchor: ActivityAnchorId::from(format!("m{order}")),
         role: "user".into(),
@@ -346,6 +347,7 @@ fn planning(
     status: Option<&str>,
 ) -> ProvenanceConversationContextItem {
     ProvenanceConversationContextItem {
+        attribution: None,
         timestamp_ms: order,
         activity_anchor: ActivityAnchorId::from(format!("p{order}")),
         role: "system".into(),

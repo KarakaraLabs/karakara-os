@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use baml_rt_core::{
     Citation,
     history_text::{is_history_infrastructure_notice, strip_history_notice_prefix},
-    ids::{ActivityAnchorId, ContextId, MessageId},
+    ids::{ActivityAnchorId, AgentId, ContextId, MessageId, TaskId},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -263,6 +263,72 @@ pub struct ProvenanceConversationContextItem {
     /// Present only for `role == "user"` transcript rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_speaker_kind: Option<UserSpeakerKind>,
+    /// Typed attribution for this stored event.
+    ///
+    /// `None` only for rows synthesized without a single backing event, such as
+    /// compaction summaries. `role` remains a rendering concern; identity and
+    /// direction live here so projection can decide per event kind instead of
+    /// inferring an author from a chat role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<Box<EventAttribution>>,
+}
+
+/// Kind of a stored context event.
+///
+/// A chat-shaped sender/recipient pair cannot describe a tool operation or a
+/// model result, so the kind is explicit rather than inferred from `role`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventKind {
+    /// Human, webhook, or host-governed input addressed to an agent.
+    IngressSignal,
+    /// The agent's model call for one invocation.
+    PromptInvocation,
+    /// The model's result for one invocation.
+    ModelResult,
+    /// A tool or tool-session operation executed by an agent.
+    ToolOperation,
+    /// Something the agent emitted toward a caller, user, or downstream agent.
+    EmittedSignal,
+    /// A typed delegation link between a caller and a target agent.
+    Delegation,
+    /// Task lifecycle or delivery status.
+    TaskState,
+    /// Operator-only routing or ownership decision (never agent-visible).
+    AuditDecision,
+}
+
+/// Stable agent reference plus the package-name snapshot used for display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRef {
+    pub agent_id: AgentId,
+    /// Package name at event time, when the row records it. Never used for
+    /// identity comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Typed attribution for one stored context event.
+///
+/// Actor and target are optional per kind: an ingress signal has an external
+/// source as actor and an agent as target, a prompt invocation has an actor
+/// agent and no target, and a delegation has both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventAttribution {
+    pub event_kind: EventKind,
+    pub context_id: ContextId,
+    /// Set when the event belongs to exactly one task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    /// Agent that performed or emitted the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<AgentRef>,
+    /// Agent the event is addressed to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<AgentRef>,
+    /// For ingress: the external source identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
 }
 
 impl ProvenanceConversationContextItem {
@@ -277,6 +343,26 @@ impl ProvenanceConversationContextItem {
             ConversationItemContent::Planning(_) => "planning_event",
             ConversationItemContent::CompactionSummary { .. } => "compaction_summary",
         }
+    }
+
+    /// True when `agent_id` may read this row.
+    ///
+    /// A row is visible when the agent is its actor or its target. Synthetic rows
+    /// with no attribution (for example a compaction summary) stay visible: they
+    /// summarize the same agent view rather than another agent's internals. Rows
+    /// whose stored owner could not be resolved are also kept, which preserves
+    /// legacy reads; every new row carries an owner.
+    #[must_use]
+    pub fn is_visible_to_agent(&self, agent_id: &AgentId) -> bool {
+        let Some(attribution) = self.attribution.as_deref() else {
+            return true;
+        };
+        if attribution.actor.is_none() && attribution.target.is_none() {
+            return true;
+        }
+        let matches = |reference: &AgentRef| reference.agent_id == *agent_id;
+        attribution.actor.as_ref().is_some_and(matches)
+            || attribution.target.as_ref().is_some_and(matches)
     }
 }
 
