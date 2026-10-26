@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -168,10 +169,9 @@ impl ContextId {
         Some(Self::new(millis, counter))
     }
 
-    /// Stable delegated child context for an internal A2A session.
+    /// Legacy delegated child context constructor retained for reading historical traffic.
     ///
-    /// The child task id is part of the encoding so parallel delegated sessions
-    /// from the same caller to the same target do not collide on one stream key.
+    /// New internal A2A sessions preserve the caller context and use a fresh child task id.
     pub fn for_a2a_child(
         caller_context_id: &ContextId,
         target_package: &str,

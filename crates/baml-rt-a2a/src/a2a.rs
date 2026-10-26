@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -449,8 +450,9 @@ impl JsChunkNormalizer {
     fn next_message_id(&mut self) -> String {
         self.message_counter += 1;
         let derived = DerivedId::new(format!(
-            "js-msg-{context_id}-{counter}",
+            "js-msg-{context_id}-{task_id}-{counter}",
             context_id = self.context_id.as_str(),
+            task_id = self.task_id.as_str(),
             counter = self.message_counter
         ));
         A2aMessageId::outgoing(derived)

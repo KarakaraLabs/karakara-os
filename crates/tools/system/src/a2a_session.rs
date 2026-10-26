@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -188,27 +189,6 @@ fn parse_send_input(raw: Value) -> std::result::Result<Vec<ConversationPart>, St
     }
 }
 
-/// Derive a child context id for inter-agent traffic so the called agent's
-/// inbound `Message` provenance does NOT land on the caller's user-facing
-/// conversation context. Stable across hops in the same delegated child task.
-///
-/// Format: `a2a:<caller_ctx>:<pkg>:<child_task_id>`. The `a2a:` prefix
-/// lets readers (UI picker, conversation projection) skip these contexts when
-/// surfacing human-visible chats. Including the child task id prevents
-/// concurrent delegated sessions to the same target from colliding on one
-/// responder-side stream key.
-fn derive_a2a_child_context_id(
-    caller_context_id: &baml_rt_core::ids::ContextId,
-    target: &InternalA2aTarget,
-    child_task_id: &TaskId,
-) -> baml_rt_core::ids::ContextId {
-    baml_rt_core::ids::ContextId::for_a2a_child(
-        caller_context_id,
-        &target.agent_package,
-        child_task_id,
-    )
-}
-
 fn build_send_stream_request(
     parts: Vec<ConversationPart>,
     target: &InternalA2aTarget,
@@ -219,7 +199,6 @@ fn build_send_stream_request(
     let reference_task_ids = parent_task_id
         .map(|task_id| vec![task_id.as_str().to_string()])
         .unwrap_or_default();
-    let child_context_id = derive_a2a_child_context_id(caller_context_id, target, child_task_id);
     serde_json::json!({
         "jsonrpc": "2.0",
         "method": "message.sendStream",
@@ -229,7 +208,7 @@ fn build_send_stream_request(
                 "messageId": format!("system-a2a-{id}", id = uuid::Uuid::new_v4()),
                 "role": "ROLE_USER",
                 "parts": parts,
-                "contextId": child_context_id.as_str(),
+                "contextId": caller_context_id.as_str(),
                 "taskId": child_task_id.as_str(),
                 "referenceTaskIds": reference_task_ids
             },
@@ -832,112 +811,59 @@ mod tests {
     }
 
     #[test]
-    fn build_send_stream_request_uses_stable_child_task_id() {
+    fn build_send_stream_request_preserves_context_and_child_task_identity() {
         let target = responder_target();
-        let context_id = ContextId::new(1, 1);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let parts = vec![ConversationPart {
-            text: Some("hello".to_string()),
-            ..Default::default()
-        }];
-
-        let first =
-            build_send_stream_request(parts.clone(), &target, &context_id, &child_task_id, None);
-        let second = build_send_stream_request(parts, &target, &context_id, &child_task_id, None);
-
-        assert_eq!(
-            first
-                .pointer("/params/message/taskId")
-                .and_then(serde_json::Value::as_str),
-            Some(child_task_id.as_str())
-        );
-        assert_eq!(
-            second
-                .pointer("/params/message/taskId")
-                .and_then(serde_json::Value::as_str),
-            Some(child_task_id.as_str())
-        );
-        assert_eq!(
-            first.pointer("/params/message/contextId"),
-            second.pointer("/params/message/contextId"),
-            "the same delegated child task must reuse the same child context across hops"
-        );
-    }
-
-    /// Regression for Bug B: inter-agent A2A sends MUST NOT propagate the caller's
-    /// user-facing context id, otherwise `system-a2a-<uuid>` rows leak onto the human
-    /// conversation as `direction=received` user turns.
-    #[test]
-    fn build_send_stream_request_isolates_inter_agent_context_id() {
-        let target = responder_target();
-        let caller_ctx = ContextId::new(1_700_000_000_000, 7);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child".to_string()));
+        let caller_context_id = ContextId::new(1_700_000_000_000, 7);
+        let parent_task_id = TaskId::from_external(ExternalId::new("parent-task".to_string()));
+        let first_child = TaskId::from_external(ExternalId::new("a2a-child-first".to_string()));
+        let second_child = TaskId::from_external(ExternalId::new("a2a-child-second".to_string()));
         let parts = vec![ConversationPart {
             text: Some("delegated query".to_string()),
             ..Default::default()
         }];
 
-        let req = build_send_stream_request(parts, &target, &caller_ctx, &child_task_id, None);
-
-        let wire_ctx = req
-            .pointer("/params/message/contextId")
-            .and_then(serde_json::Value::as_str)
-            .expect("contextId on wire");
-        assert_ne!(
-            wire_ctx,
-            caller_ctx.as_str(),
-            "inter-agent send must not reuse caller's user-facing contextId"
+        let first = build_send_stream_request(
+            parts.clone(),
+            &target,
+            &caller_context_id,
+            &first_child,
+            Some(&parent_task_id),
         );
-        assert!(
-            wire_ctx.starts_with("a2a:"),
-            "derived child context must use a2a: prefix so downstream readers can filter; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(caller_ctx.as_str()),
-            "derived context should embed caller for traceability; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(&target.agent_package),
-            "derived context should embed target package; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(child_task_id.as_str()),
-            "derived context should embed child task id to avoid parallel collisions; got {wire_ctx}"
+        let second = build_send_stream_request(
+            parts,
+            &target,
+            &caller_context_id,
+            &second_child,
+            Some(&parent_task_id),
         );
 
-        let kind = req
-            .pointer("/params/metadata/kind")
-            .and_then(serde_json::Value::as_str);
-        assert_eq!(kind, Some("agent-to-agent"));
-
-        let caller_meta = req
-            .pointer("/params/metadata/callerContextId")
-            .and_then(serde_json::Value::as_str);
-        assert_eq!(caller_meta, Some(caller_ctx.as_str()));
-    }
-
-    /// Derivation must be stable so that multi-hop A2A turns within the same child
-    /// task land on the SAME child context id (otherwise the called agent loses
-    /// continuity across turns), while different child tasks must not collide.
-    #[test]
-    fn derive_a2a_child_context_id_is_stable_per_child_task() {
-        let target = responder_target();
-        let caller = ContextId::new(42, 1);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let a = derive_a2a_child_context_id(&caller, &target, &child_task_id);
-        let b = derive_a2a_child_context_id(&caller, &target, &child_task_id);
-        assert_eq!(a.as_str(), b.as_str());
-    }
-
-    #[test]
-    fn derive_a2a_child_context_id_differs_for_parallel_child_tasks() {
-        let target = responder_target();
-        let caller = ContextId::new(42, 1);
-        let child_a = TaskId::from_external(ExternalId::new("a2a-child-a".to_string()));
-        let child_b = TaskId::from_external(ExternalId::new("a2a-child-b".to_string()));
-        let a = derive_a2a_child_context_id(&caller, &target, &child_a);
-        let b = derive_a2a_child_context_id(&caller, &target, &child_b);
-        assert_ne!(a.as_str(), b.as_str());
+        for request in [&first, &second] {
+            let wire_context = request
+                .pointer("/params/message/contextId")
+                .and_then(serde_json::Value::as_str)
+                .expect("contextId on wire");
+            assert_eq!(wire_context, caller_context_id.as_str());
+            assert!(!wire_context.starts_with("a2a:"));
+            assert_eq!(
+                request
+                    .pointer("/params/message/referenceTaskIds/0")
+                    .and_then(serde_json::Value::as_str),
+                Some(parent_task_id.as_str())
+            );
+        }
+        assert_eq!(
+            first
+                .pointer("/params/message/taskId")
+                .and_then(serde_json::Value::as_str),
+            Some(first_child.as_str())
+        );
+        assert_eq!(
+            second
+                .pointer("/params/message/taskId")
+                .and_then(serde_json::Value::as_str),
+            Some(second_child.as_str())
+        );
+        assert_ne!(first_child, second_child);
     }
 
     #[test]

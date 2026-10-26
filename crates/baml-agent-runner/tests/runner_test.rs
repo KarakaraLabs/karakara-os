@@ -1880,34 +1880,35 @@ async fn test_internal_a2a_parallel_same_context_child_tasks_and_provenance() {
     let delegation_rows = provenance_nodes_by_label(&responder_store, "Delegation").await;
     let task_state_rows = provenance_nodes_by_label(&responder_store, "A2ATaskState").await;
 
-    // Each branch must retain the whole responder transcript and its terminal state. S12 moves
-    // these rows into the parent context; the task filter below keeps the assertions valid then.
+    // Each branch retains its responder transcript and terminal state in the shared context.
+    // The task-scoped read proves that parallel branches remain separate units of work.
     for i in 0..request_count {
         let expected_input = format!("ping parallel {i}");
         let expected_output = format!("Responder saw: {expected_input}");
         let child_task_id = child_id_by_input
             .get(&expected_input)
             .expect("child task id recorded for each fanout input");
-        let child_context_id = ContextId::for_a2a_child(
-            &context_id,
-            "responder-agent",
-            &TaskId::from_external(ExternalId::new(child_task_id.clone())),
-        );
-        let messages = responder_store
-            .context_messages(&child_context_id, Some(50))
+        let child_task = TaskId::from_external(ExternalId::new(child_task_id.clone()));
+        let items = responder_store
+            .conversation_context_with_task(&context_id, Some(50), Some(&child_task))
             .await
-            .expect("read responder child-context messages");
+            .expect("read responder task messages from shared context");
+        let message_texts: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match &item.content {
+                baml_rt_conversation::view::ConversationItemContent::Message { text, .. } => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
         assert!(
-            messages
-                .iter()
-                .any(|message| message.content.iter().any(|text| text == &expected_input)),
-            "missing inbound message for child task {child_task_id}: {messages:?}"
+            message_texts.contains(&expected_input.as_str()),
+            "missing inbound message for child task {child_task_id}: {items:?}"
         );
         assert!(
-            messages
-                .iter()
-                .any(|message| message.content.iter().any(|text| text == &expected_output)),
-            "missing outbound message for child task {child_task_id}: {messages:?}"
+            message_texts.contains(&expected_output.as_str()),
+            "missing outbound message for child task {child_task_id}: {items:?}"
         );
 
         let matching_delegations = delegation_rows

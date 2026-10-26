@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -46,14 +47,18 @@ use crate::{
     vocabulary::{a2a, a2a_relations, context_scope, semantic_labels, storage_safe},
 };
 
-/// Node scan shared by bounded read paths: same labels, same guards, same
-/// ordering key as the unbounded reader.
-///
-/// KEEP IN SYNC with the inline `SELECT` in [`fetch_scoped_conversation_nodes`]
-/// (the `ScopedConversationQuery` path). Both must select the same labels, apply
-/// the same `a2a_activity_outcome` guard, and use `props.a2a_event_order` as the
-/// ordering key. Nothing enforces that today; if you change one, change both.
-fn index_scan_sql(scoped_to: &str) -> String {
+/// Builds the node scan shared by bounded and unbounded conversation reads.
+fn conversation_node_scan_sql(
+    scoped_to: &str,
+    filters: &[&str],
+    ordering_and_limit: &str,
+) -> String {
+    let filters = filters
+        .iter()
+        .copied()
+        .filter(|filter| !filter.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     format!(
         "SELECT node_id, label, props, props.a2a_event_order AS event_order FROM {TBL_NODE} \
          WHERE node_id IN (\
@@ -61,7 +66,8 @@ fn index_scan_sql(scoped_to: &str) -> String {
            WHERE to_id = $ctx_node_id AND rel_type = '{scoped_to}' \
              AND from_label IN ['Message', 'ToolCall', 'SessionStep']\
          ) \
-         AND (label != 'ToolCall' OR props.a2a_activity_outcome IN ['Success', 'Failed'])"
+         AND (label != 'ToolCall' OR props.a2a_activity_outcome IN ['Success', 'Failed']) \
+         {filters} {ordering_and_limit}"
     )
 }
 
@@ -489,7 +495,6 @@ impl SurrealProvenanceStore {
             }
             None => "",
         };
-        let base = index_scan_sql(scoped_to);
         // Without a task filter the tool and session arms would run the same
         // `label IN ['ToolCall', 'SessionStep']` clause twice and return every
         // call twice. With a task filter the two arms are disjoint: each one is
@@ -504,9 +509,10 @@ impl SurrealProvenanceStore {
         }
         let mut rows: Vec<Value> = Vec::new();
         for (task_filter_sql, agent_filter_sql) in arms {
-            let sql = format!(
-                "{base} {task_filter_sql} {agent_filter_sql} {before_sql} \
-                 ORDER BY event_order DESC, node_id DESC LIMIT {limit}"
+            let sql = conversation_node_scan_sql(
+                scoped_to,
+                &[task_filter_sql, agent_filter_sql, before_sql],
+                &format!("ORDER BY event_order DESC, node_id DESC LIMIT {limit}"),
             );
             let mut q = self
                 .db
@@ -592,18 +598,10 @@ impl SurrealProvenanceStore {
             agent_instance_nodes,
             after_event_order,
         } = query;
-        let sql = format!(
-            "SELECT node_id, label, props, props.a2a_event_order AS event_order FROM {TBL_NODE} \
-             WHERE node_id IN (\
-               SELECT VALUE from_id FROM {TBL_EDGE} \
-               WHERE to_id = $ctx_node_id AND rel_type = '{scoped_to}' \
-                 AND from_label IN ['Message', 'ToolCall', 'SessionStep']\
-             ) \
-             AND (label != 'ToolCall' OR props.a2a_activity_outcome IN ['Success', 'Failed']) \
-             {after_filter_sql} \
-             {label_task_filter_sql} \
-             {agent_filter_sql} \
-             ORDER BY event_order ASC, node_id ASC"
+        let sql = conversation_node_scan_sql(
+            scoped_to,
+            &[after_filter_sql, label_task_filter_sql, agent_filter_sql],
+            "ORDER BY event_order ASC, node_id ASC",
         );
         let mut q = self.db.query(&sql);
         q = q.bind(("ctx_node_id", ctx_node_id.to_string()));
