@@ -17,7 +17,10 @@ use super::{
 use crate::{
     episode::token_summary_for_task,
     error::Result,
-    read::{TranscriptEngine, TranscriptPageRequest, TranscriptProjectionProfile},
+    read::{
+        TranscriptEngine, TranscriptPageDirection, TranscriptPageRequest,
+        TranscriptProjectionProfile,
+    },
     surreal_store::SurrealProvenanceStore,
 };
 
@@ -31,6 +34,7 @@ impl SurrealProvenanceStore {
                 scope: scope.clone(),
                 limit,
                 profile: TranscriptProjectionProfile::OperatorTimeline,
+                direction: TranscriptPageDirection::Forward,
             },
         )
         .await?;
@@ -67,6 +71,7 @@ impl SurrealProvenanceStore {
                 scope: scoped,
                 limit,
                 profile: TranscriptProjectionProfile::LiveStructuralDelta,
+                direction: TranscriptPageDirection::Forward,
             },
         )
         .await?;

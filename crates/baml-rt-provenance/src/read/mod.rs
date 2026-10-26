@@ -11,6 +11,6 @@ pub mod transcript;
 pub use ops::{OpsPageSpec, OpsReader};
 pub use planning::{PlanningReader, PlanningSliceSpec};
 pub use transcript::{
-    TranscriptEngine, TranscriptPage, TranscriptPageRequest, TranscriptProjectionProfile,
-    TranscriptScopeWidening,
+    TranscriptEngine, TranscriptPage, TranscriptPageDirection, TranscriptPageRequest,
+    TranscriptProjectionProfile, TranscriptScopeWidening,
 };

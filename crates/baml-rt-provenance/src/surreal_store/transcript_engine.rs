@@ -14,7 +14,10 @@ use super::{
 use crate::{
     error::Result,
     id_semantics::task_entity_id_string_raw,
-    read::{TranscriptEngine, TranscriptPage, TranscriptPageRequest, TranscriptScopeWidening},
+    read::{
+        TranscriptEngine, TranscriptPage, TranscriptPageDirection, TranscriptPageRequest,
+        TranscriptScopeWidening,
+    },
     surreal_tables::{TBL_CONTEXT_TRANSCRIPT_INDEX, TBL_NODE},
 };
 
@@ -25,6 +28,7 @@ impl SurrealProvenanceStore {
         after_exclusive: Option<u64>,
         limit: usize,
         task_entity_id: Option<&str>,
+        direction: TranscriptPageDirection,
     ) -> Result<Vec<Value>> {
         let task_filter = if task_entity_id.is_some() {
             "AND task_entity_id = $task_entity_id"
@@ -36,10 +40,14 @@ impl SurrealProvenanceStore {
         } else {
             ""
         };
+        let order = match direction {
+            TranscriptPageDirection::Forward => "ASC",
+            TranscriptPageDirection::Backward => "DESC",
+        };
         let query = format!(
             "SELECT node_id, label, event_order FROM {TBL_CONTEXT_TRANSCRIPT_INDEX} \
              WHERE context_id = $context_id {after_filter} {task_filter} \
-             ORDER BY event_order ASC, node_id ASC LIMIT $limit"
+             ORDER BY event_order {order}, node_id {order} LIMIT $limit"
         );
         let mut q = self
             .db
@@ -89,14 +97,24 @@ impl TranscriptEngine for SurrealProvenanceStore {
 
         let mut scope_widening = TranscriptScopeWidening::None;
         let mut index_rows = self
-            .fetch_transcript_index_rows(ctx, after_exclusive, limit, task_entity.as_deref())
+            .fetch_transcript_index_rows(
+                ctx,
+                after_exclusive,
+                limit,
+                task_entity.as_deref(),
+                request.direction,
+            )
             .await?;
 
         if index_rows.is_empty() && task_entity.is_some() {
             scope_widening = TranscriptScopeWidening::ContextFallback;
             index_rows = self
-                .fetch_transcript_index_rows(ctx, after_exclusive, limit, None)
+                .fetch_transcript_index_rows(ctx, after_exclusive, limit, None, request.direction)
                 .await?;
+        }
+
+        if request.direction == TranscriptPageDirection::Backward {
+            index_rows.reverse();
         }
 
         if index_rows.is_empty() {
@@ -108,7 +126,7 @@ impl TranscriptEngine for SurrealProvenanceStore {
                     request.scope.task_id(),
                     request.scope.agent_package.as_deref(),
                     after_exclusive,
-                    true,
+                    request.direction.is_forward(),
                     enrich,
                     None,
                 )
@@ -147,7 +165,7 @@ impl TranscriptEngine for SurrealProvenanceStore {
                 request.scope.task_id(),
                 request.scope.agent_package.as_deref(),
                 after_exclusive,
-                true,
+                request.direction.is_forward(),
                 enrich,
                 Some(rows),
             )

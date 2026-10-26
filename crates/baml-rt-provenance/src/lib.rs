@@ -153,7 +153,8 @@ pub use observation::{
 };
 pub use read::{
     OpsPageSpec, OpsReader, PlanningReader, TranscriptEngine, TranscriptPage,
-    TranscriptPageRequest, TranscriptProjectionProfile, TranscriptScopeWidening,
+    TranscriptPageDirection, TranscriptPageRequest, TranscriptProjectionProfile,
+    TranscriptScopeWidening,
 };
 pub use store::{
     ActivityRef, ArchiveRef, GateActivityQueryResult, PayloadRef, PlanningIntentRecord,

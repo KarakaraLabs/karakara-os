@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use baml_rt_provenance::{
     EventOrder, LoadedObservation, PageVersionEnvelope, PromptOpsVersionRow, ResumeVersionHints,
-    TranscriptEngine, TranscriptPageRequest, TranscriptProjectionProfile,
+    TranscriptEngine, TranscriptPageDirection, TranscriptPageRequest, TranscriptProjectionProfile,
     observation_scope_from_history, observation_version_page, resolve_resume_ui_hints,
 };
 
@@ -49,6 +49,7 @@ impl ConversationHistoryServiceImpl {
             scope,
             limit: request.page.limit(),
             profile,
+            direction: TranscriptPageDirection::Forward,
         }
     }
 

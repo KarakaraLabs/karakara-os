@@ -42,12 +42,30 @@ impl TranscriptProjectionProfile {
     }
 }
 
+/// Read direction for a bounded transcript page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptPageDirection {
+    /// Oldest rows first, then paginate forward with a cursor (timeline / operator views).
+    #[default]
+    Forward,
+    /// Newest rows first, returned in chronological order (bounded agent prompt tail).
+    Backward,
+}
+
+impl TranscriptPageDirection {
+    #[must_use]
+    pub const fn is_forward(self) -> bool {
+        matches!(self, Self::Forward)
+    }
+}
+
 /// Bounded transcript page request — sole input to [`TranscriptEngine`].
 #[derive(Debug, Clone)]
 pub struct TranscriptPageRequest {
     pub scope: ObservationScope,
     pub limit: usize,
     pub profile: TranscriptProjectionProfile,
+    pub direction: TranscriptPageDirection,
 }
 
 impl TranscriptPageRequest {

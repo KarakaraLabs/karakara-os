@@ -40,7 +40,10 @@ use crate::{
     error::{ProvenanceError, Result},
     graph_export::export_graph_for_task,
     observation::{ObservationScope, TaskObservationScope, TemporalBound},
-    read::{TranscriptEngine, TranscriptPageRequest, TranscriptProjectionProfile},
+    read::{
+        TranscriptEngine, TranscriptPageDirection, TranscriptPageRequest,
+        TranscriptProjectionProfile,
+    },
     store::ProvenancePlanningQuery,
     surreal_store::SurrealProvenanceStore,
 };
@@ -189,6 +192,7 @@ impl EpisodeReader {
                         scope,
                         limit: usize::MAX / 4,
                         profile: TranscriptProjectionProfile::OperatorTimeline,
+                        direction: TranscriptPageDirection::Forward,
                     },
                 )
                 .await

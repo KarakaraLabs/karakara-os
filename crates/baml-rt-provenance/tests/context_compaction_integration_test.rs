@@ -9,8 +9,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use baml_rt_conversation::view::{ConversationItemContent, ProvenanceConversationContextItem};
 use baml_rt_core::{
+    bus::SessionStepOp,
     context::RuntimeScope,
-    ids::{AgentId, ContextId, ExternalId, MessageId},
+    ids::{AgentId, ContextId, ExternalId, MessageId, TaskId},
 };
 use baml_rt_llm_config::{LlmClientConfig, ModelBudgetOverride};
 use baml_rt_provenance::{
@@ -55,6 +56,148 @@ fn projected_transcript_bytes(items: &[ProvenanceConversationContextItem]) -> us
     let registry = ToolRegistry::new();
     let ref_table = RefTable::new();
     render_items_with_ref_table(items, &registry, &ref_table).len()
+}
+
+async fn seed_task_messages(
+    store: &baml_rt_provenance::SurrealProvenanceStore,
+    context_id: &ContextId,
+    task_id: &TaskId,
+    agent_id: &AgentId,
+    count: usize,
+    body: &str,
+) {
+    for i in 0..count {
+        store
+            .add_event(baml_rt_provenance::ProvEvent::message_received_task(
+                context_id.clone(),
+                task_id.clone(),
+                MessageId::from_external(ExternalId::new(format!("task-msg-{i}"))),
+                "ROLE_USER".into(),
+                vec![body.to_string()],
+                None,
+                agent_id.clone(),
+                1_800_000_100_000 + i as u64,
+            ))
+            .await
+            .expect("task message");
+    }
+}
+
+#[tokio::test]
+async fn agent_prompt_read_keeps_the_latest_task_tail() {
+    let store = build_isolated_store().await;
+    let ctx = provenance_context_id(1_800_003);
+    let agent_id = provenance_agent_id();
+    let task_id = TaskId::from_external(ExternalId::new("task-tail".to_string()));
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+
+    seed_task_messages(&store, &ctx, &task_id, &agent_id, count, "task status").await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::message_received_task(
+            ctx.clone(),
+            task_id.clone(),
+            MessageId::from_external(ExternalId::new("task-msg-latest".to_string())),
+            "ROLE_USER".into(),
+            vec!["the newest task message".to_string()],
+            None,
+            agent_id,
+            1_800_000_100_000 + count as u64,
+        ))
+        .await
+        .expect("newest task message");
+
+    let items = store
+        .conversation_context_for_agent_prompt(&ctx, None, Some(&task_id))
+        .await
+        .expect("task-scoped agent prompt");
+
+    assert_eq!(items.len(), DEFAULT_LLM_CONTEXT_ITEM_CAP);
+    assert!(
+        items.iter().any(|item| matches!(
+            &item.content,
+            ConversationItemContent::Message { text, .. } if text.contains("the newest task message")
+        )),
+        "task prompt must keep the newest task rows: {items:?}"
+    );
+}
+
+#[tokio::test]
+async fn agent_prompt_read_keeps_latest_task_archive_read() {
+    let store = build_isolated_store().await;
+    let ctx = provenance_context_id(1_800_004);
+    let agent_id = provenance_agent_id();
+    let task_id = TaskId::from_external(ExternalId::new("task-archive-tail".to_string()));
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP;
+
+    seed_task_messages(&store, &ctx, &task_id, &agent_id, count, "task status").await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::tool_session_step(
+            ctx.clone(),
+            baml_rt_provenance::CallScope::Task {
+                task_id: task_id.clone(),
+            },
+            "support/clickup".into(),
+            "session-tail".into(),
+            &SessionStepOp::SearchRead {
+                archive_ref: "@9".into(),
+                grep: "in progress".into(),
+                offset: 0,
+                limit: 50,
+            },
+        ))
+        .await
+        .expect("latest archive read");
+
+    let items = store
+        .conversation_context_for_agent_prompt(&ctx, None, Some(&task_id))
+        .await
+        .expect("task-scoped agent prompt");
+
+    assert_eq!(items.len(), DEFAULT_LLM_CONTEXT_ITEM_CAP);
+    assert!(
+        items.iter().any(|item| matches!(
+            &item.content,
+            ConversationItemContent::SessionStep(step)
+                if matches!(&step.op, baml_rt_conversation::view::SessionStepOp::SearchRead { archive_ref, .. } if archive_ref == "@9")
+        )),
+        "latest archive read must stay in the prompt tail: {items:?}"
+    );
+}
+
+#[tokio::test]
+async fn agent_prompt_read_keeps_the_latest_capped_tail() {
+    let store = build_isolated_store().await;
+    let ctx = provenance_context_id(1_800_000);
+    let agent_id = provenance_agent_id();
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+
+    seed_user_messages(&store, &ctx, &agent_id, count, "status ping").await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::message_received_global(
+            ctx.clone(),
+            MessageId::from_external(ExternalId::new("compact-msg-latest".to_string())),
+            "user".into(),
+            vec!["the newest message".to_string()],
+            None,
+            agent_id,
+            1_800_000_000_000 + count as u64,
+        ))
+        .await
+        .expect("newest message");
+
+    let items = store
+        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .await
+        .expect("agent");
+
+    assert_eq!(items.len(), DEFAULT_LLM_CONTEXT_ITEM_CAP);
+    assert!(
+        items.iter().any(|item| matches!(
+            &item.content,
+            ConversationItemContent::Message { text, .. } if text.contains("the newest message")
+        )),
+        "agent prompt must keep the newest transcript rows: {items:?}"
+    );
 }
 
 fn compaction_subscriber(

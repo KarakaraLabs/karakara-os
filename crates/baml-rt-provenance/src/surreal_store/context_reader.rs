@@ -266,7 +266,10 @@ impl SurrealProvenanceStore {
         use crate::{
             conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP,
             observation::{ObservationScope, TaskObservationScope, TemporalBound},
-            read::{TranscriptEngine, TranscriptPageRequest, TranscriptProjectionProfile},
+            read::{
+                TranscriptEngine, TranscriptPageDirection, TranscriptPageRequest,
+                TranscriptProjectionProfile,
+            },
         };
 
         let scope = ObservationScope {
@@ -284,6 +287,7 @@ impl SurrealProvenanceStore {
                 scope,
                 limit: limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP),
                 profile: TranscriptProjectionProfile::AgentPromptCompacted,
+                direction: TranscriptPageDirection::Backward,
             },
         )
         .await?;
@@ -1223,7 +1227,10 @@ impl ProvenanceQueryApi for SurrealProvenanceStore {
         use crate::{
             conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP,
             observation::{EventOrder, ObservationScope, TaskObservationScope, TemporalBound},
-            read::{TranscriptEngine, TranscriptPageRequest, TranscriptProjectionProfile},
+            read::{
+                TranscriptEngine, TranscriptPageDirection, TranscriptPageRequest,
+                TranscriptProjectionProfile,
+            },
         };
 
         let scope = ObservationScope {
@@ -1241,6 +1248,7 @@ impl ProvenanceQueryApi for SurrealProvenanceStore {
                 scope,
                 limit: limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP),
                 profile: TranscriptProjectionProfile::AgentPromptIndex,
+                direction: TranscriptPageDirection::Forward,
             },
         )
         .await?;

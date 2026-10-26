@@ -739,7 +739,7 @@ async fn transcript_engine_includes_event_order_zero_ingress_with_later_index_ro
     use baml_rt_core::Outcome;
     use baml_rt_provenance::{
         ObservationScope, TaskObservationScope, TemporalBound, TranscriptEngine,
-        TranscriptPageRequest, TranscriptProjectionProfile,
+        TranscriptPageDirection, TranscriptPageRequest, TranscriptProjectionProfile,
     };
 
     let store = Arc::new(build_isolated_store().await);
@@ -826,6 +826,7 @@ async fn transcript_engine_includes_event_order_zero_ingress_with_later_index_ro
             },
             limit: 50,
             profile: TranscriptProjectionProfile::OperatorTimeline,
+            direction: TranscriptPageDirection::Forward,
         },
     )
     .await

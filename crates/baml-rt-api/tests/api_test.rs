@@ -474,6 +474,7 @@ impl ConversationHistoryService for RealConversationHistory {
                 scope,
                 limit: request.page.limit(),
                 profile: TranscriptProjectionProfile::OperatorTimeline,
+                direction: baml_rt_provenance::TranscriptPageDirection::Forward,
             })
             .await
             .map_err(|e| ConversationHistoryError::Other(Box::new(e)))?;
