@@ -12,7 +12,6 @@ export interface AgentCardDto {
   contentHash?: string | null;
   repositoryVersion?: number | null;
   agentPackage: string;
-  agentInstanceId: string;
   tools: string[];
   description?: string | null;
   capabilities: string[];
@@ -141,7 +140,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 
@@ -727,7 +725,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseNotionAction" | "ChooseNotionAction__active__support_notion" | "ChooseNotionAction__entry";
+export type StepExecutorFunctionName = "ChooseNotionAction" | "ChooseNotionAction__active__support_notion" | "ChooseNotionAction__consume__support_notion" | "ChooseNotionAction__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -788,6 +786,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseNotionAction: { args: Parameters<typeof ChooseNotionAction>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction>>; };
   ChooseNotionAction__active__support_notion: { args: Parameters<typeof ChooseNotionAction__active__support_notion>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__active__support_notion>>; };
+  ChooseNotionAction__consume__support_notion: { args: Parameters<typeof ChooseNotionAction__consume__support_notion>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__consume__support_notion>>; };
   ChooseNotionAction__entry: { args: Parameters<typeof ChooseNotionAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__entry>>; };
 }
 

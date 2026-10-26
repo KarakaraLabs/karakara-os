@@ -19,6 +19,19 @@ This document defines MVP runner deployment contracts and runtime semantics.
 - Runtime contract identity is content-hash-based; there is no separate `runtime_version` field in `AgentManifest`.
 - Manifest schema or runner contract changes propagate by content-hash change, enforcing compatibility at the hash boundary rather than via parallel version negotiation.
 
+Three values travel with a deployment and must not be conflated:
+
+- `content_hash` selects the repository entry.
+- `artifact_hash` selects the exact stored `.tar.gz` blob. The runner verifies it
+  on download and again after extraction, failing closed on mismatch.
+- `AgentId` is derived from the artifact's behavior-set identity digest. A boot
+  whose computed `AgentId` differs from the supplied expected value is rejected
+  before serving.
+
+Republishing identical content keeps the same `AgentId` while assigning a new
+`content_hash` and possibly a new `artifact_hash`. Restarting or re-deploying an
+existing artifact keeps all three stable.
+
 ## Deployment Semantics (MVP)
 
 - Re-deploy same hash is not an error.
@@ -36,6 +49,7 @@ This document defines MVP runner deployment contracts and runtime semantics.
 Deployment state fields:
 
 - `content_hash`
+- `artifact_hash`
 - `agent_name`
 - `deployed_at`
 - `status` (`active|failed`)

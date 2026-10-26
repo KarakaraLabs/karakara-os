@@ -12,7 +12,6 @@ export interface AgentCardDto {
   contentHash?: string | null;
   repositoryVersion?: number | null;
   agentPackage: string;
-  agentInstanceId: string;
   tools: string[];
   description?: string | null;
   capabilities: string[];
@@ -164,7 +163,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 
@@ -791,7 +789,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseSlackAction" | "ChooseSlackAction__active__support_slack" | "ChooseSlackAction__entry";
+export type StepExecutorFunctionName = "ChooseSlackAction" | "ChooseSlackAction__active__support_slack" | "ChooseSlackAction__consume__support_slack" | "ChooseSlackAction__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -852,6 +850,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseSlackAction: { args: Parameters<typeof ChooseSlackAction>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseSlackAction>>; };
   ChooseSlackAction__active__support_slack: { args: Parameters<typeof ChooseSlackAction__active__support_slack>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseSlackAction__active__support_slack>>; };
+  ChooseSlackAction__consume__support_slack: { args: Parameters<typeof ChooseSlackAction__consume__support_slack>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseSlackAction__consume__support_slack>>; };
   ChooseSlackAction__entry: { args: Parameters<typeof ChooseSlackAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseSlackAction__entry>>; };
 }
 

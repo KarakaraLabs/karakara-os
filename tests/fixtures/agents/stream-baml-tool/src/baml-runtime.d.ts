@@ -539,7 +539,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseCalcTool" | "ChooseCalcTool__active__support_calculate" | "ChooseCalcTool__entry";
+export type StepExecutorFunctionName = "ChooseCalcTool" | "ChooseCalcTool__active__support_calculate" | "ChooseCalcTool__consume__support_calculate" | "ChooseCalcTool__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -600,6 +600,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseCalcTool: { args: Parameters<typeof ChooseCalcTool>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalcTool>>; };
   ChooseCalcTool__active__support_calculate: { args: Parameters<typeof ChooseCalcTool__active__support_calculate>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalcTool__active__support_calculate>>; };
+  ChooseCalcTool__consume__support_calculate: { args: Parameters<typeof ChooseCalcTool__consume__support_calculate>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalcTool__consume__support_calculate>>; };
   ChooseCalcTool__entry: { args: Parameters<typeof ChooseCalcTool__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalcTool__entry>>; };
 }
 

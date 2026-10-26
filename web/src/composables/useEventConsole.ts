@@ -163,14 +163,10 @@ export {
 export function resolveAgentFromRoute(
   agents: AgentDiscoveryEntry[],
   agentPackage: string | null,
-  agentInstance: string | null,
+  _agentInstance: string | null,
 ): AgentDiscoveryEntry | undefined {
   if (!agentPackage) return undefined;
-  return agents.find(
-    (a) =>
-      a.agent_package === agentPackage &&
-      (!agentInstance || a.agent_instance_id === agentInstance),
-  );
+  return agents.find((a) => a.agent_package === agentPackage);
 }
 
 /** Agents that declare `discovery.subscriptions` (eligible for host dispatch). */
@@ -383,9 +379,7 @@ function createEventConsoleState() {
     if (agentPackage) {
       const match = resolveAgentFromRoute(agents.value, agentPackage, agentInstance);
       if (match) {
-        const alreadySelected =
-          draft.value.agent_package === match.agent_package &&
-          draft.value.agent_instance_id === match.agent_instance_id;
+        const alreadySelected = draft.value.agent_package === match.agent_package;
         if (!alreadySelected) {
           selectAgent(match, {
             syncRoute: false,
@@ -408,7 +402,9 @@ function createEventConsoleState() {
     options?: { syncRoute?: boolean; keepObservation?: boolean },
   ): void {
     draft.value.agent_package = agent.agent_package;
-    draft.value.agent_instance_id = agent.agent_instance_id;
+    // Discovery no longer exposes an instance dimension. The legacy dispatch payload
+    // keeps the historical label so existing event shapes remain unchanged.
+    draft.value.agent_instance_id = agent.agent_instance_id ?? "default";
     draft.value.messages = [];
     const subs = agent.agent_card.subscriptions ?? [];
     const first = firstDeliverableShape(messageShapes.value, subs, 0);
@@ -417,7 +413,7 @@ function createEventConsoleState() {
     } else {
       selection.value = {
         agentPackage: agent.agent_package,
-        agentInstanceId: agent.agent_instance_id,
+        agentInstanceId: agent.agent_instance_id ?? "default",
         subscriptionIndex: 0,
         messageShapeId: "",
       };

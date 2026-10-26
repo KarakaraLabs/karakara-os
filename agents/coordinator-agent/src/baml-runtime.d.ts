@@ -12,7 +12,6 @@ export interface AgentCardDto {
   contentHash?: string | null;
   repositoryVersion?: number | null;
   agentPackage: string;
-  agentInstanceId: string;
   tools: string[];
   description?: string | null;
   capabilities: string[];
@@ -151,7 +150,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 
@@ -159,7 +157,6 @@ export interface OpaqueJson { opaque_json: string;
  }
 
 export interface StandardAgentPlanStep { agent_package: string;
-agent_instance_id: string;
 sub_message: string;
  }
 
@@ -700,7 +697,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "DecideDelegationAction" | "DecideDelegationAction__active__system_internal_a2a" | "DecideDelegationAction__entry" | "GetDiscoverAgentsPlan" | "GetDiscoverAgentsPlan__active__system_discover_agents" | "GetDiscoverAgentsPlan__entry";
+export type StepExecutorFunctionName = "DecideDelegationAction" | "DecideDelegationAction__active__system_internal_a2a" | "DecideDelegationAction__consume__system_internal_a2a" | "DecideDelegationAction__entry" | "GetDiscoverAgentsPlan" | "GetDiscoverAgentsPlan__active__system_discover_agents" | "GetDiscoverAgentsPlan__consume__system_discover_agents" | "GetDiscoverAgentsPlan__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -761,9 +758,11 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   DecideDelegationAction: { args: Parameters<typeof DecideDelegationAction>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction>>; };
   DecideDelegationAction__active__system_internal_a2a: { args: Parameters<typeof DecideDelegationAction__active__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__active__system_internal_a2a>>; };
+  DecideDelegationAction__consume__system_internal_a2a: { args: Parameters<typeof DecideDelegationAction__consume__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__consume__system_internal_a2a>>; };
   DecideDelegationAction__entry: { args: Parameters<typeof DecideDelegationAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__entry>>; };
   GetDiscoverAgentsPlan: { args: Parameters<typeof GetDiscoverAgentsPlan>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan>>; };
   GetDiscoverAgentsPlan__active__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__active__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__active__system_discover_agents>>; };
+  GetDiscoverAgentsPlan__consume__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>>; };
   GetDiscoverAgentsPlan__entry: { args: Parameters<typeof GetDiscoverAgentsPlan__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__entry>>; };
 }
 

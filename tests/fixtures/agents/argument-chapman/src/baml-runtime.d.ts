@@ -65,7 +65,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 

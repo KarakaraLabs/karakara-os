@@ -142,7 +142,7 @@ async fn eval_coordinator_direct_answer_math() {
 
     let http_client = reqwest::Client::new();
     let url = format!(
-        "{base}/agents/coordinator-smoke/default/a2a/sse",
+        "{base}/agents/coordinator-smoke/a2a/sse",
         base = runner_api.base_url,
     );
     let responses: Vec<Value> = timeout(

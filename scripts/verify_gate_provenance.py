@@ -39,7 +39,7 @@ def main() -> int:
         corr1 = f"corr-{ts}-1"
         corr2 = f"corr-{ts}-2"
         post_sse(
-            "/agents/clickup-agent/default/a2a",
+            "/agents/clickup-agent/a2a",
             {
                 "jsonrpc": "2.0",
                 "id": corr1,
@@ -56,7 +56,7 @@ def main() -> int:
         )
         time.sleep(2)
         out = post_sse(
-            "/agents/clickup-agent/default/a2a",
+            "/agents/clickup-agent/a2a",
             {
                 "jsonrpc": "2.0",
                 "id": corr2,

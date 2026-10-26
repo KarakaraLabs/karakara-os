@@ -543,7 +543,7 @@ pub fn api_router_with_services_and_deploy(
     // Use `route_layer` so the auth check only runs for operator routes and
     // does NOT cover the fallback 404 handler. With `layer` the merged router
     // would 401 every unmatched path (including legitimate typos like
-    // `/agents/<pkg>/default/a2a/sse`), masking routing bugs as auth failures.
+    // `/agents/<pkg>/a2a/sse`), masking routing bugs as auth failures.
     let operator_router = operator_router.route_layer(auth_layer.clone());
 
     openapi.merge(operator_openapi);

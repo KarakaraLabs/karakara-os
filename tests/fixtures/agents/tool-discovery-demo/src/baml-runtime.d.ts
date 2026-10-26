@@ -557,7 +557,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseDiscoverToolsQuery" | "ChooseDiscoverToolsQuery__active__system_discover_tools" | "ChooseDiscoverToolsQuery__entry";
+export type StepExecutorFunctionName = "ChooseDiscoverToolsQuery" | "ChooseDiscoverToolsQuery__active__system_discover_tools" | "ChooseDiscoverToolsQuery__consume__system_discover_tools" | "ChooseDiscoverToolsQuery__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -618,6 +618,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseDiscoverToolsQuery: { args: Parameters<typeof ChooseDiscoverToolsQuery>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseDiscoverToolsQuery>>; };
   ChooseDiscoverToolsQuery__active__system_discover_tools: { args: Parameters<typeof ChooseDiscoverToolsQuery__active__system_discover_tools>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseDiscoverToolsQuery__active__system_discover_tools>>; };
+  ChooseDiscoverToolsQuery__consume__system_discover_tools: { args: Parameters<typeof ChooseDiscoverToolsQuery__consume__system_discover_tools>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseDiscoverToolsQuery__consume__system_discover_tools>>; };
   ChooseDiscoverToolsQuery__entry: { args: Parameters<typeof ChooseDiscoverToolsQuery__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseDiscoverToolsQuery__entry>>; };
 }
 

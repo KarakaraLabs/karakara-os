@@ -513,8 +513,9 @@ fn load_unified_step_executors_authoring(
     baml_rt_tools::parse_unified_step_executors_authoring_json(&text)
 }
 
-/// After per-phase step executors are emitted, register their `__entry` / `__active__*` names
-/// in the session-plan map so the runtime can resolve a tool from the invoking function name.
+/// After per-phase step executors are emitted, register their `__entry` / `__active__*` /
+/// `__consume__*` names in the session-plan map so the runtime can resolve a tool from the
+/// invoking function name on every phase.
 fn register_phase_function_session_plans(
     session_plan_map: &mut SessionPlanFunctionsMap,
     tool_metadata: &[ToolFunctionMetadata],
@@ -542,6 +543,10 @@ fn register_phase_function_session_plans(
             if !tool_plan.is_empty() {
                 session_plan_map.insert(
                     baml_rt_tools::SessionTypeNames::active(func_name, &slug),
+                    tool_plan.clone(),
+                );
+                session_plan_map.insert(
+                    baml_rt_tools::SessionTypeNames::consume(func_name, &slug),
                     tool_plan,
                 );
             }

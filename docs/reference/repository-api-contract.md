@@ -4,24 +4,49 @@
 
 This document defines repository contracts for publish/entries/blob behavior.
 
-## Canonical Artifact Identity
+## Three Identities
 
-- Hash algorithm: `sha256`
-- Hash input: canonical source bundle content (manifest + source files)
-- Hash encoding: lowercase hex string
+The repository carries three different SHA-256 values. They answer different
+questions and must not be substituted for one another.
 
-`content_hash = sha256(canonical_source_bundle)`
+| Value | Input | Question |
+| --- | --- | --- |
+| `content_hash` | Versioned manifest plus canonical source bundle | Which repository entry is this? |
+| `identity_digest` → `AgentId` | Behavior-defining packaged content | Which agent source is this? |
+| `artifact_hash` | Exact stored `.tar.gz` bytes | Which blob was deployed? |
+
+All three are lowercase hex SHA-256 strings.
+
+`content_hash = sha256(canonical_source_bundle)` covers the manifest after the
+repository writes the assigned version, so it changes on every publish.
+
+`identity_digest` excludes the repository version and manifest signature. It
+covers the manifest projection, authored `src/**/*.ts`, authored and generated
+`baml_src/**/*.baml`, the rendered tool-schema catalog, and
+`session_plan_functions.json`. `AgentId` is derived from it as
+`UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + identity_digest)`.
+Republishing identical content keeps the same `AgentId`.
+
+`artifact_hash` is the SHA-256 of the stored package bytes. Build the blob before
+inserting the entry, key the blob by `artifact_hash`, and carry both values on
+the entry in the same write.
 
 ## Publish Ownership Rule
 
 Publish is source-first and server-owned:
 
 1. Client sends source bundle: `POST /repository/publish`
-2. Repository assigns version and computes canonical `content_hash`
-3. Host/repository publish orchestrator builds deployable artifact from source
-4. Built bytes are stored under `content_hash`
+2. Repository reserves the next `(agent_name, version)` and writes that version
+   into the manifest.
+3. Host/repository publish orchestrator builds the deployable artifact from the
+   reserved source and derives `artifact_hash` plus `identity_digest`.
+4. Built bytes are stored under `artifact_hash`, then the entry is inserted with
+   the reserved version and both derived values.
 
-Clients do not upload arbitrary blobs to establish publish provenance.
+A publish result returns `hash`, `artifact_hash`, `identity_digest`,
+`version_ref`, and `generation`. Callers can deploy or pin the exact artifact
+without rehashing. Clients do not upload arbitrary blobs to establish publish
+provenance.
 
 ## HTTP Semantics (MVP)
 
@@ -31,7 +56,7 @@ Clients do not upload arbitrary blobs to establish publish provenance.
 
 ## Required Repository Endpoints (MVP)
 
-- `GET /repository/blobs/{hash}`
+- `GET /repository/blobs/{hash}` — `{hash}` is the artifact hash
 - `POST /repository/publish`
 - `GET /repository/entries`
 - `GET /repository/entries/{hash}`

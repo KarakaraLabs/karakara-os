@@ -300,7 +300,7 @@ async fn invoke_callback_schedule(
         Some(callback.context_id.clone()),
         Some(callback.task_id.clone()),
     );
-    let a2a_url = format!("{base_url}/agents/dispatch-echo/default/a2a/sse");
+    let a2a_url = format!("{base_url}/agents/dispatch-echo/a2a/sse");
     post_a2a_sse_collect(client, &a2a_url, &request)
         .await
         .expect("dispatch-echo callback schedule request")

@@ -89,7 +89,7 @@ const scopeSegments: { kind: EventDispatchScopeKind; label: string }[] = [
 const composeAgentLabel = computed(() => {
   const a = props.selectedAgent;
   if (!a) return null;
-  return `${a.agent_package}/${a.agent_instance_id}`;
+  return a.agent_package;
 });
 
 function onOverlayClick(e: MouseEvent): void {

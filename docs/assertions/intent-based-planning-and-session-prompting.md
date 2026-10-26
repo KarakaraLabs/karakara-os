@@ -96,7 +96,7 @@ Use this mapping:
 - Delegation Step Executor (`ExecutePlanStepWithDelegate`):
   - This does not build a plan. It solves the next execution hop for an already committed plan step.
   - Goal comes from committed step target + objective.
-  - Example: `Goal: complete committed step <step_id> by obtaining the required output from <agent_package>/<agent_instance_id> toward objective: <objective>.`
+  - Example: `Goal: complete committed step <step_id> by obtaining the required output from <agent_package> toward objective: <objective>.`
 - Plan Synthesizer (`MakeStructuredPlan`):
   - Goal comes from user outcome synthesis, not session mechanics.
 
@@ -108,7 +108,7 @@ function discoveryGoal(intent: string): string {
 }
 
 function delegationGoal(plan: StructuredPlan, step: PlanStep): string {
-  const target = `${step.agent_package}/${step.agent_instance_id}`;
+  const target = step.agent_package;
   return `execute delegated step for target ${target} toward objective: ${plan.objective}`;
 }
 ```

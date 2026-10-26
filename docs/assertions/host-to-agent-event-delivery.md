@@ -72,7 +72,7 @@ pub struct AgentDispatchRequest {
 
 The agent responds with `AgentDispatchAck { accepted: bool, detail: Option<String> }`.
 
-**HTTP endpoint**: `POST /agents/{pkg}/{inst}/dispatch` (single-agent delivery; programmatic and callback paths).
+**HTTP endpoint**: `POST /agents/{pkg}/dispatch` (single-agent delivery; programmatic and callback paths).
 
 **Publish ingress**: `POST /events/publish` accepts a `ProducedEvent`, records `HostSourcePollRecorded` in provenance, matches all deployed agent subscriptions, and fans out dispatch to each subscriber. **Write ownership (single-writer):**
 
@@ -83,7 +83,7 @@ The agent responds with `AgentDispatchAck { accepted: bool, detail: Option<Strin
 | `HostDispatchRejected` (agent `accepted: false`) | Runner dispatch boundary (`record_dispatch_rejected`, `failure_kind: rejected`) |
 | `HostDispatchRejected` / transport (`dispatch_transport_error`) | Publish handler only when fan-out returns `SubscriberDeliveryFailure::Dispatch` (transport; dispatch never reached an agent ack) |
 
-Each row uses content-addressable identity (`HostIngressPollKey`, `HostIngressDispatchOutcomeKey`) so re-emits UPSERT one graph `Message` node. **`HOST_DISPATCH_TARGET` edges resolve to the live booted `AgentRuntimeInstance`** identified by `target_agent_id` on the dispatch event (via [`DispatchTarget`](crates/baml-rt-core/src/agent_routing/dispatch_target.rs) at write time). Route `(package, instance)` remains on the message for transcript idempotency and ops; it is not used to mint stub agent nodes. When no agent is deployed, transport rejects may omit `target_agent_id` and write the operational row only.
+Each row uses content-addressable identity (`HostIngressPollKey`, `HostIngressDispatchOutcomeKey`) so re-emits UPSERT one graph `Message` node. **`HOST_DISPATCH_TARGET` edges resolve to the stable `Agent`** identified by `target_agent_id` on the dispatch event (via [`DispatchTarget`](crates/baml-rt-core/src/agent_routing/dispatch_target.rs) at write time). The route is the package name alone; it is not used to mint stub agent nodes. When no agent is deployed, transport rejects may omit `target_agent_id` and write the operational row only.
 
 Host poll ingress user messages attach processing to the runner control-plane instance (`RunnerRuntimeInstance`); they do not mint `WAS_EXECUTED_BY` edges to a nil agent id.
 
@@ -161,7 +161,7 @@ The coordinator is still downstream of this flow. It is not the universal raw-ev
 Every task scope that will carry agent-attributed work (LLM calls, tool sessions, episode headers) must bind the task to its **booted executing agent** before attribution. Binding is the write-side ceremony:
 
 1. `TaskExists` (idempotent)
-2. `TaskExecutionStarted` → repoints `WAS_LAST_EXECUTED_BY` on the `Task` entity to the live `AgentRuntimeInstance`
+2. `TaskExecutionStarted` → repoints `WAS_LAST_EXECUTED_BY` on the `Task` entity to the stable `Agent`
 
 Reads resolve task→agent via that single head pointer (`get_task_agent_id`). There is no read-side multi-hop fallback.
 

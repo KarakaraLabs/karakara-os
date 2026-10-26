@@ -52,20 +52,20 @@ fn message_query_emitted_by_agent_package_traverses_two_hops_not_agent_id_proper
          agent ownership of a Message is an EDGE traversal, not a property. \
          Got: {sql}"
     );
-    // The two-hop traversal touches WAS_EXECUTED_BY (processing → agent) and
-    // WAS_BOOTSTRAPPED_BY (boot → archive) to reach the AgentArchive that
-    // carries `a2a_agent_type` (the agent_package value).
+    // The traversal touches WAS_EXECUTED_BY (processing → agent) and resolves
+    // the package against the stable Agent registry, which carries
+    // `a2a_agent_type` (the agent_package value).
     assert!(
         sql.contains("WAS_EXECUTED_BY"),
         "expected WAS_EXECUTED_BY in: {sql}"
     );
     assert!(
-        sql.contains("WAS_BOOTSTRAPPED_BY"),
-        "expected WAS_BOOTSTRAPPED_BY in: {sql}"
+        sql.contains("label = 'Agent'") && sql.contains("props.a2a_agent_type"),
+        "expected direct Agent registry lookup in: {sql}"
     );
     assert!(
-        sql.contains("AgentArchive"),
-        "expected AgentArchive subquery in: {sql}"
+        !sql.contains("WAS_BOOTSTRAPPED_BY") && !sql.contains("AgentArchive"),
+        "agent_package must not walk the legacy archive graph: {sql}"
     );
     let obj = binds.as_object().expect("binds object");
     assert!(obj.values().any(|v| v == "task-lifecycle-demo"));
@@ -278,11 +278,10 @@ fn message_query_with_every_supported_filter_never_emits_props_a2a_agent_id() {
         "Message::for_agent must traverse both inbound and outbound edges: {sql_agent}"
     );
 
-    // for_agent_package: typed multi-hop via AgentArchive. The
-    // `a2a_agent_type` property filter is legitimate at the END of the
-    // traversal (it lives on AgentArchive), but it must NEVER short-
-    // circuit onto the Message row itself. Verify by traversing the
-    // edge chain that the agent_pkg bind only resolves through edges.
+    // for_agent_package: typed two-hop traversal with a direct lookup in
+    // the stable Agent registry. The `a2a_agent_type` property filter is
+    // legitimate on the Agent node, but it must NEVER short-circuit onto
+    // the Message row itself.
     let (sql_pkg, binds_pkg) = GraphQuery::<labels::Message, _>::new()
         .scoped_to_ctx(ctx())
         .for_agent_package(AgentPackage::new("task-lifecycle-demo"))
@@ -292,10 +291,14 @@ fn message_query_with_every_supported_filter_never_emits_props_a2a_agent_id() {
         "Message::for_agent_package must NOT emit `props.a2a_agent_id`. Got: {sql_pkg}"
     );
     assert!(
-        sql_pkg.contains("WAS_BOOTSTRAPPED_BY")
-            && sql_pkg.contains("WAS_SPAWNED_BY")
-            && sql_pkg.contains("WAS_EXECUTED_BY"),
-        "Message::for_agent_package must traverse Message→Activity→Instance→Boot→Archive: {sql_pkg}"
+        sql_pkg.contains("WAS_EXECUTED_BY")
+            && sql_pkg.contains("label = 'Agent'")
+            && sql_pkg.contains("props.a2a_agent_type"),
+        "Message::for_agent_package must traverse Message→Activity→Agent and resolve the package on Agent: {sql_pkg}"
+    );
+    assert!(
+        !sql_pkg.contains("WAS_BOOTSTRAPPED_BY") && !sql_pkg.contains("AgentArchive"),
+        "Message::for_agent_package must not walk the legacy archive graph: {sql_pkg}"
     );
     let pkg_obj = binds_pkg.as_object().expect("binds object");
     assert!(

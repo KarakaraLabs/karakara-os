@@ -104,7 +104,7 @@ HTTP API surface (embedded in runner or standalone).
 
 | Metric name | Type | Purpose |
 |-------------|------|---------|
-| `baml_rt_api.http.request_total` | Counter | API requests. Non-agent routes label set: `route`, `result`. Agent routes (`/agents/{package}/{instance}/...`) label set: `route`, `result`, `agent_package`, `agent_instance_id`, `forwarded`, `ingress_service_instance_id`. See [Runner identity labels](#runner-identity-labels) and [forwarded advisory](./docs/reference/otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding). |
+| `baml_rt_api.http.request_total` | Counter | API requests. Non-agent routes label set: `route`, `result`. Agent routes (`/agents/{package}/...`) label set: `route`, `result`, `agent_package`, `agent_instance_id`, `forwarded`, `ingress_service_instance_id`. See [Runner identity labels](#runner-identity-labels) and [forwarded advisory](./docs/reference/otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding). |
 | `baml_rt_api.http.request_duration_ms` | Histogram | Request latency (same per-route label split as `baml_rt_api.http.request_total`). |
 | `baml_rt_api.conversation_history.phase_duration_ms` | Histogram | Snapshot/delta build phases (`phase`). |
 | `baml_rt_api.conversation_history.payload_bytes` | Histogram | Response body size by `event` kind. |

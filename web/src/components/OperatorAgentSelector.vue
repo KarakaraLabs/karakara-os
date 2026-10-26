@@ -32,7 +32,7 @@ const selectId = computed(() =>
 );
 
 function agentKey(agent: AgentDiscoveryEntry): string {
-  return `${agent.agent_package}/${agent.agent_instance_id}`;
+  return agent.agent_package;
 }
 
 const selectedKey = computed(() =>
@@ -76,8 +76,7 @@ function onChange(event: Event): void {
         v-for="(agent, idx) in agents"
         :key="agentKey(agent)"
         :value="idx"
-        :selected="selected?.agent_package === agent.agent_package &&
-          selected?.agent_instance_id === agent.agent_instance_id"
+        :selected="selected?.agent_package === agent.agent_package"
       >
         {{ agent.name }} v{{ agent.version }}
       </option>
@@ -105,7 +104,7 @@ function onChange(event: Event): void {
           :key="agentKey(agent)"
           :value="agentKey(agent)"
         >
-          {{ agent.agent_package }}/{{ agent.agent_instance_id }}
+          {{ agent.agent_package }}
         </option>
       </optgroup>
       <optgroup v-if="chatOnlyAgents.length > 0" label="Chat only (no subscriptions)">
@@ -114,7 +113,7 @@ function onChange(event: Event): void {
           :key="agentKey(agent)"
           :value="agentKey(agent)"
         >
-          {{ agent.agent_package }}/{{ agent.agent_instance_id }}
+          {{ agent.agent_package }}
         </option>
       </optgroup>
     </select>

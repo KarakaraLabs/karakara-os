@@ -54,7 +54,7 @@ This command:
 1. Packages `agents/coordinator-agent` and `agents/notion-agent` when enabled
 2. Starts `baml-agent-runner` in HTTP mode
 3. Loads the packaged agents into one host
-4. Sends one `message.sendStream` request to `/agents/coordinator-agent/default/a2a`
+4. Sends one `message.sendStream` request to `/agents/coordinator-agent/a2a`
 5. Prints `contextId`/`taskId` when present
 
 Stop the background runner:

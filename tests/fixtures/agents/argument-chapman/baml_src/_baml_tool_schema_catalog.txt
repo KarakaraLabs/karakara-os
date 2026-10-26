@@ -61,7 +61,6 @@ type InternalA2aSendInput = {
 
 type InternalA2aTarget = {
   agent_package: string
-  agent_instance_id: string
 }
 
 type OpaqueJson = {

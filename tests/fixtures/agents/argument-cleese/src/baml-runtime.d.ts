@@ -76,7 +76,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 
@@ -560,7 +559,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "CleeseSendToChapman" | "CleeseSendToChapman__active__system_internal_a2a" | "CleeseSendToChapman__entry";
+export type StepExecutorFunctionName = "CleeseSendToChapman" | "CleeseSendToChapman__active__system_internal_a2a" | "CleeseSendToChapman__consume__system_internal_a2a" | "CleeseSendToChapman__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -621,6 +620,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   CleeseSendToChapman: { args: Parameters<typeof CleeseSendToChapman>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof CleeseSendToChapman>>; };
   CleeseSendToChapman__active__system_internal_a2a: { args: Parameters<typeof CleeseSendToChapman__active__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof CleeseSendToChapman__active__system_internal_a2a>>; };
+  CleeseSendToChapman__consume__system_internal_a2a: { args: Parameters<typeof CleeseSendToChapman__consume__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof CleeseSendToChapman__consume__system_internal_a2a>>; };
   CleeseSendToChapman__entry: { args: Parameters<typeof CleeseSendToChapman__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof CleeseSendToChapman__entry>>; };
 }
 

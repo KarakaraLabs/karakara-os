@@ -339,22 +339,14 @@ impl<Subject: NodeLabelTy, S: ScopeState> GraphQuery<Subject, S> {
 // interpolates `SemanticEdge::*` into SQL strings).
 // ---------------------------------------------------------------------------
 
-/// Subquery that yields AgentRuntimeInstance node IDs whose archive's
-/// `a2a_agent_type` matches the bound package value. Used by every
-/// `for_agent_package` traversal.
+/// Subquery that yields stable `Agent` node IDs whose `a2a_agent_type`
+/// matches the bound package value. Used by every `for_agent_package`
+/// traversal.
 fn agent_instances_in_package_subquery(pkg_bind: &str) -> String {
-    let spawned = SemanticEdge::WasSpawnedBy.as_rel_str();
-    let bootstrapped = SemanticEdge::WasBootstrappedBy.as_rel_str();
     format!(
-        "SELECT VALUE from_id FROM {TBL_EDGE} \
-         WHERE rel_type = '{spawned}' AND to_id IN (\
-            SELECT VALUE from_id FROM {TBL_EDGE} \
-            WHERE rel_type = '{bootstrapped}' AND to_id IN (\
-                SELECT VALUE node_id FROM {TBL_NODE} \
-                WHERE label = '{archive_label}' AND props.a2a_agent_type = ${pkg_bind}\
-            )\
-         )",
-        archive_label = labels::AgentArchive::LABEL_STR,
+        "SELECT VALUE node_id FROM {TBL_NODE} \
+         WHERE label = '{agent_label}' AND props.a2a_agent_type = ${pkg_bind}",
+        agent_label = labels::Agent::LABEL_STR,
     )
 }
 
@@ -530,12 +522,12 @@ impl<S: ScopeState> GraphQuery<labels::Message, S> {
         self
     }
 
-    /// Restrict to messages received OR emitted by a specific agent
-    /// runtime instance. Encodes the canonical two-hop OR traversal:
+    /// Restrict to messages received OR emitted by a specific stable
+    /// `Agent`. Encodes the canonical two-hop OR traversal:
     ///
-    /// `(m:Message) <-[:WAS_RECEIVED_BY]- (p:A2AMessageProcessing) -[:WAS_EXECUTED_BY]-> (a:AgentRuntimeInstance)`
+    /// `(m:Message) <-[:WAS_RECEIVED_BY]- (p:A2AMessageProcessing) -[:WAS_EXECUTED_BY]-> (a:Agent)`
     /// OR
-    /// `(m:Message) -[:WAS_EMITTED_BY]-> (p:A2AMessageProcessing) -[:WAS_EXECUTED_BY]-> (a:AgentRuntimeInstance)`
+    /// `(m:Message) -[:WAS_EMITTED_BY]-> (p:A2AMessageProcessing) -[:WAS_EXECUTED_BY]-> (a:Agent)`
     pub fn for_agent(mut self, agent: AgentRuntimeInstanceNodeId) -> Self {
         let bind = self.next_bind("agent_node");
         let value = Value::String(agent.into_string());
@@ -544,10 +536,8 @@ impl<S: ScopeState> GraphQuery<labels::Message, S> {
         self
     }
 
-    /// Restrict to messages emitted/received by any agent of the given
-    /// package. Equivalent to chaining
-    /// [`Self::for_agent`] over every AgentRuntimeInstance bootstrapped
-    /// from the matching AgentArchive.
+    /// Restrict to messages emitted/received by any stable `Agent` whose
+    /// package name matches.
     pub fn for_agent_package(mut self, package: AgentPackage) -> Self {
         let bind = self.next_bind("agent_pkg");
         let value = Value::String(package.into_string());
@@ -1199,12 +1189,12 @@ mod tests {
             "must traverse WAS_EXECUTED_BY: {sql}"
         );
         assert!(
-            sql.contains("WAS_BOOTSTRAPPED_BY"),
-            "must traverse WAS_BOOTSTRAPPED_BY for archive package: {sql}"
+            sql.contains("label = 'Agent'") && sql.contains("props.a2a_agent_type"),
+            "agent_package must resolve directly against the stable Agent registry: {sql}"
         );
         assert!(
-            sql.contains("AgentArchive"),
-            "must reach AgentArchive for agent_package projection: {sql}"
+            !sql.contains("WAS_BOOTSTRAPPED_BY") && !sql.contains("AgentArchive"),
+            "agent_package must not walk the legacy archive graph: {sql}"
         );
         assert!(
             sql.contains("WAS_RECEIVED_BY") && sql.contains("WAS_EMITTED_BY"),
@@ -1223,7 +1213,7 @@ mod tests {
         );
         assert!(
             !sql.contains("WAS_BOOTSTRAPPED_BY"),
-            "pre-resolved instances must not re-walk archive graph: {sql}"
+            "pre-resolved agent ids must not re-walk the legacy archive graph: {sql}"
         );
     }
 
@@ -1239,7 +1229,7 @@ mod tests {
         );
         assert!(
             !sql.contains("WAS_BOOTSTRAPPED_BY"),
-            "pre-resolved instances must not re-walk archive graph: {sql}"
+            "pre-resolved agent ids must not re-walk the legacy archive graph: {sql}"
         );
         let obj = binds.as_object().expect("binds");
         let instances = obj

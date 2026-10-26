@@ -166,7 +166,6 @@ On success the CLI prints `published: dispatch-echo@v<N>`, a content hash, and `
 curl -s http://localhost:18080/agents \
   | jq '[.[] | select(.agent_package == "dispatch-echo") | {
       agent_package,
-      agent_instance_id,
       content_hash: .agent_card.content_hash
     }]'
 ```
@@ -175,12 +174,12 @@ Expected: a non-empty array with one entry whose `agent_package` is `dispatch-ec
 
 ## Step 8 — First smoke action (dispatch)
 
-`dispatch-echo` is a deterministic dispatch smoke target, not a conversational chat agent — its chat handler returns the literal string `"dispatch-echo does not handle A2A messages"`. The pilot smoke therefore uses only the operator-visible `POST /agents/{pkg}/{inst}/dispatch` route.
+`dispatch-echo` is a deterministic dispatch smoke target, not a conversational chat agent — its chat handler returns the literal string `"dispatch-echo does not handle A2A messages"`. The pilot smoke therefore uses only the operator-visible `POST /agents/{pkg}/dispatch` route.
 
 ```bash
 SMOKE_ID="k8s-pilot-smoke-$(date +%s)"
 
-curl -s -X POST "http://localhost:18080/agents/dispatch-echo/default/dispatch" \
+curl -s -X POST "http://localhost:18080/agents/dispatch-echo/dispatch" \
   -H 'content-type: application/json' \
   -d "$(jq -n --arg sid "$SMOKE_ID" '{
         routing_key: "pilot.smoke",
@@ -230,7 +229,7 @@ body='{"jsonrpc":"2.0","id":"1","method":"message.sendStream","params":{"message
 
 for port in 18081 18082; do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
-    -X POST "http://localhost:$port/agents/dispatch-echo/default/a2a" \
+    -X POST "http://localhost:$port/agents/dispatch-echo/a2a" \
     -H 'Content-Type: application/json' \
     -d "$body")
   echo "port=$port http=$code"

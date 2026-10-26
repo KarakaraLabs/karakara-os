@@ -7,7 +7,6 @@
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
 export interface StandardAgentPlanStep { agent_package: string;
-agent_instance_id: string;
 sub_message: string;
  }
 

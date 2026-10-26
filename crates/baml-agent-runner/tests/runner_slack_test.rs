@@ -329,7 +329,7 @@ async fn test_e2e_slack_todo_extraction_with_mock_server_and_mermaid_http() {
     );
 
     let http_client = reqwest::Client::new();
-    let a2a_url = format!("{}/agents/slack-agent/default/a2a/sse", runner_api.base_url);
+    let a2a_url = format!("{}/agents/slack-agent/a2a/sse", runner_api.base_url);
     let responses: Vec<Value> = timeout(
         Duration::from_secs(90),
         post_a2a_sse_collect(&http_client, &a2a_url, &request_body),

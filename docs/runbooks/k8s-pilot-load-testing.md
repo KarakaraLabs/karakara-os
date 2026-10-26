@@ -26,7 +26,7 @@ artifacts attached or linked.
   - concurrency sweep `1,8,32`
   - fixed payload `dispatch-echo load probe`
 - Supported target: deterministic `dispatch-echo/default` over
-  `POST /agents/{package}/{instance}/a2a`
+  `POST /agents/{package}/a2a`
 - Supported bringup path:
   `scripts/verify-k8s-pilot-package.sh --keep-cluster --values deploy/helm/agentium-os/examples/k3d-load-test-values.yaml`
 - Output location: `artifacts/load-test/<timestamp>/`
@@ -211,7 +211,7 @@ use checked-in markdown summaries as durable benchmark provenance.
       "errorBreakdown": { "http_error": "<int>", "payload_mismatch": "<int>", "network_error": "<int>", "timeout": "<int>" }
     }
   ],
-  "ingress_targets": ["http://localhost:18081/agents/dispatch-echo/default/a2a"],
+  "ingress_targets": ["http://localhost:18081/agents/dispatch-echo/a2a"],
   "package": "dispatch-echo",
   "instance": "default",
   "expect_substring": "dispatch-echo does not handle A2A messages",

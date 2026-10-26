@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-builder/tests/bootstrap_test.rs
+assertion_line: 113
 expression: artifacts
 ---
 === manifest.json ===
@@ -570,7 +571,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseCalculatoragentTool" | "ChooseCalculatoragentTool__active__support_calculate" | "ChooseCalculatoragentTool__entry";
+export type StepExecutorFunctionName = "ChooseCalculatoragentTool" | "ChooseCalculatoragentTool__active__support_calculate" | "ChooseCalculatoragentTool__consume__support_calculate" | "ChooseCalculatoragentTool__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -631,6 +632,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseCalculatoragentTool: { args: Parameters<typeof ChooseCalculatoragentTool>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalculatoragentTool>>; };
   ChooseCalculatoragentTool__active__support_calculate: { args: Parameters<typeof ChooseCalculatoragentTool__active__support_calculate>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalculatoragentTool__active__support_calculate>>; };
+  ChooseCalculatoragentTool__consume__support_calculate: { args: Parameters<typeof ChooseCalculatoragentTool__consume__support_calculate>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalculatoragentTool__consume__support_calculate>>; };
   ChooseCalculatoragentTool__entry: { args: Parameters<typeof ChooseCalculatoragentTool__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseCalculatoragentTool__entry>>; };
 }
 
