@@ -68,6 +68,17 @@ pub enum ProvenanceError {
         boot_event_id: String,
         fencing_token: u64,
     },
+    /// Automatic takeover would cross a revision boundary.
+    #[error(
+        "context-agent lease artifact mismatch for context {context_id}, agent {agent_id}: \
+         held {held_artifact_hash}, requested {requested_artifact_hash}"
+    )]
+    LeaseArtifactMismatch {
+        context_id: String,
+        agent_id: String,
+        held_artifact_hash: String,
+        requested_artifact_hash: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ProvenanceError>;

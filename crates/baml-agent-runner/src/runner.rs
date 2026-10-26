@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,8 +7,10 @@
 
 use std::{
     collections::HashMap,
+    pin::Pin,
     str::FromStr as _,
     sync::{Arc, RwLock, atomic::AtomicU8},
+    task::{Context as TaskContext, Poll},
 };
 
 use async_trait::async_trait;
@@ -25,7 +28,10 @@ use baml_rt_core::{
 };
 use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_observability::spans;
-use baml_rt_provenance::{ProvEvent, ProvenanceWriter};
+use baml_rt_provenance::{
+    ContextAgentFence, ContextAgentLease, ContextAgentLeaseRequest, LeaseAcquisition, ProvEvent,
+    ProvenanceWriter, SurrealProvenanceStore,
+};
 use baml_rt_repository::{ContentHash, RepositoryService, manifest_package_name_from_tar_gz};
 use baml_rt_tools::{SharedContextRefStore, ToolAccessPolicy};
 use serde_json::Value;
@@ -37,7 +43,9 @@ use crate::{
         SnapshotAgentLister,
     },
     config::ProvenanceConfig,
-    routing::{InternalA2aRouter, LiveAgentLister, ScopedInternalA2aRouter, scope_from_request},
+    routing::{
+        InternalA2aRouter, LiveAgentLister, ScopedInternalA2aRouter, scope_and_context_from_request,
+    },
     stdio::{
         is_a2a_method, map_a2a_error, select_implicit_stdio_agent, serialize_a2a_response,
         split_agent_method, strip_stream_suffix, unix_timestamp_secs, wrap_plaintext_message,
@@ -192,8 +200,107 @@ impl AgentRunner {
         self.stream_idle_secs
     }
 
+    /// Stable operational identity for lease rows and owner preference.
+    ///
+    /// Cluster mode uses the cluster runner id and routable endpoint. Standalone
+    /// mode still gets a stable per-process identity so lease fencing works.
+    pub(crate) fn lease_runner_identity(&self) -> (String, Option<String>) {
+        match self.cluster_manager.get() {
+            Some(manager) => (
+                manager.runner_id().to_string(),
+                Some(manager.endpoint().to_string()),
+            ),
+            None => (
+                baml_rt_observability::service_instance_id().to_string(),
+                None,
+            ),
+        }
+    }
+
     pub(crate) fn internal_a2a_router(&self) -> &Arc<InternalA2aRouter> {
         &self.internal_a2a_router
+    }
+
+    /// Claim or confirm this boot's lease for the target pair.
+    ///
+    /// `NotApplicable` means the request shape or local boot metadata does not
+    /// carry a context-agent pair (for example an unparseable test request).
+    pub(crate) async fn claim_local_pair_lease(
+        &self,
+        key: &AgentRouteKey,
+        routed_agent: &baml_rt_a2a::A2aAgent,
+        context_id: Option<baml_rt_core::ids::ContextId>,
+    ) -> Result<PairLeaseClaim> {
+        let Some(context_id) = context_id else {
+            return Ok(PairLeaseClaim::NotApplicable);
+        };
+        let booted = {
+            let agents = self.agents.read().expect("RwLock poison");
+            agents.get(key.agent_package.as_str()).cloned()
+        };
+        let Some(booted) = booted else {
+            return Ok(PairLeaseClaim::NotApplicable);
+        };
+
+        let (runner_id, endpoint) = self.lease_runner_identity();
+        let mut request = ContextAgentLeaseRequest::new(
+            context_id.clone(),
+            routed_agent.agent_id().clone(),
+            booted.boot_event_id.clone(),
+            runner_id,
+            baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT),
+        );
+        if let Some(endpoint) = endpoint {
+            request = request.with_endpoint(endpoint);
+        }
+        if let Some(artifact_hash) = booted.artifact_hash() {
+            request = request.with_artifact_hash(artifact_hash.clone());
+        }
+
+        match self
+            .provenance_config
+            .store()
+            .acquire_context_agent_lease(request)
+            .await
+        {
+            Ok(LeaseAcquisition::Acquired { lease, .. }) => Ok(PairLeaseClaim::Owned {
+                context_id,
+                fence: lease.fence(),
+            }),
+            Ok(LeaseAcquisition::HeldByOther { lease }) => Ok(PairLeaseClaim::HeldElsewhere(lease)),
+            Err(baml_rt_provenance::ProvenanceError::LeaseArtifactMismatch {
+                held_artifact_hash,
+                requested_artifact_hash,
+                ..
+            }) => Err(BamlRtError::Conflict(format!(
+                "context {context_id} agent {} is owned by artifact {held_artifact_hash};                  this boot runs {requested_artifact_hash}",
+                routed_agent.agent_id().as_str()
+            ))),
+            Err(error) => Err(BamlRtError::Io(std::io::Error::other(format!(
+                "context-agent lease acquisition failed for {} in {context_id}: {error}",
+                routed_agent.agent_id().as_str()
+            )))),
+        }
+    }
+
+    /// Wrap a local A2A stream so the pair lease is released once no session
+    /// for the context remains open.
+    pub(crate) fn release_pair_lease_when_idle(
+        &self,
+        stream: BusStream<A2aStreamChunk>,
+        routed_agent: baml_rt_a2a::A2aAgent,
+        context_id: baml_rt_core::ids::ContextId,
+        fence: ContextAgentFence,
+    ) -> BusStream<A2aStreamChunk> {
+        Box::pin(LeaseReleaseStream {
+            inner: stream,
+            release: Some(ReleaseOnIdle {
+                store: self.provenance_config.store().clone(),
+                agent: routed_agent,
+                context_id,
+                fence,
+            }),
+        })
     }
 
     pub(crate) async fn requesting_task_still_in_flight(
@@ -684,13 +791,41 @@ impl AgentRunner {
             routed_agents.get(key).cloned()
         };
 
-        // Local fast path: agent is on this runner.
+        // Local fast path: agent is on this runner. Ownership is checked before
+        // execution so a stale or secondary boot never writes the pair.
         if let Some(routed_agent) = routed_agent {
-            let scope = scope_from_request(request.as_ref(), routed_agent.agent_id().clone());
-            return context::with_scope(scope.as_scope().clone(), async move {
-                routed_agent.handle_a2a_stream(request).await
-            })
-            .await;
+            let (scope, context_id) =
+                scope_and_context_from_request(request.as_ref(), routed_agent.agent_id().clone());
+            match self
+                .claim_local_pair_lease(key, &routed_agent, context_id)
+                .await?
+            {
+                PairLeaseClaim::Owned { context_id, fence } => {
+                    let agent_for_stream = routed_agent.clone();
+                    let stream = context::with_scope(scope.as_scope().clone(), async move {
+                        agent_for_stream.handle_a2a_stream(request).await
+                    })
+                    .await?;
+                    return Ok(self.release_pair_lease_when_idle(
+                        stream,
+                        routed_agent,
+                        context_id,
+                        fence,
+                    ));
+                }
+                PairLeaseClaim::HeldElsewhere(owner) => {
+                    return self
+                        .internal_a2a_router
+                        .forward_to_lease_owner(key, &owner, request)
+                        .await;
+                }
+                PairLeaseClaim::NotApplicable => {
+                    return context::with_scope(scope.as_scope().clone(), async move {
+                        routed_agent.handle_a2a_stream(request).await
+                    })
+                    .await;
+                }
+            }
         }
 
         // Cluster fallback: forward to the remote runner hosting this agent.
@@ -1221,6 +1356,22 @@ impl DeploymentManager for AgentRunner {
 
         tracing::info!(agent = %target_name, "undeploy: drain finished; removing from routing");
 
+        if let Err(error) = self
+            .provenance_config
+            .store()
+            .release_context_agent_leases_for_boot(
+                &booted.boot_event_id,
+                baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT),
+            )
+            .await
+        {
+            tracing::warn!(
+                agent = %target_name,
+                error = %error,
+                "failed to release context-agent leases during undeploy"
+            );
+        }
+
         // 3. Remove from both maps atomically to prevent dispatch to a
         //    destroyed agent between the two removals.
         {
@@ -1285,6 +1436,81 @@ impl DeploymentManager for AgentRunner {
 
     async fn list_deployments(&self) -> Result<Vec<DeploymentRecord>> {
         self.deployment_state.list_deployments().await
+    }
+}
+
+/// Result of claiming execution ownership for a local target.
+pub(crate) enum PairLeaseClaim {
+    Owned {
+        context_id: baml_rt_core::ids::ContextId,
+        fence: ContextAgentFence,
+    },
+    HeldElsewhere(ContextAgentLease),
+    NotApplicable,
+}
+
+struct LeaseReleaseStream {
+    inner: BusStream<A2aStreamChunk>,
+    release: Option<ReleaseOnIdle>,
+}
+
+impl LeaseReleaseStream {
+    fn release_when_idle(&mut self) {
+        if let Some(release) = self.release.take() {
+            tokio::spawn(async move {
+                release.release_if_idle().await;
+            });
+        }
+    }
+}
+
+impl futures_util::Stream for LeaseReleaseStream {
+    type Item = A2aStreamChunk;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        let polled = self.inner.as_mut().poll_next(cx);
+        if matches!(polled, Poll::Ready(None)) {
+            self.release_when_idle();
+        }
+        polled
+    }
+}
+
+impl Drop for LeaseReleaseStream {
+    fn drop(&mut self) {
+        self.release_when_idle();
+    }
+}
+
+struct ReleaseOnIdle {
+    store: Arc<SurrealProvenanceStore>,
+    agent: baml_rt_a2a::A2aAgent,
+    context_id: baml_rt_core::ids::ContextId,
+    fence: ContextAgentFence,
+}
+
+impl ReleaseOnIdle {
+    async fn release_if_idle(self) {
+        if self
+            .agent
+            .has_open_session_for_context(&self.context_id)
+            .await
+        {
+            return;
+        }
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        if let Err(error) = self
+            .store
+            .release_context_agent_lease(&self.fence, now_ms)
+            .await
+        {
+            tracing::warn!(
+                context_id = %self.context_id,
+                agent_id = %self.fence.agent_id,
+                error = %error,
+                "failed to release context-agent lease after stream ended"
+            );
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -45,6 +46,14 @@ impl LiveStreamSessionKey {
             )),
             None => Self::from_context_id(context_id),
         }
+    }
+
+    /// True for both the context-scoped key and any task-scoped key in it.
+    pub fn is_for_context(&self, context_id: &ContextId) -> bool {
+        if let Some(rest) = self.0.strip_prefix(context_id.as_str()) {
+            return rest.is_empty() || rest.starts_with("::");
+        }
+        false
     }
 }
 

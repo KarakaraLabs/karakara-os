@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -20,6 +21,7 @@ use baml_rt_core::{
     AgentRouteKey, ArtifactHash, BamlRtError, DeploymentContentHash, HeartbeatErrorKind,
 };
 use baml_rt_observability::UNKNOWN_SERVICE_INSTANCE_ID;
+use baml_rt_provenance::ContextAgentLease;
 use surrealdb::{Surreal, engine::any::Any};
 
 use crate::routing::{ClusterEndpointResolver, Placement};
@@ -160,8 +162,33 @@ impl PlacementResolver {
 #[async_trait]
 impl ClusterEndpointResolver for PlacementResolver {
     async fn resolve(&self, key: &AgentRouteKey) -> baml_rt_core::Result<Option<Placement>> {
+        self.resolve_placement(key, None).await
+    }
+
+    async fn resolve_for_owner(
+        &self,
+        key: &AgentRouteKey,
+        owner: &ContextAgentLease,
+    ) -> baml_rt_core::Result<Option<Placement>> {
+        self.resolve_placement(key, Some(owner)).await
+    }
+}
+
+impl PlacementResolver {
+    /// Resolve one placement. With an owner hint, only that runner's placement
+    /// is eligible; falling through to another runner would defeat the lease.
+    async fn resolve_placement(
+        &self,
+        key: &AgentRouteKey,
+        owner: Option<&ContextAgentLease>,
+    ) -> baml_rt_core::Result<Option<Placement>> {
         let pkg = key.agent_package.as_str();
         let ttl = self.placement_ttl_ms as i64;
+        let owner_filter = if owner.is_some() {
+            " AND runner_id = $owner_runner AND runner_endpoint = $owner_endpoint"
+        } else {
+            ""
+        };
         // Two-stage lookup: fetch the placement, then the serving runner's
         // `service_instance_id`. A correlated sub-select on `cluster_runners`
         // inside the projection of the first query does not resolve
@@ -174,24 +201,33 @@ impl ClusterEndpointResolver for PlacementResolver {
         // operators upgrade one pod, traffic shifts to it as soon as the
         // refreshed placement row lands. The alphabetical secondary sort
         // keeps the choice deterministic across calls when timestamps tie.
-        let result: Result<Vec<serde_json::Value>, _> = self
+        let sql = format!(
+            "SELECT * FROM cluster_agent_placements \
+             WHERE agent_package = $pkg \
+             AND status = 'active' \
+             AND artifact_hash IS NOT NONE \
+             AND runner_id IN (\
+               SELECT VALUE runner_id FROM cluster_runners \
+               WHERE last_heartbeat_ms > (time::millis(time::now()) - $ttl)\
+             ){owner_filter} \
+             ORDER BY updated_at_ms DESC, runner_endpoint ASC \
+             LIMIT 1"
+        );
+        let mut query = self
             .db
-            .query(
-                "SELECT * FROM cluster_agent_placements \
-                 WHERE agent_package = $pkg \
-                 AND status = 'active' \
-                 AND artifact_hash IS NOT NONE \
-                 AND runner_id IN (\
-                   SELECT VALUE runner_id FROM cluster_runners \
-                   WHERE last_heartbeat_ms > (time::millis(time::now()) - $ttl)\
-                 ) \
-                 ORDER BY updated_at_ms DESC, runner_endpoint ASC \
-                 LIMIT 1",
-            )
+            .query(sql)
             .bind(("pkg", pkg.to_string()))
-            .bind(("ttl", ttl))
-            .await
-            .and_then(|mut r| r.take(0));
+            .bind(("ttl", ttl));
+        if let Some(owner) = owner {
+            let Some(owner_endpoint) = owner.endpoint.as_deref() else {
+                return Ok(None);
+            };
+            let owner_runner = owner.runner_id.as_str();
+            query = query
+                .bind(("owner_endpoint", owner_endpoint.to_string()))
+                .bind(("owner_runner", owner_runner.to_string()));
+        }
+        let result: Result<Vec<serde_json::Value>, _> = query.await.and_then(|mut r| r.take(0));
 
         let row = match result {
             Ok(rows) => rows.into_iter().next(),
@@ -478,6 +514,16 @@ impl ClusterManager {
             )))
         })?;
         Ok(())
+    }
+
+    /// Stable cluster runner identity for operational lease rows.
+    pub(crate) fn runner_id(&self) -> &str {
+        self.identity.runner_id.as_str()
+    }
+
+    /// Routable HTTP endpoint for this runner.
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.identity.endpoint
     }
 
     /// Build a `PlacementResolver` that shares this manager's DB connection.

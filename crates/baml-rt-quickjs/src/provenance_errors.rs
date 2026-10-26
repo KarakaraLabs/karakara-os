@@ -58,5 +58,8 @@ pub(crate) fn map_archive_provenance_err(e: ProvenanceError) -> BamlRtError {
         ProvenanceError::StaleContextAgentLease { .. } => {
             BamlRtError::Conflict(format!("archive ref provenance stale lease fence: {e}"))
         }
+        ProvenanceError::LeaseArtifactMismatch { .. } => BamlRtError::Conflict(format!(
+            "archive ref provenance lease artifact mismatch: {e}"
+        )),
     }
 }

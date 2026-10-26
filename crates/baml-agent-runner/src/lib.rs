@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1472,6 +1473,156 @@ globalThis.onChatMessage = async function(_message) {
             Err(e) => panic!("expected AgentDraining, got: {e}"),
             Ok(_) => panic!("draining agent should reject requests"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_non_owner_boot_does_not_execute_local_turn() {
+        use baml_rt_core::{AgentPackageName, AgentRouteKey, BamlRtError};
+        use baml_rt_provenance::{ContextAgentLeaseRequest, LeaseAcquisition};
+
+        let prov = test_provenance_config().await;
+        let state = test_deployment_state().await;
+        let runner = make_runner(prov, state);
+
+        let agent = build_test_agent().await;
+        let booted = make_booted(agent.clone(), "owned-elsewhere");
+        let package = AgentPackageName::parse("owned-elsewhere").unwrap();
+        let route_key = AgentRouteKey::new(package);
+        {
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(route_key.clone(), agent.clone());
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("owned-elsewhere".to_string(), booted);
+        }
+
+        let context_id = baml_rt_core::ids::ContextId::from("ctx-non-owner");
+        let other_boot = baml_rt_core::ids::ActivityAnchorId::from("prov-other-boot");
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        let acquired = runner
+            .provenance_config()
+            .store()
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    context_id.clone(),
+                    agent.agent_id().clone(),
+                    other_boot.clone(),
+                    "runner-other",
+                    now_ms,
+                )
+                .with_endpoint("http://runner-other:18080"),
+            )
+            .await
+            .expect("seed foreign lease");
+        assert!(matches!(acquired, LeaseAcquisition::Acquired { .. }));
+
+        let request = baml_rt_core::A2aWireRequest::from(json!({
+            "jsonrpc": "2.0",
+            "method": "message.sendStream",
+            "id": "corr-non-owner-1",
+            "params": {
+                "message": {
+                    "messageId": "msg-non-owner-1",
+                    "role": "user",
+                    "contextId": context_id.as_str(),
+                    "parts": [{"text": "must not execute"}]
+                }
+            }
+        }));
+        let error = match runner.handle_a2a_by_key(&route_key, request).await {
+            Ok(_) => panic!("secondary boot must not execute the turn"),
+            Err(error) => error,
+        };
+        let BamlRtError::Conflict(message) = error else {
+            panic!("expected retryable conflict, got {error:?}");
+        };
+        assert!(
+            message.contains("owned by boot") || message.contains("unreachable runner"),
+            "conflict should name lease ownership, got: {message}"
+        );
+
+        let lease = runner
+            .provenance_config()
+            .store()
+            .read_context_agent_lease(&context_id, agent.agent_id())
+            .await
+            .expect("read lease")
+            .expect("lease still present");
+        assert_eq!(lease.boot_event_id, other_boot);
+
+        // A stale lease still rejects takeover across an artifact boundary.
+        let revision_agent = build_test_agent().await;
+        let mut revision_booted = make_booted(revision_agent.clone(), "revision-boundary");
+        revision_booted.provenance = crate::agent_package::DeploymentProvenance::Repository {
+            content_hash: "a".repeat(64).parse().expect("content hash"),
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"artifact-b"),
+            version: 1,
+        };
+        let revision_key =
+            AgentRouteKey::new(AgentPackageName::parse("revision-boundary").unwrap());
+        {
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(revision_key.clone(), revision_agent.clone());
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("revision-boundary".to_string(), revision_booted);
+        }
+
+        let revision_context = baml_rt_core::ids::ContextId::from("ctx-artifact-boundary");
+        runner
+            .provenance_config()
+            .store()
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    revision_context.clone(),
+                    revision_agent.agent_id().clone(),
+                    baml_rt_core::ids::ActivityAnchorId::from("prov-boot-a"),
+                    "runner-a",
+                    now_ms.saturating_sub(120_000),
+                )
+                .with_endpoint("http://runner-a:18080")
+                .with_artifact_hash(baml_rt_core::ArtifactHash::from_bytes(b"artifact-a")),
+            )
+            .await
+            .expect("seed stale revision lease");
+
+        let revision_request = baml_rt_core::A2aWireRequest::from(json!({
+            "jsonrpc": "2.0",
+            "method": "message.sendStream",
+            "id": "corr-artifact-boundary-1",
+            "params": {
+                "message": {
+                    "messageId": "msg-artifact-boundary-1",
+                    "role": "user",
+                    "contextId": revision_context.as_str(),
+                    "parts": [{"text": "must not cross revisions"}]
+                }
+            }
+        }));
+        let error = match runner
+            .handle_a2a_by_key(&revision_key, revision_request)
+            .await
+        {
+            Ok(_) => panic!("artifact mismatch must not execute the turn"),
+            Err(error) => error,
+        };
+        let BamlRtError::Conflict(message) = error else {
+            panic!("expected artifact-boundary conflict, got {error:?}");
+        };
+        assert!(
+            message.contains("owned by artifact"),
+            "conflict should name the held artifact, got: {message}"
+        );
+        let revision_lease = runner
+            .provenance_config()
+            .store()
+            .read_context_agent_lease(&revision_context, revision_agent.agent_id())
+            .await
+            .expect("read revision lease")
+            .expect("revision lease still present");
+        assert_eq!(
+            revision_lease.boot_event_id.as_str(),
+            "prov-boot-a",
+            "rejected takeover must leave the prior holder in place"
+        );
     }
 
     // ── cluster resolver fallback ────────────────────────────────────────────

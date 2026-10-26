@@ -21,7 +21,10 @@
 //! event write, so a paused old holder cannot resume after a takeover and land
 //! rows in a transcript another boot now owns.
 
-use baml_rt_core::ids::{ActivityAnchorId, AgentId, ContextId, UuidId};
+use baml_rt_core::{
+    ArtifactHash,
+    ids::{ActivityAnchorId, AgentId, ContextId, UuidId},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -73,6 +76,10 @@ pub struct ContextAgentLease {
     pub runner_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
+    /// Exact package blob the holder runs. Automatic takeover never crosses a
+    /// revision boundary; only an explicit release/handoff may change it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<ArtifactHash>,
     pub fencing_token: u64,
     pub heartbeat_ms: u64,
 }
@@ -97,6 +104,7 @@ pub struct ContextAgentLeaseRequest {
     pub boot_event_id: ActivityAnchorId,
     pub runner_id: String,
     pub endpoint: Option<String>,
+    pub artifact_hash: Option<ArtifactHash>,
     /// Observation time for this attempt. Injected so expiry is testable.
     pub now_ms: u64,
     /// A lease whose last heartbeat is at or before this instant is stale.
@@ -119,6 +127,7 @@ impl ContextAgentLeaseRequest {
             boot_event_id,
             runner_id: runner_id.into(),
             endpoint: None,
+            artifact_hash: None,
             now_ms,
             stale_before_ms,
         }
@@ -127,6 +136,12 @@ impl ContextAgentLeaseRequest {
     #[must_use]
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_artifact_hash(mut self, artifact_hash: ArtifactHash) -> Self {
+        self.artifact_hash = Some(artifact_hash);
         self
     }
 
@@ -172,6 +187,7 @@ struct StoredLease {
     boot_event_id: Option<ActivityAnchorId>,
     runner_id: String,
     endpoint: Option<String>,
+    artifact_hash: Option<ArtifactHash>,
     fencing_token: u64,
     heartbeat_ms: u64,
     released: bool,
@@ -189,6 +205,7 @@ impl StoredLease {
             boot_event_id,
             runner_id: self.runner_id,
             endpoint: self.endpoint,
+            artifact_hash: self.artifact_hash,
             fencing_token: self.fencing_token,
             heartbeat_ms: self.heartbeat_ms,
         })
@@ -206,6 +223,7 @@ IF array::len($current) = 0 {
         boot_event_id: $boot,
         runner_id: $runner,
         endpoint: $endpoint,
+        artifact_hash: $artifact_hash,
         fencing_token: 1,
         heartbeat_ms: $now,
         released: false
@@ -214,6 +232,7 @@ IF array::len($current) = 0 {
     UPDATE context_agent_leases SET
         runner_id = $runner,
         endpoint = $endpoint,
+        artifact_hash = $artifact_hash,
         heartbeat_ms = $now
         WHERE context_id = $ctx AND agent_id = $agent;
 } ELSE IF $current[0].released = true OR $current[0].heartbeat_ms <= $stale_before {
@@ -221,6 +240,7 @@ IF array::len($current) = 0 {
         boot_event_id = $boot,
         runner_id = $runner,
         endpoint = $endpoint,
+        artifact_hash = $artifact_hash,
         fencing_token = $current[0].fencing_token + 1,
         heartbeat_ms = $now,
         released = false
@@ -250,6 +270,16 @@ WHERE context_id = $ctx
   AND agent_id = $agent
   AND boot_event_id = $boot
   AND fencing_token = $token
+  AND released = false;
+"#;
+
+const RELEASE_ALL_FOR_BOOT_SQL: &str = r#"
+UPDATE context_agent_leases SET
+    boot_event_id = NONE,
+    fencing_token = fencing_token + 1,
+    heartbeat_ms = $now,
+    released = true
+WHERE boot_event_id = $boot
   AND released = false;
 "#;
 
@@ -284,6 +314,10 @@ fn parse_lease_row(row: &Value, context_id: &ContextId) -> Result<StoredLease> {
         .get("endpoint")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let artifact_hash = row
+        .get("artifact_hash")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<ArtifactHash>().ok());
     let fencing_token = row
         .get("fencing_token")
         .and_then(Value::as_u64)
@@ -305,6 +339,7 @@ fn parse_lease_row(row: &Value, context_id: &ContextId) -> Result<StoredLease> {
         boot_event_id,
         runner_id,
         endpoint,
+        artifact_hash,
         fencing_token,
         heartbeat_ms,
         released,
@@ -394,6 +429,20 @@ impl SurrealProvenanceStore {
             .read_stored_context_agent_lease(&request.context_id, &request.agent_id)
             .await?;
 
+        if let Some(held) = before.as_ref()
+            && !held.released
+            && let (Some(held_hash), Some(requested_hash)) =
+                (held.artifact_hash.as_ref(), request.artifact_hash.as_ref())
+            && held_hash != requested_hash
+        {
+            return Err(ProvenanceError::LeaseArtifactMismatch {
+                context_id: request.context_id.as_str().to_string(),
+                agent_id: request.agent_id.as_str().to_string(),
+                held_artifact_hash: held_hash.as_str().to_string(),
+                requested_artifact_hash: requested_hash.as_str().to_string(),
+            });
+        }
+
         self.run_lease_write(
             ACQUIRE_LEASE_SQL,
             vec![
@@ -416,6 +465,14 @@ impl SurrealProvenanceStore {
                         .endpoint
                         .clone()
                         .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                (
+                    "artifact_hash",
+                    request
+                        .artifact_hash
+                        .as_ref()
+                        .map(|hash| Value::String(hash.as_str().to_string()))
                         .unwrap_or(Value::Null),
                 ),
                 ("now", Value::from(request.now_ms)),
@@ -574,6 +631,25 @@ impl SurrealProvenanceStore {
         .await
     }
 
+    /// Release every lease held by one boot.
+    ///
+    /// Called when a boot is drained or stops serving. Each released row
+    /// advances its token so a delayed writer with the old fence cannot land.
+    pub async fn release_context_agent_leases_for_boot(
+        &self,
+        boot_event_id: &ActivityAnchorId,
+        now_ms: u64,
+    ) -> Result<()> {
+        self.run_lease_write(
+            RELEASE_ALL_FOR_BOOT_SQL,
+            vec![
+                ("boot", Value::String(boot_event_id.as_str().to_string())),
+                ("now", Value::from(now_ms)),
+            ],
+        )
+        .await
+    }
+
     async fn record_audit_decision(
         &self,
         context_id: &ContextId,
@@ -629,6 +705,7 @@ mod tests {
             boot_event_id: ActivityAnchorId::from("prov-1"),
             runner_id: "runner-a".to_string(),
             endpoint: None,
+            artifact_hash: None,
             fencing_token: 7,
             heartbeat_ms: 1000,
         };
