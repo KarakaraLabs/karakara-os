@@ -31,7 +31,6 @@ use serde_json::Value;
 use crate::{
     error::{ProvenanceError, Result},
     events::AuditDecision,
-    store::ProvenanceWriter,
     surreal_store::{SurrealProvenanceStore, map_surreal_error},
     surreal_tables::TBL_CONTEXT_AGENT_LEASES,
 };
@@ -443,7 +442,7 @@ impl SurrealProvenanceStore {
             });
         }
 
-        self.run_lease_write(
+        self.run_operational_write(
             ACQUIRE_LEASE_SQL,
             vec![
                 (
@@ -584,7 +583,7 @@ impl SurrealProvenanceStore {
         fence: &ContextAgentFence,
         now_ms: u64,
     ) -> Result<Option<ContextAgentLease>> {
-        self.run_lease_write(
+        self.run_operational_write(
             RENEW_LEASE_SQL,
             vec![
                 ("ctx", Value::String(fence.context_id.as_str().to_string())),
@@ -615,7 +614,7 @@ impl SurrealProvenanceStore {
         fence: &ContextAgentFence,
         now_ms: u64,
     ) -> Result<()> {
-        self.run_lease_write(
+        self.run_operational_write(
             RELEASE_LEASE_SQL,
             vec![
                 ("ctx", Value::String(fence.context_id.as_str().to_string())),
@@ -640,7 +639,7 @@ impl SurrealProvenanceStore {
         boot_event_id: &ActivityAnchorId,
         now_ms: u64,
     ) -> Result<()> {
-        self.run_lease_write(
+        self.run_operational_write(
             RELEASE_ALL_FOR_BOOT_SQL,
             vec![
                 ("boot", Value::String(boot_event_id.as_str().to_string())),
@@ -648,45 +647,6 @@ impl SurrealProvenanceStore {
             ],
         )
         .await
-    }
-
-    async fn record_audit_decision(
-        &self,
-        context_id: &ContextId,
-        decision: AuditDecision,
-    ) -> Result<()> {
-        let event = crate::events::ProvEvent::audit_decision(context_id.clone(), decision);
-        self.add_event(event).await
-    }
-
-    /// Execute one lease mutation transaction with the shared MVCC retry policy.
-    ///
-    /// Lease acquisition can race its first insert, so duplicate-record writes
-    /// are retried like transaction conflicts: the retry then takes the update
-    /// branch and converges on one row.
-    async fn run_lease_write(&self, sql: &str, binds: Vec<(&str, Value)>) -> Result<()> {
-        for attempt in 0..crate::surreal_store::WRITE_CONFLICT_MAX_ATTEMPTS {
-            let mut query = self.db().query(sql);
-            for (name, value) in &binds {
-                query = query.bind(((*name).to_string(), value.clone()));
-            }
-            match query.await.and_then(surrealdb::IndexedResults::check) {
-                Ok(_) => return Ok(()),
-                Err(error)
-                    if crate::surreal_store::is_transaction_conflict(&error)
-                        || crate::surreal_store::is_duplicate_record_write(&error) =>
-                {
-                    if attempt + 1 >= crate::surreal_store::WRITE_CONFLICT_MAX_ATTEMPTS {
-                        return Err(ProvenanceError::Contention {
-                            details: error.message().to_string(),
-                        });
-                    }
-                    tokio::time::sleep(crate::surreal_store::jittered_backoff(attempt)).await;
-                }
-                Err(error) => return Err(map_surreal_error(error)),
-            }
-        }
-        unreachable!("lease retry loop returns on every iteration");
     }
 }
 

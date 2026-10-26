@@ -704,6 +704,20 @@ pub enum AuditDecision {
         owner_boot_event_id: ActivityAnchorId,
         requesting_boot_event_id: ActivityAnchorId,
     },
+    /// First participation pinned a context route to one agent and artifact.
+    BindingCreated {
+        package_name: String,
+        agent_id: AgentId,
+        artifact_hash: baml_rt_core::ArtifactHash,
+    },
+    /// A turn resolved to a different pair than the context already pinned.
+    BindingConflict {
+        package_name: String,
+        pinned_agent_id: AgentId,
+        pinned_artifact_hash: baml_rt_core::ArtifactHash,
+        resolved_agent_id: AgentId,
+        resolved_artifact_hash: baml_rt_core::ArtifactHash,
+    },
 }
 
 impl AuditDecision {
@@ -715,6 +729,8 @@ impl AuditDecision {
             Self::OwnershipHandedOff { .. } => "ownership_handed_off",
             Self::OwnershipTakenOver { .. } => "ownership_taken_over",
             Self::PairServedElsewhere { .. } => "pair_served_elsewhere",
+            Self::BindingCreated { .. } => "binding_created",
+            Self::BindingConflict { .. } => "binding_conflict",
         }
     }
 
@@ -725,7 +741,11 @@ impl AuditDecision {
             Self::OwnershipAcquired { agent_id, .. }
             | Self::OwnershipHandedOff { agent_id, .. }
             | Self::OwnershipTakenOver { agent_id, .. }
-            | Self::PairServedElsewhere { agent_id, .. } => agent_id,
+            | Self::PairServedElsewhere { agent_id, .. }
+            | Self::BindingCreated { agent_id, .. } => agent_id,
+            Self::BindingConflict {
+                resolved_agent_id, ..
+            } => resolved_agent_id,
         }
     }
 

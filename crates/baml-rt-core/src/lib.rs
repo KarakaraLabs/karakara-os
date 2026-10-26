@@ -93,8 +93,8 @@ pub use dispatch_ingress::{
     dispatch_unit_runtime_scope, dispatch_unit_task_id, format_unit_ingress_body,
 };
 pub use error::{
-    BamlRtError, ClassifiedToolError, HeartbeatErrorKind, Result, SessionLifecycleError,
-    baml_error_disposition, retryability_for_a2a,
+    BamlRtError, ClassifiedToolError, ContextBindingConflict, HeartbeatErrorKind, Result,
+    SessionLifecycleError, baml_error_disposition, retryability_for_a2a,
 };
 pub use event_delivery::{
     AgentDispatchPort, DiscoveryPublishClient, HostPublishClient, HostPublishService,

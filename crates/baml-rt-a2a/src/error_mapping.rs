@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -107,6 +108,14 @@ pub fn map_error(error: &BamlRtError) -> A2aErrorMapping {
             "Conflict",
             Some(serde_json::json!({ "details": message })),
             "conflict",
+            retryability_for_a2a(error),
+        ),
+        BamlRtError::ContextBindingConflict(_) => mapping(
+            error,
+            -32009,
+            "Conflict",
+            None,
+            "context_binding_conflict",
             retryability_for_a2a(error),
         ),
         BamlRtError::InvalidArgumentWithSource { .. } => mapping(

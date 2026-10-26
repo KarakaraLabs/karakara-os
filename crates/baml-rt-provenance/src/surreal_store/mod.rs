@@ -114,6 +114,7 @@ use surrealdb::{Surreal, engine::any::Any};
 pub use crate::read::{OpsReader, PlanningReader, TranscriptEngine};
 use crate::{
     error::{ProvenanceError, Result},
+    events::AuditDecision,
     id_semantics::{MessageEntityId, MessageEntityInput},
     mermaid_cache::MermaidCache,
     normalizer::ProvNormalizer,
@@ -398,5 +399,49 @@ impl SurrealProvenanceStore {
             }
         }
         unreachable!("retry loop returns on every iteration");
+    }
+
+    /// Run one operational-table mutation under the shared MVCC retry policy.
+    ///
+    /// Operational writes (leases, route bindings) can race their first insert,
+    /// so duplicate-record writes are retried like transaction conflicts: the
+    /// retry re-evaluates the statement and converges on one row. The retried
+    /// statement must be idempotent for the same reason.
+    pub(crate) async fn run_operational_write(
+        &self,
+        sql: &str,
+        binds: Vec<(&str, Value)>,
+    ) -> Result<()> {
+        for attempt in 0..WRITE_CONFLICT_MAX_ATTEMPTS {
+            let mut query = self.db.query(sql);
+            for (name, value) in &binds {
+                query = query.bind(((*name).to_string(), value.clone()));
+            }
+            match query.await.and_then(surrealdb::IndexedResults::check) {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if is_transaction_conflict(&error) || is_duplicate_record_write(&error) =>
+                {
+                    if attempt + 1 >= WRITE_CONFLICT_MAX_ATTEMPTS {
+                        return Err(ProvenanceError::Contention {
+                            details: error.message().to_string(),
+                        });
+                    }
+                    tokio::time::sleep(jittered_backoff(attempt)).await;
+                }
+                Err(error) => return Err(map_surreal_error(error)),
+            }
+        }
+        unreachable!("operational retry loop returns on every iteration");
+    }
+
+    /// Append one operator-only decision row to provenance.
+    pub(crate) async fn record_audit_decision(
+        &self,
+        context_id: &ContextId,
+        decision: AuditDecision,
+    ) -> Result<()> {
+        let event = crate::events::ProvEvent::audit_decision(context_id.clone(), decision);
+        crate::store::ProvenanceWriter::add_event(self, event).await
     }
 }

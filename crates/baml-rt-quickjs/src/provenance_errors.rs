@@ -61,5 +61,8 @@ pub(crate) fn map_archive_provenance_err(e: ProvenanceError) -> BamlRtError {
         ProvenanceError::LeaseArtifactMismatch { .. } => BamlRtError::Conflict(format!(
             "archive ref provenance lease artifact mismatch: {e}"
         )),
+        ProvenanceError::ContextRouteBindingConflict(_) => BamlRtError::Conflict(format!(
+            "archive ref provenance context route binding conflict: {e}"
+        )),
     }
 }

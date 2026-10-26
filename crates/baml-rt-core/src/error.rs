@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -14,6 +15,24 @@ use crate::{
     semantics::{ErrorDisposition, Retryability},
     step_executor_outcome::StepPlanRecovery,
 };
+
+/// A context route pinned to a different `(agent, artifact)` revision than the
+/// turn resolved. Both pairs are named so the caller can report exactly which
+/// revision the context is bound to and which one this turn would have run.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error(
+    "context {context_id} package {package_name} is pinned to agent {pinned_agent_id} \
+     artifact {pinned_artifact_hash}, but this turn resolved to agent {resolved_agent_id} \
+     artifact {resolved_artifact_hash}"
+)]
+pub struct ContextBindingConflict {
+    pub context_id: String,
+    pub package_name: String,
+    pub pinned_agent_id: String,
+    pub pinned_artifact_hash: String,
+    pub resolved_agent_id: String,
+    pub resolved_artifact_hash: String,
+}
 
 /// Structured tool failure for LLM-visible payloads and host retry policy.
 ///
@@ -139,6 +158,10 @@ pub enum BamlRtError {
     /// A request carried the removed `agent_instance_id` routing dimension.
     #[error("Unsupported agent_instance_id: {0}")]
     UnsupportedAgentInstance(String),
+
+    /// The context is pinned to a different agent revision than the turn resolved.
+    #[error(transparent)]
+    ContextBindingConflict(Box<ContextBindingConflict>),
 
     /// Tool session plan step violated a correctable contract (structured for `StepExecutorOutcome`).
     #[error(transparent)]
@@ -347,6 +370,7 @@ fn code_for_classified(err: &BamlRtError, disposition: ErrorDisposition) -> Stri
         BamlRtError::QuickJs(_) | BamlRtError::QuickJsWithSource { .. } => "quickjs".to_string(),
         BamlRtError::SessionLifecycle(_) => "session_lifecycle".to_string(),
         BamlRtError::Conflict(_) => "conflict".to_string(),
+        BamlRtError::ContextBindingConflict(_) => "context_binding_conflict".to_string(),
         _ => "runtime_error".to_string(),
     }
 }
@@ -365,7 +389,9 @@ pub fn baml_error_disposition(err: &BamlRtError) -> ErrorDisposition {
         BamlRtError::StepPlanCorrectable(r) => r.disposition,
         BamlRtError::AgentNotFound(_) => ErrorDisposition::InformAndContinue,
         BamlRtError::AgentDraining(_) => ErrorDisposition::HostRetriable,
-        BamlRtError::Conflict(_) => ErrorDisposition::HostRetriable,
+        BamlRtError::Conflict(_) | BamlRtError::ContextBindingConflict(_) => {
+            ErrorDisposition::HostRetriable
+        }
         BamlRtError::SessionLifecycle(
             SessionLifecycleError::ToolSessionNotFound { .. }
             | SessionLifecycleError::ToolSessionClosed { .. },

@@ -6,6 +6,22 @@
 use baml_rt_core::ids::TaskId;
 use thiserror::Error;
 
+/// A turn resolved to a different agent and artifact than the context pinned.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error(
+    "context route binding conflict for context {context_id}, package {package_name}: \
+     pinned agent {pinned_agent_id} artifact {pinned_artifact_hash}, \
+     resolved agent {resolved_agent_id} artifact {resolved_artifact_hash}"
+)]
+pub struct ContextRouteBindingConflict {
+    pub context_id: String,
+    pub package_name: String,
+    pub pinned_agent_id: String,
+    pub pinned_artifact_hash: String,
+    pub resolved_agent_id: String,
+    pub resolved_artifact_hash: String,
+}
+
 #[derive(Debug, Error)]
 pub enum ProvenanceError {
     #[error("provenance storage error: {0}")]
@@ -79,6 +95,9 @@ pub enum ProvenanceError {
         held_artifact_hash: String,
         requested_artifact_hash: String,
     },
+    /// A turn resolved to a different agent and artifact than the context pinned.
+    #[error(transparent)]
+    ContextRouteBindingConflict(Box<ContextRouteBindingConflict>),
 }
 
 pub type Result<T> = std::result::Result<T, ProvenanceError>;

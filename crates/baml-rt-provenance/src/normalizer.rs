@@ -2819,6 +2819,48 @@ fn normalize_event_with_registry(
                         Value::String(requesting_boot_event_id.as_str().to_string()),
                     );
                 }
+                AuditDecision::BindingCreated {
+                    package_name,
+                    artifact_hash,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_artifact_hash".to_string(),
+                        Value::String(artifact_hash.as_str().to_string()),
+                    );
+                }
+                AuditDecision::BindingConflict {
+                    package_name,
+                    pinned_agent_id,
+                    pinned_artifact_hash,
+                    resolved_agent_id,
+                    resolved_artifact_hash,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_agent_id".to_string(),
+                        Value::String(pinned_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_artifact_hash".to_string(),
+                        Value::String(pinned_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_resolved_agent_id".to_string(),
+                        Value::String(resolved_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_resolved_artifact_hash".to_string(),
+                        Value::String(resolved_artifact_hash.as_str().to_string()),
+                    );
+                }
             }
             attrs.insert(
                 prov::LABEL.to_string(),

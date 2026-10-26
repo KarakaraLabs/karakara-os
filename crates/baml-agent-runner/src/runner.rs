@@ -221,6 +221,62 @@ impl AgentRunner {
         &self.internal_a2a_router
     }
 
+    /// Admit one turn against the context route binding before dispatch.
+    ///
+    /// The ordinary deployment resolves the route to a pair. If the context
+    /// already pinned a different pair (a deploy moved the route between two
+    /// turns), the turn is refused instead of executing under another revision.
+    ///
+    /// Ephemeral boots carry no artifact hash, so they have no exact package to
+    /// pin and skip the admission check (development and test agents only).
+    pub(crate) async fn admit_context_route_binding(
+        &self,
+        key: &AgentRouteKey,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+    ) -> Result<()> {
+        let artifact_hash = {
+            let agents = self.agents.read().expect("RwLock poison");
+            agents
+                .get(key.agent_package.as_str())
+                .and_then(|booted| booted.artifact_hash().cloned())
+        };
+        let Some(artifact_hash) = artifact_hash else {
+            return Ok(());
+        };
+
+        let request = baml_rt_provenance::ContextRouteBindingRequest::new(
+            context_id.clone(),
+            key.agent_package.as_str(),
+            agent_id.clone(),
+            artifact_hash,
+        );
+        match self
+            .provenance_config
+            .store()
+            .resolve_context_route_binding(request)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(baml_rt_provenance::ProvenanceError::ContextRouteBindingConflict(conflict)) => {
+                Err(BamlRtError::ContextBindingConflict(Box::new(
+                    baml_rt_core::ContextBindingConflict {
+                        context_id: conflict.context_id,
+                        package_name: conflict.package_name,
+                        pinned_agent_id: conflict.pinned_agent_id,
+                        pinned_artifact_hash: conflict.pinned_artifact_hash,
+                        resolved_agent_id: conflict.resolved_agent_id,
+                        resolved_artifact_hash: conflict.resolved_artifact_hash,
+                    },
+                )))
+            }
+            Err(error) => Err(BamlRtError::Io(std::io::Error::other(format!(
+                "context route binding resolution failed for {} in {context_id}: {error}",
+                key.agent_package.as_str()
+            )))),
+        }
+    }
+
     /// Claim or confirm this boot's lease for the target pair.
     ///
     /// `NotApplicable` means the request shape or local boot metadata does not
@@ -796,6 +852,10 @@ impl AgentRunner {
         if let Some(routed_agent) = routed_agent {
             let (scope, context_id) =
                 scope_and_context_from_request(request.as_ref(), routed_agent.agent_id().clone());
+            if let Some(context_id) = context_id.as_ref() {
+                self.admit_context_route_binding(key, context_id, routed_agent.agent_id())
+                    .await?;
+            }
             match self
                 .claim_local_pair_lease(key, &routed_agent, context_id)
                 .await?

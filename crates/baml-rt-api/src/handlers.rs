@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -232,7 +233,7 @@ pub(crate) async fn resolve_deploy_hash(
 
 fn result_label_for_domain_error(error: &BamlRtError) -> &'static str {
     match error {
-        BamlRtError::Conflict(_) => "conflict",
+        BamlRtError::Conflict(_) | BamlRtError::ContextBindingConflict(_) => "conflict",
         BamlRtError::InvalidArgument(msg) if msg.contains("not found") => "not_found",
         BamlRtError::InvalidArgument(_) => "bad_request",
         BamlRtError::SessionLifecycle(
@@ -1486,6 +1487,7 @@ fn domain_to_problem(e: &BamlRtError, agent_package: &str) -> HttpApiProblem {
         ),
         BamlRtError::AgentDraining(msg) => (503u16, "Service Unavailable", msg.clone()),
         BamlRtError::Conflict(msg) => (409u16, "Conflict", msg.clone()),
+        BamlRtError::ContextBindingConflict(_) => (409u16, "Conflict", e.to_string()),
         BamlRtError::InvalidArgument(msg) => (400u16, "Bad Request", msg.clone()),
         BamlRtError::UnsupportedAgentInstance(msg) => (400u16, "Bad Request", msg.clone()),
         BamlRtError::SessionLifecycle(

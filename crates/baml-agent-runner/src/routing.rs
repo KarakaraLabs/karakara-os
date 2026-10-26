@@ -244,6 +244,11 @@ impl InternalA2aRouter {
         if let Some(routed_agent) = local_agent {
             let (scope, context_id) =
                 scope_and_context_from_request(request.as_ref(), routed_agent.agent_id().clone());
+            if let Some(context_id) = context_id.as_ref() {
+                runner
+                    .admit_context_route_binding(&key, context_id, routed_agent.agent_id())
+                    .await?;
+            }
             match runner
                 .claim_local_pair_lease(&key, &routed_agent, context_id.clone())
                 .await?
@@ -305,11 +310,11 @@ impl InternalA2aRouter {
 
         // Cluster fallback: forward to the remote runner hosting this agent.
         if let Some(resolver) = self.cluster.get() {
+            // Placement resolution does not yet return the target's stable
+            // AgentId, and neither lineage nor the context route binding must be
+            // reconstructed from the request body. Cross-runner lineage and
+            // binding admission land with placement identity (plan S11).
             if delegation.is_some() {
-                // Placement resolution does not yet return the target's stable
-                // AgentId, and lineage must never be reconstructed from the
-                // request body. Cross-runner lineage lands with placement
-                // identity (plan S11).
                 tracing::debug!(
                     agent = %key.agent_package.as_str(),
                     "delegation lineage not recorded for remote target yet"

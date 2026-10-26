@@ -33,6 +33,9 @@ pub(crate) const TBL_CONTEXT_COMPACTION_INDEX: &str = "context_compaction_index"
 /// Operational execution-ownership lease per `(context_id, agent_id)`.
 /// Never a provenance node, history row, or prompt row.
 pub(crate) const TBL_CONTEXT_AGENT_LEASES: &str = "context_agent_leases";
+/// Operational pinned revision per `(context_id, package_name)`.
+/// Never a provenance node, history row, or prompt row.
+pub(crate) const TBL_CONTEXT_ROUTE_BINDINGS: &str = "context_route_bindings";
 
 /// Column list for `PayloadRecord` round-trip SELECTs (must match serde fields).
 pub(crate) const PAYLOAD_ROW_SELECT: &str = "payload_id, activity_anchor_id, activity_id, payload_kind, payload_json, content_hash, storage_kind, file_key, search_text";

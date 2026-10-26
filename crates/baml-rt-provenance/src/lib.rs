@@ -41,6 +41,7 @@ pub mod citation_queries;
 pub mod context_agent_leases;
 pub mod context_compaction;
 pub mod context_metrics_queries;
+pub mod context_route_bindings;
 /// Defaults for LLM conversation-context query limits.
 pub mod conversation_context_query;
 pub mod conversation_history_resume;
@@ -112,6 +113,9 @@ pub use context_compaction::{
     render_items_with_ref_table, render_wire_history_rows, resolve_compaction_trigger_policy,
     resolve_safety_signals, select_compactable_range, summarize_with_validation_retry,
     trigger_policy_from_budget, wire_history_byte_len,
+};
+pub use context_route_bindings::{
+    BindingResolution, ContextRouteBinding, ContextRouteBindingRequest,
 };
 pub use conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP;
 pub use conversation_history_resume::{ConversationResumeUiHints, resolve_resume_ui_hints};
