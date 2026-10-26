@@ -16,8 +16,8 @@ use std::{
 use baml_rt_a2a::{A2aAgent, A2aRequestHandler};
 use baml_rt_api::RuntimeProgressMeter;
 use baml_rt_core::{
-    A2aStreamChunk, A2aWireRequest, AgentDiscoveryEntry, AgentInstanceId, AgentLister,
-    AgentManifest, AgentPackageName, ArtifactHash, BamlRtError, DeploymentContentHash, Result,
+    A2aStreamChunk, A2aWireRequest, AgentDiscoveryEntry, AgentLister, AgentManifest,
+    AgentPackageName, ArtifactHash, BamlRtError, DeploymentContentHash, Result,
     bus::BusStream,
     context::{InvocationScope, generate_context_id},
     ids::AgentId,
@@ -361,34 +361,31 @@ impl AgentPackage {
     async fn build_agent_phase(
         &self,
         registered: ToolsRegistered,
-        agent_id: AgentId,
-        provenance_config: &ProvenanceConfig,
-        stream_idle_secs: Option<u64>,
-        observation_notify: Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
-        compaction_summarizer: Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>,
+        boot_event_id: baml_rt_core::ids::ActivityAnchorId,
+        args: &AgentPackageBootArgs<'_>,
     ) -> Result<JsInitialized> {
         use baml_rt_quickjs::QuickJSConfig;
 
         registered
             .runtime_manager
             .tool_registry()
-            .set_config_resolver(Some(provenance_config.config_service()));
+            .set_config_resolver(Some(args.provenance_config.config_service()));
         registered
             .runtime_manager
             .tool_registry()
             .set_secret_resolver(Some(Arc::new(
                 baml_rt_llm_config::SecretResolverToToolAdapter::new(
-                    provenance_config.llm_secret_resolver(),
+                    args.provenance_config.llm_secret_resolver(),
                 ),
             )));
         let mut runtime_manager = registered.runtime_manager;
         runtime_manager.set_llm_secret_resolver(Arc::new(SecretResolverToLlmAdapter::new(
-            provenance_config.llm_secret_resolver(),
+            args.provenance_config.llm_secret_resolver(),
         )));
 
         let llm_config_arc = {
             use baml_rt_llm_config::{LLM_CONFIG_BUNDLE_NAME, LlmClientConfig, StaticResolver};
-            let config_service = provenance_config.config_service();
+            let config_service = args.provenance_config.config_service();
             let bundle = baml_rt_tools::BundleName::new(LLM_CONFIG_BUNDLE_NAME)
                 .expect("llm bundle name valid");
             let stored_llm_config = match config_service.get(&bundle).await {
@@ -419,7 +416,7 @@ impl AgentPackage {
                     let llm_config_arc = Arc::new(llm_config);
                     let resolver = Arc::new(StaticResolver::with_agent_package(
                         Arc::clone(&llm_config_arc),
-                        provenance_config.llm_secret_resolver(),
+                        args.provenance_config.llm_secret_resolver(),
                         agent_package,
                     ));
                     runtime_manager.set_llm_client_resolver(resolver);
@@ -436,7 +433,7 @@ impl AgentPackage {
                     let fallback_config_arc = Arc::new(fallback_config);
                     let fallback_resolver = Arc::new(StaticResolver::with_agent_package(
                         Arc::clone(&fallback_config_arc),
-                        provenance_config.llm_secret_resolver(),
+                        args.provenance_config.llm_secret_resolver(),
                         agent_package,
                     ));
                     runtime_manager.set_llm_fallback_client_resolver(fallback_resolver);
@@ -447,11 +444,11 @@ impl AgentPackage {
         };
 
         let runtime_manager_arc = Arc::new(tokio::sync::RwLock::new(runtime_manager));
-        let store = provenance_config.store().clone();
+        let store = args.provenance_config.store().clone();
         let host_ingress_recorder =
             Arc::new(crate::services::HostIngressRecorderImpl::new(store.clone()));
         let quickjs_config = QuickJSConfig::new()
-            .with_stream_collector_idle_secs(stream_idle_secs)
+            .with_stream_collector_idle_secs(args.stream_idle_secs)
             .with_host_ingress_recorder(Some(host_ingress_recorder));
         let agent_package = AgentPackageName::parse(&self.manifest.name).ok_or_else(|| {
             BamlRtError::InvalidArgument(format!(
@@ -459,21 +456,22 @@ impl AgentPackage {
                 name = self.manifest.name
             ))
         })?;
-        let agent_instance_id = AgentInstanceId::default_id();
         let mut agent_builder = A2aAgent::builder()
-            .with_agent_id(agent_id)
+            .with_agent_id(args.agent_id.clone())
             .with_runtime_handle(runtime_manager_arc.clone())
             .with_quickjs_config(quickjs_config)
             .with_baml_helpers(true)
-            .with_agent_identity(agent_package, agent_instance_id)
+            .with_agent_identity(agent_package)
+            .with_boot_event_id(boot_event_id)
             .with_surreal_store(store)
             .with_llm_client_config(llm_config_arc);
-        if let Some(tx) = observation_notify.clone() {
+        if let Some(tx) = args.observation_notify.clone() {
             agent_builder = agent_builder.with_observation_notify(tx);
         }
         let agent_builder =
             agent_builder.with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()));
-        let agent_builder = agent_builder.with_compaction_summarizer(compaction_summarizer);
+        let agent_builder =
+            agent_builder.with_compaction_summarizer(Arc::clone(&args.compaction_summarizer));
         info!(
             agent = %self.manifest.name,
             "building QuickJS runtime and A2a bridge (often the longest boot step)"
@@ -529,15 +527,32 @@ impl AgentPackage {
                 extract_dir = %self.extract_dir.display(),
                 "agent package boot starting"
             );
+            let agent_type_parsed =
+                AgentType::new(self.manifest.name.clone()).ok_or_else(|| {
+                    BamlRtError::InvalidArgument("agent_type cannot be empty".to_string())
+                })?;
+            let boot_event = ProvEvent::agent_booted_with_identity(
+                args.agent_id.clone(),
+                agent_type_parsed,
+                args.repository_version.to_string(),
+                args.identity_digest.to_string(),
+                args.artifact_hash.to_string(),
+                args.deployment_content_hash.as_str().to_string(),
+                baml_rt_observability::service_instance_id().to_string(),
+            );
+            let boot_event_id = boot_event.id().clone();
             let loaded = self
-                .load_schema_phase(args.shared_context_ref_store, args.provenance_config)
+                .load_schema_phase(
+                    args.shared_context_ref_store.clone(),
+                    args.provenance_config,
+                )
                 .await?;
             let registered = self
                 .register_tools_phase(
                     loaded,
                     args.policy,
-                    args.agent_list_catalogue,
-                    args.a2a_handler,
+                    Arc::clone(&args.agent_list_catalogue),
+                    Arc::clone(&args.a2a_handler),
                     args.provenance_config.store().clone(),
                     args.claude_workspaces_base,
                     args.external_tools_dirs,
@@ -546,14 +561,7 @@ impl AgentPackage {
                 )
                 .await?;
             let built = self
-                .build_agent_phase(
-                    registered,
-                    args.agent_id.clone(),
-                    args.provenance_config,
-                    args.stream_idle_secs,
-                    args.observation_notify.clone(),
-                    Arc::clone(&args.compaction_summarizer),
-                )
+                .build_agent_phase(registered, boot_event_id.clone(), &args)
                 .await?;
             // Register before `initialize_js_phase`: a CPU-bound JS top-level
             // is the worst-case peg the meter must observe, and it runs inside
@@ -590,20 +598,6 @@ impl AgentPackage {
                 )));
             }
             let writer = args.provenance_config.store().clone() as Arc<dyn ProvenanceWriter>;
-            let agent_type_parsed =
-                AgentType::new(self.manifest.name.clone()).ok_or_else(|| {
-                    BamlRtError::InvalidArgument("agent_type cannot be empty".to_string())
-                })?;
-            let boot_event = ProvEvent::agent_booted_with_identity(
-                agent_id.clone(),
-                agent_type_parsed,
-                args.repository_version.to_string(),
-                args.identity_digest.to_string(),
-                args.artifact_hash.to_string(),
-                args.deployment_content_hash.as_str().to_string(),
-                "local".to_string(),
-            );
-            let boot_event_id = boot_event.id().clone();
             if let Err(e) = writer.add_event(boot_event).await {
                 error!(error = ?e, agent_id = %agent_id, "Failed to write AgentBooted event");
             } else {

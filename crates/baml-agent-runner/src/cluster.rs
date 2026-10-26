@@ -242,9 +242,21 @@ impl ClusterEndpointResolver for PlacementResolver {
             None => UNKNOWN_SERVICE_INSTANCE_ID.to_string(),
         };
 
+        let artifact_hash = row
+            .get("artifact_hash")
+            .and_then(|v| v.as_str())
+            .map(str::parse)
+            .transpose()
+            .map_err(|e| {
+                BamlRtError::Io(std::io::Error::other(format!(
+                    "placement for {pkg} on runner {runner_id} has invalid artifact_hash: {e}"
+                )))
+            })?;
+
         Ok(Some(Placement {
             endpoint: endpoint.to_string(),
             service_instance_id,
+            artifact_hash,
         }))
     }
 }

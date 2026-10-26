@@ -436,7 +436,7 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
     for mut deployment in existing_deployments {
         match builder
             .runner
-            .deploy_by_hash(&deployment.content_hash)
+            .deploy_by_hash_expected(&deployment.content_hash, Some(&deployment.artifact_hash))
             .await
         {
             Ok(result) => {

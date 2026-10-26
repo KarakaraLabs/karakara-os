@@ -120,8 +120,6 @@ pub enum EpisodeContentDto {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_package: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent_instance_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         failure_class: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         failure_evidence: Option<String>,
@@ -403,7 +401,6 @@ fn operational_event_to_dto(op: OperationalEventContent) -> EpisodeContentDto {
         summary: op.summary,
         detail: op.detail,
         agent_package: op.agent_package,
-        agent_instance_id: op.agent_instance_id,
         failure_class: op.failure_class,
         failure_evidence: op.failure_evidence,
         old_status: op.old_status,

@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-api/tests/api_test.rs
+assertion_line: 1527
 expression: snapshot
 ---
 {
@@ -2868,12 +2869,6 @@ expression: snapshot
                 "type"
               ],
               "properties": {
-                "agent_instance_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
                 "agent_package": {
                   "type": [
                     "string",
@@ -3374,12 +3369,6 @@ expression: snapshot
                 "type"
               ],
               "properties": {
-                "agent_instance_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
                 "agent_package": {
                   "type": [
                     "string",

@@ -13,4 +13,4 @@ mod keys;
 
 pub use discovery::{AgentCard, AgentDiscoveryEntry, AgentLister};
 pub use dispatch_target::DispatchTarget;
-pub use keys::{AgentInstanceId, AgentPackageName, AgentRouteKey, route_key_from_request};
+pub use keys::{AgentPackageName, AgentRouteKey, route_key_from_request};

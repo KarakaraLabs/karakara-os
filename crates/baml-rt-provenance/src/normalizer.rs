@@ -1536,6 +1536,7 @@ fn normalize_event_with_registry(
             task_id,
             agent_id,
             context_id,
+            boot_event_id: _,
         } => {
             let task_entity = ensure_task_entity(&mut doc, task_id);
 

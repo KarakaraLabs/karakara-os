@@ -180,7 +180,7 @@ fn canonicalize_gate_tool_row(row: &Value) -> Option<Map<String, Value>> {
 
 fn apply_gate_agent_identity(
     row: &mut Map<String, Value>,
-    identity_by_agent_id: &HashMap<String, (String, String)>,
+    identity_by_agent_id: &HashMap<String, String>,
 ) {
     let Some(agent_id) = row.get("agent_id").and_then(Value::as_str) else {
         if let Some(pkg) = row
@@ -192,7 +192,13 @@ fn apply_gate_agent_identity(
         }
         return;
     };
-    if let Some((agent_package, agent_version)) = identity_by_agent_id.get(agent_id) {
+    if let Some(agent_package) = identity_by_agent_id.get(agent_id) {
+        let agent_version = row
+            .get("agent_version")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
         row.insert(
             "agent_package".to_string(),
             Value::String(agent_package.clone()),

@@ -672,21 +672,70 @@ impl SurrealStore {
         Ok(!rows.is_empty())
     }
 
-    async fn reservation_is_live(&self, reservation: &VersionReservation) -> Result<bool> {
-        let mut resp = self
-            .db
+    /// Mark a live reservation as consumed while keeping its version row in place.
+    ///
+    /// Keeping the row until after the entry insert closes the version gap: a second
+    /// publisher cannot reserve the same version between the ownership check and the
+    /// entry write. An expired publisher also cannot consume, because the update
+    /// carries the expiry predicate.
+    async fn consume_reservation(
+        &self,
+        reservation: &VersionReservation,
+    ) -> Result<Option<String>> {
+        let consumed_holder = format!("consumed:{}", reservation.holder);
+        self.db
             .query(format!(
-                "SELECT version FROM {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
-                 AND version = $version AND holder = $holder \
-                 AND expires_at_ms > time::millis(time::now()) LIMIT 1"
+                "UPDATE {TBL_VERSION_RESERVATIONS} SET holder = $consumed_holder \
+                 WHERE agent_name = $name AND version = $version AND holder = $holder \
+                 AND expires_at_ms > time::millis(time::now())"
             ))
             .bind(("name", reservation.name.as_str().to_string()))
             .bind(("version", reservation.version.as_u32() as i64))
             .bind(("holder", reservation.holder.clone()))
+            .bind(("consumed_holder", consumed_holder.clone()))
+            .await
+            .map_err(map_surreal_write)?
+            .take::<Vec<Value>>(0)
+            .map_err(map_surreal_write)?;
+
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT version FROM {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
+                 AND version = $version AND holder = $consumed_holder LIMIT 1"
+            ))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("consumed_holder", consumed_holder.clone()))
             .await
             .map_err(map_surreal_read)?;
         let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
-        Ok(!rows.is_empty())
+        Ok((!rows.is_empty()).then_some(consumed_holder))
+    }
+
+    async fn release_consumed_reservation(
+        &self,
+        reservation: &VersionReservation,
+        consumed_holder: &str,
+    ) {
+        let result = self
+            .db
+            .query(format!(
+                "DELETE {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
+                 AND version = $version AND holder = $holder"
+            ))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("holder", consumed_holder.to_string()))
+            .await;
+        if let Err(e) = result {
+            tracing::warn!(
+                agent = %reservation.name,
+                version = reservation.version.as_u32(),
+                error = %e,
+                "failed to delete consumed version reservation; it will expire"
+            );
+        }
     }
 
     async fn entry_version_exists(&self, name: &AgentName, version: Version) -> Result<bool> {
@@ -1118,21 +1167,28 @@ impl MetadataStore for SurrealStore {
         entry: &NewEntry,
         reservation: &VersionReservation,
     ) -> Result<RepositoryEntry> {
-        if reservation.name != entry.name || !self.reservation_is_live(reservation).await? {
+        if reservation.name != entry.name {
             return Err(RepositoryError::VersionConflict {
                 name: entry.name.clone(),
                 version: reservation.version,
             });
         }
-        let stored = self.insert_entry_at(entry, reservation.version).await?;
-        if let Err(e) = self.release_version(reservation).await {
-            tracing::warn!(
-                agent = %entry.name,
-                version = reservation.version.as_u32(),
-                error = %e,
-                "failed to release version reservation after insert; it will expire"
-            );
-        }
+        let Some(consumed_holder) = self.consume_reservation(reservation).await? else {
+            return Err(RepositoryError::VersionConflict {
+                name: entry.name.clone(),
+                version: reservation.version,
+            });
+        };
+        let stored = match self.insert_entry_at(entry, reservation.version).await {
+            Ok(stored) => stored,
+            Err(error) => {
+                self.release_consumed_reservation(reservation, &consumed_holder)
+                    .await;
+                return Err(error);
+            }
+        };
+        self.release_consumed_reservation(reservation, &consumed_holder)
+            .await;
         Ok(stored)
     }
 

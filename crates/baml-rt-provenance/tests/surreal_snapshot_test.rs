@@ -122,6 +122,7 @@ async fn bootstrap(store: &dyn SnapshotStore, context_id: &ContextId, task_id: &
                 task_id: task_id.clone(),
                 agent_id: agent_id.clone(),
                 context_id: context_id.clone(),
+                boot_event_id: None,
             },
         }))
         .await

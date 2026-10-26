@@ -459,7 +459,6 @@ watch(
           <ProvenancePane
             :context-id="contextId"
             :task-id="taskId ?? undefined"
-            :selected-agent-id="selectedAgent?.agent_instance_id ?? undefined"
             :run-status="chatRunStatus"
             :diagrams="provenancePaneDiagrams"
             :trace-refresh-tick="traceRefreshGeneration"

@@ -353,14 +353,20 @@ fn resolve_tool_session_phase_for_ops_row(
 /// Apply agent identity fields (agent_package, agent_version, agent_display) from identity map.
 fn apply_agent_identity_fields(
     row: &mut Map<String, Value>,
-    identity_by_agent_id: &HashMap<String, (String, String)>,
+    identity_by_agent_id: &HashMap<String, String>,
 ) {
     let Some(agent_id) = row.get("agent_id").and_then(Value::as_str) else {
         return;
     };
-    let Some((agent_package, agent_version)) = identity_by_agent_id.get(agent_id) else {
+    let Some(agent_package) = identity_by_agent_id.get(agent_id) else {
         return;
     };
+    let agent_version = row
+        .get("agent_version")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
     row.insert(
         "agent_package".to_string(),
         Value::String(agent_package.clone()),

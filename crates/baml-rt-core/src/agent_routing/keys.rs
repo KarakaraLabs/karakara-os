@@ -4,9 +4,7 @@
 
 //! Typed route identity: package name and route key parsing from A2A requests.
 //!
-//! The instance dimension was removed from routing. [`AgentInstanceId`] remains only as a
-//! telemetry label carried by the serving runner; it is not an address and must not be used
-//! to select an agent.
+//! The instance dimension was removed from routing. An agent route is the package name alone.
 
 use std::fmt;
 
@@ -53,58 +51,6 @@ impl PartialEq<str> for AgentPackageName {
 }
 
 impl PartialEq<&str> for AgentPackageName {
-    fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
-    }
-}
-
-/// Telemetry label for the historical agent instance dimension.
-///
-/// Kept only because A2A serving spans and metrics still emit it. Routing no longer accepts or
-/// exposes an instance id: an [`AgentRouteKey`] is the package name alone.
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AgentInstanceId(String);
-
-impl AgentInstanceId {
-    pub const DEFAULT: &'static str = "default";
-
-    pub fn parse(value: impl AsRef<str>) -> Option<Self> {
-        let raw = value.as_ref();
-        if raw.trim().is_empty() || raw != raw.trim() || !is_valid_identifier(raw) {
-            return None;
-        }
-        Some(Self(raw.to_string()))
-    }
-
-    pub fn default_id() -> Self {
-        Self(Self::DEFAULT.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Default for AgentInstanceId {
-    fn default() -> Self {
-        Self::default_id()
-    }
-}
-
-impl fmt::Display for AgentInstanceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl PartialEq<str> for AgentInstanceId {
-    fn eq(&self, other: &str) -> bool {
-        self.0 == other
-    }
-}
-
-impl PartialEq<&str> for AgentInstanceId {
     fn eq(&self, other: &&str) -> bool {
         self.0 == *other
     }
@@ -173,7 +119,7 @@ pub fn route_key_from_request(request: impl AsRef<Value>) -> Result<AgentRouteKe
 mod tests {
     use serde_json::json;
 
-    use super::{AgentInstanceId, AgentPackageName, route_key_from_request};
+    use super::{AgentPackageName, route_key_from_request};
     use crate::{A2aWireRequest, AgentCard, AgentDiscoveryEntry, BamlRtError};
 
     #[test]
@@ -184,14 +130,6 @@ mod tests {
         assert!(AgentPackageName::parse("bad name").is_none());
         assert!(AgentPackageName::parse(" coordinator-agent ").is_none());
         assert!(AgentPackageName::parse("   ").is_none());
-    }
-
-    #[test]
-    fn instance_id_parse_rejects_empty_and_invalid() {
-        assert!(AgentInstanceId::parse("default").is_some());
-        assert!(AgentInstanceId::parse("").is_none());
-        assert!(AgentInstanceId::parse(" staging ").is_none());
-        assert!(AgentInstanceId::parse("..\0").is_none());
     }
 
     /// The removed instance dimension must be rejected wherever a caller could still supply it,

@@ -21,8 +21,8 @@ use axum::{
 };
 use baml_rt_a2a::RegistryDispatchPort;
 use baml_rt_core::{
-    A2aWireRequest, AgentDispatchRequest, AgentInstanceId, AgentPackageName, AgentRouteKey,
-    BamlRtError, DeploymentContentHash, DeploymentStatus, ProducedEvent,
+    A2aWireRequest, AgentDispatchRequest, AgentPackageName, AgentRouteKey, BamlRtError,
+    DeploymentContentHash, DeploymentStatus, ProducedEvent,
     ids::{AgentId, ContextId, TaskId},
     join_error_message,
 };
@@ -646,7 +646,7 @@ pub async fn post_a2a(
         problem(400, "Bad Request", "agent_package must match [A-Za-z0-9_-]")
     })?;
     let key = AgentRouteKey::new(package_name);
-    let telemetry_instance = AgentInstanceId::default_id();
+    let telemetry_instance = "default";
 
     let local_service_instance_id = baml_rt_observability::service_instance_id();
     // `forwarded` is advisory — see `otel_middleware` module doc for the
@@ -661,7 +661,7 @@ pub async fn post_a2a(
 
     let span = spans::post_a2a(
         &key.agent_package,
-        &telemetry_instance,
+        telemetry_instance,
         forwarded,
         ingress_service_instance_id,
         serving_service_instance_id,
@@ -672,7 +672,7 @@ pub async fn post_a2a(
         metrics::record_agent_http_request(
             "post_a2a",
             &key.agent_package,
-            &telemetry_instance,
+            telemetry_instance,
             forwarded,
             ingress_service_instance_id,
             result,
@@ -715,7 +715,7 @@ pub async fn post_a2a(
                 metrics::record_agent_http_request(
                     "post_a2a",
                     &key_metrics.agent_package,
-                    &telemetry_instance,
+                    telemetry_instance,
                     forwarded,
                     ingress_metrics_id.as_str(),
                     "success",
@@ -1527,7 +1527,7 @@ pub async fn post_dispatch(
         }
     };
     let key = AgentRouteKey::new(package_name);
-    let telemetry_instance = AgentInstanceId::default_id();
+    let telemetry_instance = "default";
 
     let local_service_instance_id = baml_rt_observability::service_instance_id();
     // `forwarded` is advisory — see `otel_middleware` module doc.
@@ -1540,7 +1540,7 @@ pub async fn post_dispatch(
 
     let span = spans::post_dispatch(
         &key.agent_package,
-        &telemetry_instance,
+        telemetry_instance,
         forwarded,
         ingress_service_instance_id,
         serving_service_instance_id,
@@ -1551,7 +1551,7 @@ pub async fn post_dispatch(
         metrics::record_agent_http_request(
             "post_dispatch",
             &key.agent_package,
-            &telemetry_instance,
+            telemetry_instance,
             forwarded,
             ingress_service_instance_id,
             result,

@@ -395,10 +395,12 @@ impl RepositoryService {
             event = "published"
         );
 
+        let deployable = stored.artifact_hash.is_some() && stored.identity_digest.is_some();
         Ok(PublishResult {
             hash: stored.hash,
             artifact_hash: stored.artifact_hash,
             identity_digest: stored.identity_digest,
+            deployable,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })
@@ -460,10 +462,12 @@ impl RepositoryService {
             event = "forked"
         );
 
+        let deployable = stored.artifact_hash.is_some() && stored.identity_digest.is_some();
         Ok(PublishResult {
             hash: stored.hash,
             artifact_hash: stored.artifact_hash,
             identity_digest: stored.identity_digest,
+            deployable,
             version_ref: stored.version_ref,
             generation: stored.generation,
         })

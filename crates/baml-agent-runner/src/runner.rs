@@ -300,7 +300,7 @@ impl AgentRunner {
                     let repository_version = entry.version_ref.version.as_u32();
                     let artifact_hash = entry.artifact_hash.ok_or_else(|| {
                         BamlRtError::InvalidArgument(format!(
-                            "repository entry {} has no artifact hash",
+                            "repository entry {} is source-only (no artifact hash) and cannot be deployed; republish through the build path",
                             content_hash.as_str()
                         ))
                     })?;
@@ -934,18 +934,31 @@ impl AgentRunner {
 }
 
 // `?Send` matches core trait contract; deploy boot path is currently local-executor bound.
-#[async_trait(?Send)]
-impl DeploymentManager for AgentRunner {
-    async fn deploy_by_hash(
+impl AgentRunner {
+    /// Deploy a repository entry and pin the exact artifact hash the caller expects.
+    ///
+    /// `expected_artifact_hash` is used by startup restore so a repository state change cannot
+    /// silently boot different bytes than the deployment record names.
+    pub(crate) async fn deploy_by_hash_expected(
         &self,
         content_hash: &DeploymentContentHash,
+        expected_artifact_hash: Option<&ArtifactHash>,
     ) -> Result<baml_rt_core::DeployResult> {
         {
             let agents = self.agents.read().expect("RwLock poison");
-            if agents
+            if let Some(agent) = agents
                 .values()
-                .any(|agent| agent.content_hash() == Some(content_hash))
+                .find(|agent| agent.content_hash() == Some(content_hash))
             {
+                if let Some(expected) = expected_artifact_hash
+                    && agent.artifact_hash() != Some(expected)
+                {
+                    return Err(BamlRtError::InvalidArgument(format!(
+                        "Artifact integrity failure: content hash {} is already deployed with artifact {:?}, expected {expected}",
+                        content_hash.as_str(),
+                        agent.artifact_hash().map(ArtifactHash::as_str)
+                    )));
+                }
                 return Ok(baml_rt_core::DeployResult {
                     already_deployed: true,
                 });
@@ -972,6 +985,14 @@ impl DeploymentManager for AgentRunner {
             artifact_hash,
             expected_agent_id,
         } = deployment;
+        if let Some(expected) = expected_artifact_hash
+            && &artifact_hash != expected
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: repository content hash {} resolves to artifact {artifact_hash}, expected {expected}",
+                content_hash.as_str()
+            )));
+        }
 
         let bytes = self.fetch_blob_from_repository(&artifact_hash).await?;
         AgentRunner::verify_artifact_integrity(
@@ -1037,10 +1058,19 @@ impl DeploymentManager for AgentRunner {
 
         {
             let mut agents = self.agents.write().expect("RwLock poison");
-            if agents
+            if let Some(agent) = agents
                 .values()
-                .any(|agent| agent.content_hash() == Some(content_hash))
+                .find(|agent| agent.content_hash() == Some(content_hash))
             {
+                if let Some(expected) = expected_artifact_hash
+                    && agent.artifact_hash() != Some(expected)
+                {
+                    return Err(BamlRtError::InvalidArgument(format!(
+                        "Artifact integrity failure: content hash {} is already deployed with artifact {:?}, expected {expected}",
+                        content_hash.as_str(),
+                        agent.artifact_hash().map(ArtifactHash::as_str)
+                    )));
+                }
                 return Ok(baml_rt_core::DeployResult {
                     already_deployed: true,
                 });
@@ -1111,6 +1141,16 @@ impl DeploymentManager for AgentRunner {
         Ok(baml_rt_core::DeployResult {
             already_deployed: false,
         })
+    }
+}
+
+#[async_trait(?Send)]
+impl DeploymentManager for AgentRunner {
+    async fn deploy_by_hash(
+        &self,
+        content_hash: &DeploymentContentHash,
+    ) -> Result<baml_rt_core::DeployResult> {
+        self.deploy_by_hash_expected(content_hash, None).await
     }
 
     async fn undeploy_by_hash(

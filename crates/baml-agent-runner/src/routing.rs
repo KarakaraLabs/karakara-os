@@ -9,8 +9,8 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use baml_rt_a2a::{A2aRequestHandler, AgentRegistry, a2a};
 use baml_rt_core::{
-    A2aStreamChunk, A2aWireRequest, AgentDiscoveryEntry, AgentInstanceId, AgentLister,
-    AgentPackageName, AgentRouteKey, BamlRtError, Result,
+    A2aStreamChunk, A2aWireRequest, AgentDiscoveryEntry, AgentLister, AgentPackageName,
+    AgentRouteKey, BamlRtError, Result,
     bus::BusStream,
     context::{self, InvocationScope},
     ids::AgentId,
@@ -105,6 +105,9 @@ impl A2aRequestHandler for RunnerRegistry {
 pub(crate) struct Placement {
     pub(crate) endpoint: String,
     pub(crate) service_instance_id: String,
+    /// Exact package blob the placement advertised. Restore and routing use it to
+    /// keep artifact selection pinned instead of re-deriving from the package name.
+    pub(crate) artifact_hash: Option<baml_rt_core::ArtifactHash>,
 }
 
 /// Resolves an agent route key to the placement of the runner hosting it.
@@ -214,6 +217,7 @@ impl InternalA2aRouter {
                         agent = %key.agent_package.as_str(),
                         endpoint = %placement.endpoint,
                         target_service_instance_id = %placement.service_instance_id,
+                        artifact_hash = ?placement.artifact_hash.as_ref().map(baml_rt_core::ArtifactHash::as_str),
                         "routing A2A request to remote runner"
                     );
                     return self.forward_to_runner(&placement, &key, request).await;
@@ -251,12 +255,12 @@ impl InternalA2aRouter {
             baml_rt_router::forward::resolve_forward_target(&placement.endpoint, pkg).await?;
         let body = request.into_inner();
         let ingress_service_instance_id = baml_rt_observability::service_instance_id();
-        let telemetry_instance = AgentInstanceId::default_id();
+        let telemetry_instance = "default";
         baml_rt_router::forward::forward_stream_request(
             &target,
             &body,
             &key.agent_package,
-            &telemetry_instance,
+            telemetry_instance,
             ingress_service_instance_id,
             Some(placement.service_instance_id.as_str()),
         )
@@ -383,6 +387,7 @@ mod tests {
         let placement = Placement {
             endpoint: format!("http://{cluster_ip}:{port}"),
             service_instance_id: "runner-serving".to_string(),
+            artifact_hash: None,
         };
         let key = AgentRouteKey::new(AgentPackageName::parse("remote-agent").unwrap());
         let request = A2aWireRequest::from(serde_json::json!({

@@ -253,7 +253,7 @@ fn sort_json(value: Value) -> Value {
     }
 }
 
-fn validate_package_path(path: &str) -> Result<(), PackageIdentityError> {
+pub fn validate_package_path(path: &str) -> Result<(), PackageIdentityError> {
     if path.is_empty()
         || path.starts_with('/')
         || path.contains("\\")

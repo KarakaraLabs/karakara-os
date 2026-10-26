@@ -236,11 +236,7 @@ function createEventConsoleState() {
   );
 
   const selectedAgent = computed(() =>
-    agents.value.find(
-      (a) =>
-        a.agent_package === draft.value.agent_package &&
-        a.agent_instance_id === draft.value.agent_instance_id,
-    ),
+    agents.value.find((a) => a.agent_package === draft.value.agent_package),
   );
 
   const agentAcceptsHostDispatch = computed(
@@ -404,7 +400,7 @@ function createEventConsoleState() {
     draft.value.agent_package = agent.agent_package;
     // Discovery no longer exposes an instance dimension. The legacy dispatch payload
     // keeps the historical label so existing event shapes remain unchanged.
-    draft.value.agent_instance_id = agent.agent_instance_id ?? "default";
+    draft.value.agent_instance_id = "default";
     draft.value.messages = [];
     const subs = agent.agent_card.subscriptions ?? [];
     const first = firstDeliverableShape(messageShapes.value, subs, 0);
@@ -413,7 +409,7 @@ function createEventConsoleState() {
     } else {
       selection.value = {
         agentPackage: agent.agent_package,
-        agentInstanceId: agent.agent_instance_id ?? "default",
+        agentInstanceId: "default",
         subscriptionIndex: 0,
         messageShapeId: "",
       };

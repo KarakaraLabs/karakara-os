@@ -15,7 +15,6 @@ export interface AgentCardInfo {
   name: string;
   version: string;
   agent_package: string;
-  agent_instance_id?: string;
   tools: string[];
   baml_functions?: string[];
   description?: string | null;
@@ -26,7 +25,6 @@ export interface AgentCardInfo {
 /** Agent discovery entry from GET /agents */
 export interface AgentDiscoveryEntry {
   agent_package: string;
-  agent_instance_id?: string;
   name: string;
   version: string;
   agent_card: AgentCardInfo;

@@ -424,6 +424,11 @@ pub enum ProvEventData {
         task_id: TaskId,
         agent_id: AgentId,
         context_id: ContextId,
+        /// Event-owned boot that executes this task. Carried explicitly so a
+        /// rolling deployment with several live boots of one stable `AgentId`
+        /// cannot attribute the execution to another runner's process lifetime.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boot_event_id: Option<ActivityAnchorId>,
     },
     /// Agent finishes (or abandons). May not occur.
     TaskExecutionEnded {
@@ -1384,6 +1389,16 @@ impl ProvEvent {
         task_id: TaskId,
         agent_id: AgentId,
     ) -> Self {
+        Self::task_execution_started_under_boot(context_id, task_id, agent_id, None)
+    }
+
+    /// Agent begins executing under a specific event-owned boot.
+    pub fn task_execution_started_under_boot(
+        context_id: ContextId,
+        task_id: TaskId,
+        agent_id: AgentId,
+        boot_event_id: Option<ActivityAnchorId>,
+    ) -> Self {
         ProvEvent::Task(TaskScopedEvent {
             id: next_activity_anchor_id(),
             context_id: context_id.clone(),
@@ -1393,6 +1408,7 @@ impl ProvEvent {
                 task_id,
                 agent_id,
                 context_id,
+                boot_event_id,
             },
         })
     }
@@ -1792,7 +1808,7 @@ impl ProvEvent {
             HostIngressKind::DispatchAccepted,
             &routing_key,
             target.package(),
-            baml_rt_core::AgentInstanceId::DEFAULT,
+            "default",
             HostIngressSourceRef::from_fields(&source_kind, &source_key),
         );
         ProvEvent::Global(GlobalEvent {
@@ -1803,7 +1819,7 @@ impl ProvEvent {
                 routing_key,
                 schema_version,
                 target_package: target.package().to_string(),
-                target_instance: baml_rt_core::AgentInstanceId::DEFAULT.to_string(),
+                target_instance: "default".to_string(),
                 source_kind,
                 source_key,
                 producer_key,
@@ -1828,7 +1844,7 @@ impl ProvEvent {
             HostIngressKind::from_dispatch_failure(failure_kind),
             routing_key,
             target.package(),
-            baml_rt_core::AgentInstanceId::DEFAULT,
+            "default",
             source,
         );
         let (source_kind, source_key) = match &outcome.source {

@@ -13,8 +13,7 @@
 use std::path::Path;
 
 use baml_rt_core::{
-    AgentInstanceId, AgentPackageName, InvocationKind, context::RuntimeScope,
-    correlation::current_correlation_id,
+    AgentPackageName, InvocationKind, context::RuntimeScope, correlation::current_correlation_id,
 };
 use tracing::Span;
 
@@ -291,7 +290,7 @@ pub fn a2a_cancel(
 #[inline]
 pub fn cluster_a2a_forward(
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     destination_endpoint: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,

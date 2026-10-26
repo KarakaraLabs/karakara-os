@@ -41,7 +41,6 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             self.upsert_agent_package_registry_on_boot(
                 agent_id,
                 agent_type.as_str(),
-                agent_version,
                 identity_digest,
             )
             .await?;
@@ -64,8 +63,8 @@ impl ProvenanceWriter for SurrealProvenanceStore {
                     task_agent_id = event_local_executing_agent_id(&event);
                 }
                 let task_boot_event_id = match event.data() {
-                    ProvEventData::TaskExecutionStarted { agent_id, .. } => {
-                        self.active_boot_event_id(agent_id).await?
+                    ProvEventData::TaskExecutionStarted { boot_event_id, .. } => {
+                        boot_event_id.clone()
                     }
                     _ => None,
                 };

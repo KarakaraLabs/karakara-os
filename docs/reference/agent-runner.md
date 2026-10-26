@@ -86,6 +86,11 @@ version, compiled `dist/**`, and package framing.
 
 Boot verifies both values. A mismatch between the supplied `AgentId` or
 `ArtifactHash` and the extracted package fails before the agent starts serving.
+The `AgentBooted` event records the real process identity, not a placeholder.
+Task execution carries that boot event ID explicitly, so provenance links a task
+to the process lifetime and artifact that actually executed it. Startup restore
+also verifies the persisted deployment artifact hash against the repository entry
+before booting.
 `AutoGenerate` identity is limited to ephemeral tests and development agents;
 production boot paths pass the identity explicitly.
 

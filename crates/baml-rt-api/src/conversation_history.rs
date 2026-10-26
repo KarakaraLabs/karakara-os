@@ -401,8 +401,6 @@ pub enum ConversationHistoryContentDto {
         #[serde(skip_serializing_if = "Option::is_none")]
         agent_package: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        agent_instance_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         failure_class: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         failure_evidence: Option<String>,
@@ -570,7 +568,6 @@ impl From<OperationalEventContent> for ConversationHistoryContentDto {
             summary: value.summary,
             detail: value.detail,
             agent_package: value.agent_package,
-            agent_instance_id: value.agent_instance_id,
             failure_class: value.failure_class,
             failure_evidence: value.failure_evidence,
             old_status: value.old_status,

@@ -82,6 +82,15 @@ pub struct PublishResult {
     pub artifact_hash: Option<ArtifactHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_digest: Option<AgentIdentityDigest>,
+    /// False for source-only publish/fork paths that did not build a package blob.
+    /// The entry is still a valid repository record, but the runner cannot deploy it.
+    pub deployable: bool,
     pub version_ref: crate::ids::VersionRef,
     pub generation: crate::ids::Generation,
+}
+
+impl PublishResult {
+    pub fn is_deployable(&self) -> bool {
+        self.deployable
+    }
 }

@@ -7,7 +7,7 @@
 use std::{net::SocketAddr, time::Instant};
 
 use baml_rt_core::{
-    A2aSseDecoder, A2aStreamChunk, AgentInstanceId, AgentPackageName, BamlRtError,
+    A2aSseDecoder, A2aStreamChunk, AgentPackageName, BamlRtError,
     bus::{BusStream, bus_stream_channel},
     parse_a2a_sse_json_rpc_chunks,
 };
@@ -121,7 +121,7 @@ pub async fn forward_request(
     target: &ForwardTarget,
     body: &serde_json::Value,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
 ) -> Result<Vec<serde_json::Value>, BamlRtError> {
@@ -164,7 +164,7 @@ pub async fn forward_stream_request(
     target: &ForwardTarget,
     body: &serde_json::Value,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
 ) -> Result<BusStream<A2aStreamChunk>, BamlRtError> {
@@ -180,7 +180,7 @@ pub async fn forward_stream_request(
     let target = target.clone();
     let body = body.clone();
     let agent_package = agent_package.clone();
-    let agent_instance_id = agent_instance_id.clone();
+    let agent_instance_id = agent_instance_id.to_string();
     let ingress_service_instance_id = ingress_service_instance_id.to_string();
     let target_service_instance_id = target_service_instance_id.map(str::to_string);
 
@@ -263,7 +263,7 @@ pub async fn forward_stream_request(
         tokio::spawn(
             {
                 let agent_package = agent_package.clone();
-                let agent_instance_id = agent_instance_id.clone();
+                let agent_instance_id = agent_instance_id.to_string();
                 async move {
                     let task_start = Instant::now();
                     let mut decoder = A2aSseDecoder::new();
@@ -506,8 +506,8 @@ mod tests {
         AgentPackageName::parse("pkg").expect("valid package name")
     }
 
-    fn test_inst() -> AgentInstanceId {
-        AgentInstanceId::parse("inst").expect("valid instance id")
+    fn test_inst() -> String {
+        "inst".to_string()
     }
 
     fn install_propagator_once() {

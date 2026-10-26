@@ -26,7 +26,8 @@ Identifiers are constructed to match the semantics of the thing they model:
   boots of one stable agent stay distinct.
 - **Artifact IDs**: `agent_artifact:<artifact_hash>` is the exact stored
   `.tar.gz` blob. It is independent of the agent identity: two artifacts can
-  share one `AgentId` and ship different executable bytes.
+  share one `AgentId` and ship different executable bytes. Repository version
+  lives on the artifact and boot activity, not on the stable agent registry.
 - **Runner ID**: `agent:runner` is a constant control-plane identity.
 
 ### Planning aliases (intent / plan / step)
@@ -130,7 +131,7 @@ semantics intact.
 | `TaskExists` | `A2ATask` entity | Idempotent upsert | — |
 | `AgentBooted` | `Agent` entity, `AgentArtifact` entity, `AgentBoot` activity | `AgentBoot` -> `AgentArtifact` (`USED`, role `a2a:archive`), `AgentBoot` -> `Agent` (`WAS_ASSOCIATED_WITH`) | `AgentArtifact` -> `Agent` (`REALIZES`) |
 | `AgentStopped` | `AgentStop` activity | `AgentStop` -> `Agent` (`WAS_ASSOCIATED_WITH`) | `AgentStop` -> `AgentBoot` (`WAS_INFORMED_BY`) |
-| `TaskExecutionStarted` | `A2ATaskExecution` activity | `A2ATask` -> `A2ATaskExecution` (`WAS_CREATED_BY`), `A2ATaskExecution` -> `Agent` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | `A2ATaskExecution` -> `AgentBoot` (`EXECUTED_UNDER_BOOT`) when the event carries its boot |
+| `TaskExecutionStarted` | `A2ATaskExecution` activity | `A2ATask` -> `A2ATaskExecution` (`WAS_CREATED_BY`), `A2ATaskExecution` -> `Agent` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | `A2ATaskExecution` -> `AgentBoot` (`EXECUTED_UNDER_BOOT`) from the explicit boot event ID on the event |
 | `TaskExecutionEnded` | `A2ATaskExecution` end_time | Updates existing activity | — |
 | `TaskStatusChanged` | `A2ATaskExecution` activity, `A2ATaskState` entities | `A2ATaskExecution` -> `A2ATaskState` (`WAS_UPDATED_BY`), `A2ATaskState(new)` -> `A2ATaskState(old)` (`WAS_DERIVED_FROM` / STATUS_TRANSITION). One node per (task_id, status); idempotent MERGE. | — |
 | `TaskArtifactGenerated` | `A2ATaskExecution` activity, `Artifact` entity, `A2ATask` entity | `Artifact` -> `A2ATaskExecution` (`WAS_GENERATED_BY`) | `A2ATask` -> `Artifact` (`WAS_GENERATED_BY`) |

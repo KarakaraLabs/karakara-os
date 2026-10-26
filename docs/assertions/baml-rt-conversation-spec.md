@@ -35,7 +35,11 @@ What that means in practice:
 Provenance records a stable `Agent` node (`agent_id`, identity digest, package
 name) and a separate `AgentArtifact` node per stored blob (`artifact_hash`,
 deployment content hash, repository version). Every boot and stop is its own
-event-owned activity, and history reads use `agent_id` only. The digest and
+event-owned activity, and history reads use `agent_id` only. The stable agent
+registry does not carry repository version; version belongs to the artifact and
+the boot that executed the task. `TaskExecutionStarted` carries the boot event
+ID explicitly, so a rolling deployment with several live boots of one `AgentId`
+cannot attribute work to another runner's process lifetime. The digest and
 behavior-set filter live in [`agent_identity.rs`](../../crates/baml-rt-hash/src/agent_identity.rs)
 and [`identity.rs`](../../crates/baml-rt-repository/src/identity.rs);
 `AgentId` derivation lives in [`ids.rs`](../../crates/baml-rt-core/src/ids.rs).

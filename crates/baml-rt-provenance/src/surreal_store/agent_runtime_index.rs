@@ -46,7 +46,7 @@ pub(super) fn task_agent_package_check(
     match resolution {
         Some(TaskAgentResolution::Resolved(agent_id)) => {
             match index.identity_by_agent_id.get(agent_id.as_str()) {
-                Some((task_pkg, _)) if task_pkg == pkg => TaskAgentPackageCheck::OmitAgentFilter,
+                Some(task_pkg) if task_pkg == pkg => TaskAgentPackageCheck::OmitAgentFilter,
                 Some(_) => TaskAgentPackageCheck::MismatchEmpty,
                 None => TaskAgentPackageCheck::OmitAgentFilter,
             }
@@ -60,7 +60,7 @@ pub(super) fn task_agent_package_check(
 /// Agent runtime rows indexed once per request (package filter uses instance node ids).
 #[derive(Debug, Clone, Default)]
 pub(super) struct AgentRuntimeIndex {
-    pub identity_by_agent_id: HashMap<String, (String, String)>,
+    pub identity_by_agent_id: HashMap<String, String>,
     pub instance_node_ids_by_package: HashMap<String, Vec<String>>,
 }
 
@@ -97,7 +97,7 @@ impl SurrealProvenanceStore {
 
     pub(super) async fn load_agent_runtime_index_from_registry(&self) -> Result<AgentRuntimeIndex> {
         let sql = format!(
-            "SELECT instance_node_id, agent_package, agent_id, agent_version \
+            "SELECT instance_node_id, agent_package, agent_id \
              FROM {TBL_AGENT_IDENTITY_REGISTRY}"
         );
         let response = self.db.query(&sql).await.map_err(map_surreal_error)?;
@@ -143,10 +143,6 @@ impl SurrealProvenanceStore {
                 props.get("a2a_agent_type").and_then(Value::as_str),
                 "unknown",
             );
-            let agent_version = normalize_agent_field(
-                props.get("a2a_agent_version").and_then(Value::as_str),
-                "unknown",
-            );
             let identity_digest = normalize_agent_field(
                 props.get("identity_digest").and_then(Value::as_str),
                 "unknown",
@@ -155,7 +151,6 @@ impl SurrealProvenanceStore {
                 instance_node_id,
                 &agent_package,
                 agent_id,
-                &agent_version,
                 &identity_digest,
             )
             .await?;
@@ -167,7 +162,6 @@ impl SurrealProvenanceStore {
         &self,
         agent_id: &AgentId,
         agent_package: &str,
-        agent_version: &str,
         identity_digest: &str,
     ) -> Result<()> {
         let instance_node_id =
@@ -176,7 +170,6 @@ impl SurrealProvenanceStore {
             &instance_node_id,
             agent_package,
             agent_id.as_str(),
-            agent_version,
             identity_digest,
         )
         .await?;
@@ -189,11 +182,10 @@ impl SurrealProvenanceStore {
         instance_node_id: &str,
         agent_package: &str,
         agent_id: &str,
-        agent_version: &str,
         identity_digest: &str,
     ) -> Result<()> {
         let select = format!(
-            "SELECT instance_node_id, agent_package, agent_id, agent_version, identity_digest \
+            "SELECT instance_node_id, agent_package, agent_id, identity_digest \
              FROM {TBL_AGENT_IDENTITY_REGISTRY} WHERE agent_id = $agent_id LIMIT 1"
         );
         let response = self
@@ -222,7 +214,6 @@ impl SurrealProvenanceStore {
                instance_node_id: $instance_node_id,
                agent_package: $agent_package,
                agent_id: $agent_id,
-               agent_version: $agent_version,
                identity_digest: $identity_digest
              }}"
         );
@@ -231,7 +222,6 @@ impl SurrealProvenanceStore {
             .bind(("instance_node_id", instance_node_id.to_string()))
             .bind(("agent_package", agent_package.to_string()))
             .bind(("agent_id", agent_id.to_string()))
-            .bind(("agent_version", agent_version.to_string()))
             .bind(("identity_digest", identity_digest.to_string()))
             .await
             .map_err(map_surreal_error)?
@@ -298,31 +288,6 @@ impl SurrealProvenanceStore {
         Ok(())
     }
 
-    pub(super) async fn active_boot_event_id(
-        &self,
-        agent_id: &AgentId,
-    ) -> Result<Option<baml_rt_core::ids::ActivityAnchorId>> {
-        use crate::surreal_tables::TBL_NODE;
-        let sql = format!(
-            "SELECT props.a2a_activity_anchor AS boot_event_id, props.prov_time FROM {TBL_NODE} \
-             WHERE label = 'AgentBoot' AND props.a2a_agent_id = $agent_id \
-             ORDER BY props.prov_time DESC LIMIT 1"
-        );
-        let response = self
-            .db
-            .query(&sql)
-            .bind(("agent_id", agent_id.as_str().to_string()))
-            .await
-            .map_err(map_surreal_error)?;
-        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
-        Ok(rows
-            .first()
-            .and_then(|row| row.get("boot_event_id"))
-            .and_then(Value::as_str)
-            .filter(|id| !id.is_empty())
-            .map(baml_rt_core::ids::ActivityAnchorId::from))
-    }
-
     pub(super) async fn execute_typed_node_query(
         &self,
         sql: &str,
@@ -347,7 +312,7 @@ fn normalize_agent_field(raw: Option<&str>, fallback: &str) -> String {
 }
 
 fn index_from_graph_rows(rows: &[Value]) -> AgentRuntimeIndex {
-    let mut identity_by_agent_id: HashMap<String, (String, String)> = HashMap::new();
+    let mut identity_by_agent_id: HashMap<String, String> = HashMap::new();
     let mut instance_node_ids_by_package: HashMap<String, Vec<String>> = HashMap::new();
     for row in rows {
         let Some(props) = row.get("props").and_then(Value::as_object) else {
@@ -372,11 +337,7 @@ fn index_from_graph_rows(rows: &[Value]) -> AgentRuntimeIndex {
             props.get("a2a_agent_type").and_then(Value::as_str),
             "unknown",
         );
-        let agent_version = normalize_agent_field(
-            props.get("a2a_agent_version").and_then(Value::as_str),
-            "unknown",
-        );
-        identity_by_agent_id.insert(agent_id, (agent_package.clone(), agent_version));
+        identity_by_agent_id.insert(agent_id, agent_package.clone());
         instance_node_ids_by_package
             .entry(agent_package)
             .or_default()
@@ -389,7 +350,7 @@ fn index_from_graph_rows(rows: &[Value]) -> AgentRuntimeIndex {
 }
 
 fn index_from_registry_rows(rows: &[Value]) -> AgentRuntimeIndex {
-    let mut identity_by_agent_id: HashMap<String, (String, String)> = HashMap::new();
+    let mut identity_by_agent_id: HashMap<String, String> = HashMap::new();
     let mut instance_node_ids_by_package: HashMap<String, Vec<String>> = HashMap::new();
     for row in rows {
         let Some(instance_node_id) = row
@@ -402,10 +363,8 @@ fn index_from_registry_rows(rows: &[Value]) -> AgentRuntimeIndex {
         let agent_package =
             normalize_agent_field(row.get("agent_package").and_then(Value::as_str), "unknown");
         let agent_id = normalize_agent_field(row.get("agent_id").and_then(Value::as_str), "");
-        let agent_version =
-            normalize_agent_field(row.get("agent_version").and_then(Value::as_str), "unknown");
         if !agent_id.is_empty() {
-            identity_by_agent_id.insert(agent_id.clone(), (agent_package.clone(), agent_version));
+            identity_by_agent_id.insert(agent_id.clone(), agent_package.clone());
         }
         instance_node_ids_by_package
             .entry(agent_package)
@@ -445,7 +404,7 @@ mod task_agent_package_tests {
     fn index_with_package(package: &str) -> AgentRuntimeIndex {
         let agent_id = agent_id().as_str().to_string();
         let mut identity_by_agent_id = HashMap::new();
-        identity_by_agent_id.insert(agent_id, (package.to_string(), "1".to_string()));
+        identity_by_agent_id.insert(agent_id, package.to_string());
         let mut instance_node_ids_by_package = HashMap::new();
         instance_node_ids_by_package.insert(
             package.to_string(),

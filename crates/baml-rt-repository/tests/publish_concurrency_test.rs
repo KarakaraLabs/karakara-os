@@ -151,3 +151,42 @@ async fn concurrent_publishes_agree_on_version_identity_and_blob() {
         );
     }
 }
+
+#[tokio::test]
+async fn expired_reservation_cannot_be_consumed() {
+    use baml_rt_repository::{
+        entry::{ChangeRationale, NewEntry},
+        ids::{AgentName, Generation},
+        lineage::Parentage,
+    };
+
+    let store = common::setup_store().await;
+    let name: AgentName = "expired-agent".parse().expect("valid agent name");
+    let reservation = store
+        .reserve_version(&name, 1)
+        .await
+        .expect("reserve version");
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let entry = NewEntry {
+        name: name.clone(),
+        artifact_hash: None,
+        identity_digest: None,
+        source: common::make_source("v1", "expired-agent", &[], "", &[]),
+        parentage: Parentage::Original,
+        generation: Generation::ROOT,
+        change_rationale: ChangeRationale::new("expired").expect("rationale"),
+        tags: Vec::new(),
+    };
+    let error = store
+        .insert_reserved_entry(&entry, &reservation)
+        .await
+        .expect_err("expired reservation must not publish");
+    assert!(
+        matches!(
+            error,
+            baml_rt_repository::error::RepositoryError::VersionConflict { .. }
+        ),
+        "expected VersionConflict, got {error:?}"
+    );
+}

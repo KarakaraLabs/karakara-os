@@ -226,3 +226,81 @@ async fn episode_unbound_task_returns_error() {
         "expected EpisodeUnbound, got {err:?}"
     );
 }
+
+#[tokio::test]
+async fn execution_binds_to_the_supplied_boot_not_the_newest_agent_boot() {
+    let store = Arc::new(build_isolated_store().await);
+    let agent_id = test_agent_id();
+    let package = AgentType::new("rolling-agent").expect("type");
+
+    let first_boot = ProvEvent::agent_booted_with_identity(
+        agent_id.clone(),
+        package.clone(),
+        "1".to_string(),
+        "identity".to_string(),
+        "artifact-first".to_string(),
+        "content-first".to_string(),
+        "runner-a".to_string(),
+    );
+    let first_boot_anchor = first_boot.id().as_str().to_string();
+    store.add_event(first_boot).await.expect("first boot");
+
+    let second_boot = ProvEvent::agent_booted_with_identity(
+        agent_id.clone(),
+        package,
+        "2".to_string(),
+        "identity".to_string(),
+        "artifact-second".to_string(),
+        "content-second".to_string(),
+        "runner-b".to_string(),
+    );
+    let second_boot_anchor = second_boot.id().as_str().to_string();
+    store.add_event(second_boot).await.expect("second boot");
+
+    let ctx = ContextId::new(42, 1);
+    let task_id = TaskId::from_external(ExternalId::new("rolling-task".to_string()));
+    store
+        .bind_task_executing_agent_for(
+            ctx,
+            task_id,
+            agent_id,
+            baml_rt_provenance::TaskAgentBindingSource::A2aStreamBootstrap,
+            Some(baml_rt_core::ids::ActivityAnchorId::from(
+                first_boot_anchor.clone(),
+            )),
+        )
+        .await
+        .expect("bind to first boot");
+
+    let mut response = store
+        .db()
+        .query("SELECT to_id FROM prov_edge WHERE rel_type = 'EXECUTED_UNDER_BOOT'")
+        .await
+        .expect("edge query");
+    let rows: Vec<serde_json::Value> = response.take(0).expect("rows");
+    assert_eq!(
+        rows.len(),
+        1,
+        "expected one execution-to-boot edge: {rows:?}"
+    );
+
+    let mut boot_response = store
+        .db()
+        .query(
+            "SELECT node_id FROM prov_node WHERE label = 'AgentBoot' \
+             AND props.a2a_activity_anchor = $anchor",
+        )
+        .bind(("anchor", first_boot_anchor.clone()))
+        .await
+        .expect("boot node query");
+    let boot_rows: Vec<serde_json::Value> = boot_response.take(0).expect("boot rows");
+    let first_boot_node = boot_rows[0]
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .expect("first boot node id");
+    assert_eq!(
+        rows[0].get("to_id").and_then(|v| v.as_str()),
+        Some(first_boot_node),
+        "task execution must reference the supplied boot, not the newest boot ({second_boot_anchor})"
+    );
+}

@@ -55,8 +55,8 @@ pub use a2a_handler::{
 pub use a2a_sse::{A2aSseDecoder, A2aSseParseError, parse_a2a_sse_json_rpc_chunks};
 pub use a2a_wire::{A2aStreamChunk, A2aWireRequest};
 pub use agent_routing::{
-    AgentCard, AgentDiscoveryEntry, AgentInstanceId, AgentLister, AgentPackageName, AgentRouteKey,
-    DispatchTarget, route_key_from_request,
+    AgentCard, AgentDiscoveryEntry, AgentLister, AgentPackageName, AgentRouteKey, DispatchTarget,
+    route_key_from_request,
 };
 pub use backoff::ExponentialBackoff;
 pub use baml_rt_citation::Citation;

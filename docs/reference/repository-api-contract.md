@@ -44,9 +44,15 @@ Publish is source-first and server-owned:
    the reserved version and both derived values.
 
 A publish result returns `hash`, `artifact_hash`, `identity_digest`,
-`version_ref`, and `generation`. Callers can deploy or pin the exact artifact
-without rehashing. Clients do not upload arbitrary blobs to establish publish
-provenance.
+`deployable`, `version_ref`, and `generation`. Callers can deploy or pin the
+exact artifact without rehashing. `deployable=false` means the entry is a
+source-only repository record (for example a standalone `/publish` or a fork)
+and the runner will reject it until it is republished through the build path.
+
+Reservation consumption keeps the reservation row in place while the entry is
+inserted, so a second publisher cannot reserve the same version in the gap. An
+expired holder cannot consume the row, and the row is removed after the entry
+write. Clients do not upload arbitrary blobs to establish publish provenance.
 
 ## HTTP Semantics (MVP)
 

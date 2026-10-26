@@ -32,6 +32,11 @@ Republishing identical content keeps the same `AgentId` while assigning a new
 `content_hash` and possibly a new `artifact_hash`. Restarting or re-deploying an
 existing artifact keeps all three stable.
 
+Startup restore passes the persisted `artifact_hash` as an expectation. If the
+repository resolves the content hash to different bytes, restore fails instead of
+booting the mismatch. Cluster placements carry the artifact hash as well, so the
+forwarding side can audit and verify which blob the target runner advertised.
+
 ## Deployment Semantics (MVP)
 
 - Re-deploy same hash is not an error.
