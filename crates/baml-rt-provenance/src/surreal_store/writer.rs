@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -130,6 +131,7 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             context_id_opt.as_deref(),
             &payload_records,
             &blob_bodies,
+            &self.write_coalesce,
         );
         let total_stmts: usize = plans.iter().map(|p| p.statement_count).sum();
         let total_binds: usize = plans.iter().map(|p| p.binds.len()).sum();
@@ -145,7 +147,12 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             "provenance add_event write txn"
         );
         for plan in plans {
-            self.run_event_write_plan(plan).await?;
+            if plan.shared {
+                self.run_shared_event_write(context_id_opt.as_deref(), plan)
+                    .await?;
+            } else {
+                self.run_event_write_plan(plan).await?;
+            }
         }
 
         self.update_context_picker_index(&event).await?;

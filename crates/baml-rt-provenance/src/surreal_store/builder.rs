@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -312,6 +313,10 @@ async fn init_store_in_namespace(
         archive_anchor_serializers: dashmap::DashMap::new(),
         ref_table_cache: std::sync::RwLock::new(None),
         agent_runtime_index_cache: std::sync::RwLock::new(None),
+        write_coalesce: Arc::new(dashmap::DashMap::new()),
+        shared_write_lanes: (0..super::SHARED_WRITE_LANES)
+            .map(|_| Arc::new(tokio::sync::Mutex::new(())))
+            .collect(),
     };
     Ok(Arc::new(store))
 }

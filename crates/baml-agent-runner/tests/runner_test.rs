@@ -29,7 +29,9 @@ use baml_rt_core::{
     context::{self, InvocationScope},
     ids::{AgentId, ContextId, ExternalId, TaskId, UuidId},
 };
-use baml_rt_provenance::{ProvenanceContextReader, SurrealProvenanceStore};
+use baml_rt_provenance::{
+    DelegationLinkedSpec, ProvEvent, ProvenanceContextReader, SurrealProvenanceStore,
+};
 use baml_rt_tools::bundles::BundleType;
 #[cfg(feature = "slack")]
 use baml_tools_slack as _;
@@ -299,6 +301,16 @@ fn chunk_state(chunk: &Value) -> Option<String> {
         .or_else(|| chunk.get("statusUpdate").and_then(state_from))
 }
 
+async fn provenance_nodes_by_label(store: &SurrealProvenanceStore, label: &str) -> Vec<Value> {
+    let mut response = store
+        .db()
+        .query("SELECT node_id, label, props FROM prov_node WHERE label = $label")
+        .bind(("label", label.to_string()))
+        .await
+        .expect("query provenance nodes by label");
+    response.take(0).expect("decode provenance nodes by label")
+}
+
 async fn collect_stream_responses(
     agent: &baml_rt::A2aAgent,
     request: JSONRPCRequest,
@@ -431,6 +443,42 @@ async fn setup_stream_js_tool_agent() -> baml_rt::A2aAgent {
 #[derive(Clone)]
 struct PackageTargetRouter {
     routes: HashMap<String, baml_rt::A2aAgent>,
+    /// Package name of the caller, i.e. the host-known name the runtime records in
+    /// delegation lineage.
+    caller_name: String,
+}
+
+impl PackageTargetRouter {
+    fn new(caller_name: impl Into<String>, routes: HashMap<String, baml_rt::A2aAgent>) -> Self {
+        Self {
+            routes,
+            caller_name: caller_name.into(),
+        }
+    }
+
+    fn target_package(request: &baml_rt_core::A2aWireRequest) -> baml_rt::Result<String> {
+        request
+            .as_ref()
+            .get("params")
+            .and_then(|params| params.get("metadata"))
+            .and_then(|meta| meta.get("target"))
+            .and_then(|target| target.get("agent_package"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                BamlRtError::InvalidArgument(
+                    "system/internal_a2a missing params.metadata.target.agent_package".to_string(),
+                )
+            })
+    }
+
+    fn agent_for(&self, package: &str) -> baml_rt::Result<&baml_rt::A2aAgent> {
+        self.routes.get(package).ok_or_else(|| {
+            BamlRtError::InvalidArgument(format!(
+                "No route configured for target package '{package}'"
+            ))
+        })
+    }
 }
 
 #[async_trait]
@@ -439,24 +487,47 @@ impl A2aRequestHandler for PackageTargetRouter {
         &self,
         request: baml_rt_core::A2aWireRequest,
     ) -> baml_rt::Result<baml_rt_core::bus::BusStream<baml_rt_core::A2aStreamChunk>> {
-        let target_package = request
-            .as_ref()
-            .get("params")
-            .and_then(|params| params.get("metadata"))
-            .and_then(|meta| meta.get("target"))
-            .and_then(|target| target.get("agent_package"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                BamlRtError::InvalidArgument(
-                    "system/internal_a2a missing params.metadata.target.agent_package".to_string(),
-                )
-            })?;
+        let target_package = Self::target_package(&request)?;
+        self.agent_for(&target_package)?
+            .handle_a2a_stream(request)
+            .await
+    }
 
-        let agent = self.routes.get(target_package).ok_or_else(|| {
-            BamlRtError::InvalidArgument(format!(
-                "No route configured for target package '{target_package}'"
-            ))
+    /// Host path for `system/internal_a2a`: record typed lineage from the envelope
+    /// the host built, then dispatch. Production does the same in
+    /// `baml-agent-runner::routing` before local dispatch or remote forwarding.
+    async fn handle_delegated_a2a_stream(
+        &self,
+        request: baml_rt_core::A2aWireRequest,
+        delegation: baml_rt_core::DelegationCallContext,
+    ) -> baml_rt::Result<baml_rt_core::bus::BusStream<baml_rt_core::A2aStreamChunk>> {
+        let target_package = Self::target_package(&request)?;
+        let agent = self.agent_for(&target_package)?;
+        let parent_task_id = delegation.caller_task_id.clone().ok_or_else(|| {
+            BamlRtError::InvalidArgument(
+                "delegation lineage requires a caller task scope".to_string(),
+            )
         })?;
+        let event = ProvEvent::delegation_linked(DelegationLinkedSpec {
+            context_id: delegation.caller_context_id.clone(),
+            delegation_id: delegation.delegation_id.clone(),
+            parent_task_id,
+            child_task_id: delegation.child_task_id.clone(),
+            caller_agent_id: delegation.caller_agent_id.clone(),
+            target_agent_id: agent.agent_id().clone(),
+            caller_name: self.caller_name.clone(),
+            target_name: delegation.target_name.clone(),
+            tool_session_id: delegation.tool_session_id.clone(),
+        });
+        agent
+            .provenance_writer()
+            .add_event(event)
+            .await
+            .map_err(|err| {
+                BamlRtError::Io(std::io::Error::other(format!(
+                    "delegation lineage write failed: {err}"
+                )))
+            })?;
         agent.handle_a2a_stream(request).await
     }
 }
@@ -491,9 +562,10 @@ globalThis.onChatMessage = async function(message) {
         .await
         .unwrap();
 
-    let router: Arc<dyn A2aRequestHandler> = Arc::new(PackageTargetRouter {
-        routes: HashMap::from([("responder-agent".to_string(), responder_agent.clone())]),
-    });
+    let router: Arc<dyn A2aRequestHandler> = Arc::new(PackageTargetRouter::new(
+        "initiator-agent",
+        HashMap::from([("responder-agent".to_string(), responder_agent.clone())]),
+    ));
 
     let initiator_manager = BamlRuntimeManager::builder().build().unwrap();
     let target_literal = serde_json::to_string(target_package).expect("serialize target package");
@@ -607,9 +679,10 @@ globalThis.onChatMessage = async function(message) {
         .await
         .unwrap();
 
-    let router: Arc<dyn A2aRequestHandler> = Arc::new(PackageTargetRouter {
-        routes: HashMap::from([("responder-agent".to_string(), responder_agent.clone())]),
-    });
+    let router: Arc<dyn A2aRequestHandler> = Arc::new(PackageTargetRouter::new(
+        "initiator-agent",
+        HashMap::from([("responder-agent".to_string(), responder_agent.clone())]),
+    ));
 
     let initiator_manager = BamlRuntimeManager::builder().build().unwrap();
     let target_literal = serde_json::to_string(target_package).expect("serialize target package");
@@ -1668,7 +1741,7 @@ async fn test_internal_a2a_parallel_same_context_child_tasks_and_provenance() {
     let _permit = e2e_serial_gate().acquire().await.expect("acquire e2e gate");
 
     let request_count = 6usize;
-    let (initiator_agent, _responder_agent, _initiator_store, responder_store) =
+    let (initiator_agent, _responder_agent, initiator_store, responder_store) =
         setup_internal_a2a_parallel_fanout_agents("responder-agent", request_count).await;
     let context_id = ContextId::new(88, 1);
     let request = send_message_request(
@@ -1803,10 +1876,15 @@ async fn test_internal_a2a_parallel_same_context_child_tasks_and_provenance() {
         "Expected one unique child task id per fanout branch, got {child_ids_from_summary:?}"
     );
 
-    // Provenance regression: each delegated child task must materialize its inbound user
-    // message under that child context, not collapse onto the root caller context.
+    let parent_task_id = "live-task:ctx-88-1:route-par-root";
+    let delegation_rows = provenance_nodes_by_label(&responder_store, "Delegation").await;
+    let task_state_rows = provenance_nodes_by_label(&responder_store, "A2ATaskState").await;
+
+    // Each branch must retain the whole responder transcript and its terminal state. S12 moves
+    // these rows into the parent context; the task filter below keeps the assertions valid then.
     for i in 0..request_count {
         let expected_input = format!("ping parallel {i}");
+        let expected_output = format!("Responder saw: {expected_input}");
         let child_task_id = child_id_by_input
             .get(&expected_input)
             .expect("child task id recorded for each fanout input");
@@ -1815,23 +1893,108 @@ async fn test_internal_a2a_parallel_same_context_child_tasks_and_provenance() {
             "responder-agent",
             &TaskId::from_external(ExternalId::new(child_task_id.clone())),
         );
-        let mut found = false;
-        for _ in 0..60 {
-            let messages = responder_store
-                .context_messages(&child_context_id, Some(50))
-                .await
-                .expect("read responder child-context messages");
-            found = messages
-                .iter()
-                .any(|m| m.content.iter().any(|c| c == &expected_input));
-            if found {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+        let messages = responder_store
+            .context_messages(&child_context_id, Some(50))
+            .await
+            .expect("read responder child-context messages");
         assert!(
-            found,
-            "Expected delegated user message '{expected_input}' in responder child context {child_context_id}"
+            messages
+                .iter()
+                .any(|message| message.content.iter().any(|text| text == &expected_input)),
+            "missing inbound message for child task {child_task_id}: {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.content.iter().any(|text| text == &expected_output)),
+            "missing outbound message for child task {child_task_id}: {messages:?}"
+        );
+
+        let matching_delegations = delegation_rows
+            .iter()
+            .filter(|row| {
+                let props = row.get("props").unwrap_or(&Value::Null);
+                props.get("a2a_task_id").and_then(Value::as_str) == Some(child_task_id.as_str())
+                    && props
+                        .get("a2a_delegation_parent_task_id")
+                        .and_then(Value::as_str)
+                        == Some(parent_task_id)
+                    && props
+                        .get("a2a_delegation_tool_session_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|session_id| !session_id.is_empty())
+            })
+            .count();
+        assert_eq!(
+            matching_delegations, 1,
+            "expected one complete delegation row for child task {child_task_id}: {delegation_rows:?}"
+        );
+
+        assert!(
+            task_state_rows.iter().any(|row| {
+                let props = row.get("props").unwrap_or(&Value::Null);
+                props.get("a2a_task_id").and_then(Value::as_str) == Some(child_task_id.as_str())
+                    && props.get("a2a_task_state").and_then(Value::as_str)
+                        == Some("TASK_STATE_COMPLETED")
+            }),
+            "missing final completed state for child task {child_task_id}: {task_state_rows:?}"
+        );
+    }
+
+    // Tool start and completion events fold into one ToolCall activity, so a complete row
+    // carries both timestamps. Restricting this to the six Send calls gives one row per
+    // branch and catches the contention path that used to log and discard either half.
+    // Ordinals pair a start with the oldest open completion FIFO, so which branch's start
+    // lands on which row is not deterministic under fanout; the started and completed
+    // counts are.
+    let tool_rows = provenance_nodes_by_label(&initiator_store, "ToolCall").await;
+    let branch_send_rows: Vec<&Value> = tool_rows
+        .iter()
+        .filter(|row| {
+            let props = row.get("props").unwrap_or(&Value::Null);
+            props.get("a2a_context_id").and_then(Value::as_str) == Some(context_id.as_str())
+                && props.get("a2a_task_id").and_then(Value::as_str) == Some(parent_task_id)
+                && props.get("a2a_tool_name").and_then(Value::as_str) == Some("system/internal_a2a")
+                && props.get("a2a_phase").and_then(Value::as_str) == Some("send")
+        })
+        .collect();
+    assert_eq!(
+        branch_send_rows.len(),
+        request_count,
+        "expected one internal_a2a Send ToolCall per branch: {tool_rows:?}"
+    );
+    let started = branch_send_rows
+        .iter()
+        .filter(|row| {
+            row.get("props")
+                .and_then(|props| props.get("prov_startTime"))
+                .and_then(Value::as_u64)
+                .is_some()
+        })
+        .count();
+    let completed = branch_send_rows
+        .iter()
+        .filter(|row| {
+            row.get("props")
+                .and_then(|props| props.get("prov_endTime"))
+                .and_then(Value::as_u64)
+                .is_some()
+        })
+        .count();
+    assert_eq!(
+        started, request_count,
+        "lost tool-start rows for {request_count} branches: {branch_send_rows:?}"
+    );
+    assert_eq!(
+        completed, request_count,
+        "lost tool-completion rows for {request_count} branches: {branch_send_rows:?}"
+    );
+    for row in &branch_send_rows {
+        let props = row.get("props").expect("ToolCall props");
+        assert_eq!(
+            props.get("a2a_activity_outcome").and_then(Value::as_str),
+            Some("Success"),
+            "branch tool call did not complete successfully: {row:?}"
         );
     }
 }
