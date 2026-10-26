@@ -279,11 +279,52 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
         .with_static_tool_catalog(static_tool_catalog),
     );
     let raw_deployments = deployment_state
-        .list_deployments()
+        .list_deployments_compat()
         .await
         .context("Failed to read runner deployment state records")?;
+    let mut resolved_deployments = Vec::with_capacity(raw_deployments.len());
+    for stored in raw_deployments {
+        let artifact_hash = match stored.artifact_hash.clone() {
+            Some(artifact_hash) => artifact_hash,
+            None => {
+                let content_hash: baml_rt_repository::ContentHash =
+                    stored.content_hash.as_str().parse().with_context(|| {
+                        format!(
+                            "Invalid content hash in legacy deployment row {}",
+                            stored.content_hash.as_str()
+                        )
+                    })?;
+                let entry = repository_service
+                    .get_by_hash(&content_hash)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to resolve legacy deployment row {} from the repository",
+                            stored.content_hash.as_str()
+                        )
+                    })?;
+                let Some(artifact_hash) = entry.and_then(|entry| entry.artifact_hash) else {
+                    warn!(
+                        content_hash = %stored.content_hash.as_str(),
+                        "removing legacy deployment row with no artifact hash in state or repository"
+                    );
+                    let _ = deployment_state
+                        .remove_deployment(&stored.content_hash)
+                        .await;
+                    continue;
+                };
+                warn!(
+                    content_hash = %stored.content_hash.as_str(),
+                    artifact_hash = %artifact_hash.as_str(),
+                    "backfilling artifact hash for legacy deployment row from the repository"
+                );
+                artifact_hash
+            }
+        };
+        resolved_deployments.push(stored.into_record(artifact_hash));
+    }
     let (existing_deployments, superseded_hashes) =
-        deployment_restore::dedupe_deployments_for_restore(raw_deployments);
+        deployment_restore::dedupe_deployments_for_restore(resolved_deployments);
     if !superseded_hashes.is_empty() {
         info!(
             removed = superseded_hashes.len(),
@@ -445,6 +486,18 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
                     already_deployed = result.already_deployed,
                     "Restored deployment from runner state"
                 );
+                if let Err(save_err) = builder
+                    .runner
+                    .deployment_state()
+                    .save_deployment(&deployment)
+                    .await
+                {
+                    warn!(
+                        content_hash = %deployment.content_hash.as_str(),
+                        error = %save_err,
+                        "failed to backfill restored deployment record"
+                    );
+                }
             }
             Err(err) => {
                 deployment.status = DeploymentStatus::Failed;

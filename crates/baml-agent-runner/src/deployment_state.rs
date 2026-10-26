@@ -5,7 +5,7 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use baml_rt_core::{
-    BamlRtError, DeploymentContentHash, DeploymentRecord, DeploymentStatus, Result,
+    ArtifactHash, BamlRtError, DeploymentContentHash, DeploymentRecord, DeploymentStatus, Result,
     callback_store::{
         CallbackStore, CancelCallbackSelector, ScheduleCallbackRequest, ScheduleCallbackResult,
         StoredCallback,
@@ -230,6 +230,24 @@ impl DeploymentStateStore {
     }
 
     pub async fn list_deployments(&self) -> Result<Vec<DeploymentRecord>> {
+        let mut records = Vec::new();
+        for stored in self.list_deployments_compat().await? {
+            match stored.artifact_hash.clone() {
+                Some(artifact_hash) => records.push(stored.into_record(artifact_hash)),
+                None => warn!(
+                    content_hash = %stored.content_hash.as_str(),
+                    "skipping legacy deployment row without artifact_hash"
+                ),
+            }
+        }
+        Ok(records)
+    }
+
+    /// Read deployment rows including legacy rows that predate artifact pinning.
+    ///
+    /// Startup restore resolves a missing artifact hash from the repository and
+    /// backfills the row on the next successful save.
+    pub async fn list_deployments_compat(&self) -> Result<Vec<StoredDeployment>> {
         let mut resp = self
             .db
             .query(format!(
@@ -870,11 +888,42 @@ impl DeploymentStateStore {
     }
 }
 
-fn parse_deployment_row(row: serde_json::Value) -> Result<DeploymentRecord> {
+/// Deployment row as stored on disk. `artifact_hash` is absent on rows written
+/// before the artifact-pinning upgrade; startup restore resolves it from the
+/// repository before converting to [`DeploymentRecord`].
+#[derive(Debug, Clone)]
+pub struct StoredDeployment {
+    pub content_hash: DeploymentContentHash,
+    pub artifact_hash: Option<ArtifactHash>,
+    pub agent_name: String,
+    pub deployed_at: String,
+    pub status: DeploymentStatus,
+    pub last_error: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub failure_count: u32,
+}
+
+impl StoredDeployment {
+    pub fn into_record(self, artifact_hash: ArtifactHash) -> DeploymentRecord {
+        DeploymentRecord {
+            content_hash: self.content_hash,
+            artifact_hash,
+            agent_name: self.agent_name,
+            deployed_at: self.deployed_at,
+            status: self.status,
+            last_error: self.last_error,
+            last_attempt_at: self.last_attempt_at,
+            failure_count: self.failure_count,
+        }
+    }
+}
+
+fn parse_deployment_row(row: serde_json::Value) -> Result<StoredDeployment> {
     #[derive(Deserialize)]
     struct DeploymentRow {
         content_hash: String,
-        artifact_hash: String,
+        #[serde(default)]
+        artifact_hash: Option<String>,
         agent_name: String,
         deployed_at: String,
         status: DeploymentStatus,
@@ -890,13 +939,20 @@ fn parse_deployment_row(row: serde_json::Value) -> Result<DeploymentRecord> {
         BamlRtError::InvalidArgument(format!("invalid deployment row from state DB: {e}"))
     })?;
 
-    Ok(DeploymentRecord {
+    Ok(StoredDeployment {
         content_hash: parsed.content_hash.parse().map_err(|e| {
             BamlRtError::InvalidArgument(format!("invalid content_hash in deployment row: {e}"))
         })?,
-        artifact_hash: parsed.artifact_hash.parse().map_err(|e| {
-            BamlRtError::InvalidArgument(format!("invalid artifact_hash in deployment row: {e}"))
-        })?,
+        artifact_hash: parsed
+            .artifact_hash
+            .map(|raw| {
+                raw.parse().map_err(|e| {
+                    BamlRtError::InvalidArgument(format!(
+                        "invalid artifact_hash in deployment row: {e}"
+                    ))
+                })
+            })
+            .transpose()?,
         agent_name: parsed.agent_name,
         deployed_at: parsed.deployed_at,
         status: parsed.status,
@@ -1152,6 +1208,38 @@ mod tests {
 
         assert!(store.remove_deployment(&hash).await.unwrap());
         assert!(!store.remove_deployment(&hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn legacy_rows_without_artifact_hash_are_readable_and_skipped_by_strict_list() {
+        let store = DeploymentStateStore::open_in_memory().await.unwrap();
+        // Simulate a row written before the artifact_hash field existed.
+        store
+            .db
+            .query("REMOVE FIELD artifact_hash ON deployments")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        store
+            .db
+            .query(
+                "CREATE deployments SET \
+                   content_hash = '3333333333333333333333333333333333333333333333333333333333333333', \
+                   agent_name = 'legacy-agent', \
+                   deployed_at = '2026-01-01T00:00:00Z', \
+                   status = 'active', \
+                   failure_count = 0",
+            )
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let compat = store.list_deployments_compat().await.unwrap();
+        assert_eq!(compat.len(), 1);
+        assert!(compat[0].artifact_hash.is_none());
+        assert!(store.list_deployments().await.unwrap().is_empty());
     }
 
     #[tokio::test]
