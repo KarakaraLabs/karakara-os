@@ -1731,6 +1731,170 @@ async fn test_internal_a2a_context_id_propagates() {
     );
 }
 
+/// Local sequential delegation: two delegated sessions in one caller context.
+///
+/// The responder's second task sees its own first-task rows through
+/// [`ContextHistoryView`], while a task-scoped read keeps each delegation a
+/// separate unit of work. This is the local end-to-end continuity contract that
+/// the store-level agent-view test does not exercise through the A2A bridge.
+#[tokio::test]
+async fn test_internal_a2a_sequential_delegation_continuity() {
+    let _permit = e2e_serial_gate().acquire().await.expect("acquire e2e gate");
+
+    let (initiator_agent, responder_agent, _initiator_store, responder_store) =
+        setup_internal_a2a_router_agents("responder-agent").await;
+    let context_id = ContextId::new(88, 9);
+
+    for (index, text) in ["delegated first", "delegated second"].iter().enumerate() {
+        let request = send_message_request(
+            SendMessageRequest {
+                message: user_message(&format!("seq-{index}"), text, Some(context_id.clone())),
+                configuration: None,
+                metadata: None,
+                tenant: None,
+                extra: HashMap::new(),
+            },
+            &format!("corr-17000000002{index:02}-1"),
+        );
+        let responses = collect_stream_responses(&initiator_agent, request)
+            .await
+            .expect("sequential internal_a2a request");
+        let chunks = chunks_from_responses(&responses);
+        let texts = message_texts_from_chunks(&chunks);
+        let expected = format!("Responder saw: {text}");
+        assert!(
+            texts.iter().any(|value| value.contains(&expected)),
+            "expected {expected:?} in delegated reply; saw {texts:?}. Raw: {}",
+            serde_json::to_string_pretty(&responses).unwrap_or_else(|_| "?".to_string())
+        );
+        assert!(
+            !texts.iter().any(|value| value.contains("delegate_error=")),
+            "sequential delegation failed: {texts:?}"
+        );
+    }
+
+    let page = responder_store
+        .context_history_view(
+            &context_id,
+            responder_agent.agent_id(),
+            Some(100),
+            None,
+            None,
+        )
+        .await
+        .expect("responder participation view");
+    assert!(
+        !page.truncated,
+        "the test window covers the responder's whole participation"
+    );
+
+    let mut responder_task_ids = HashSet::new();
+    let mut message_texts = Vec::new();
+    for item in &page.items {
+        assert!(
+            item.is_visible_to_agent(responder_agent.agent_id()),
+            "responder view must not contain another agent's row: {item:?}"
+        );
+        if let Some(task_id) = item
+            .attribution
+            .as_deref()
+            .and_then(|attribution| attribution.task_id.as_ref())
+        {
+            responder_task_ids.insert(task_id.as_str().to_string());
+        }
+        if let baml_rt_conversation::view::ConversationItemContent::Message { text, .. } =
+            &item.content
+        {
+            message_texts.push(text.clone());
+        }
+    }
+
+    assert_eq!(
+        responder_task_ids.len(),
+        2,
+        "two sequential delegations must remain two tasks in one context: {responder_task_ids:?}"
+    );
+    for expected in [
+        "delegated first",
+        "Responder saw: delegated first",
+        "delegated second",
+        "Responder saw: delegated second",
+    ] {
+        assert!(
+            message_texts.iter().any(|text| text == expected),
+            "responder participation must contain {expected:?}; saw {message_texts:?}"
+        );
+    }
+
+    let delegation_rows = provenance_nodes_by_label(&responder_store, "Delegation").await;
+    let mut delegated_child_tasks = HashSet::new();
+    for row in &delegation_rows {
+        let props = row.get("props").unwrap_or(&Value::Null);
+        if props.get("a2a_context_id").and_then(Value::as_str) != Some(context_id.as_str()) {
+            continue;
+        }
+        if let Some(child_task_id) = props.get("a2a_task_id").and_then(Value::as_str) {
+            delegated_child_tasks.insert(child_task_id.to_string());
+        }
+    }
+    assert_eq!(
+        delegated_child_tasks, responder_task_ids,
+        "every responder task must have one delegation link in the shared context"
+    );
+
+    // Task-scoped reads stay separate units of work inside the shared context.
+    let mut expected_by_task: HashMap<String, HashSet<String>> = HashMap::new();
+    for item in &page.items {
+        let Some(task_id) = item
+            .attribution
+            .as_deref()
+            .and_then(|attribution| attribution.task_id.as_ref())
+        else {
+            continue;
+        };
+        if let baml_rt_conversation::view::ConversationItemContent::Message { text, .. } =
+            &item.content
+        {
+            expected_by_task
+                .entry(task_id.as_str().to_string())
+                .or_default()
+                .insert(text.clone());
+        }
+    }
+    assert_eq!(
+        expected_by_task.len(),
+        2,
+        "both delegations must contribute task-scoped message rows"
+    );
+    for (task_id, expected_texts) in expected_by_task {
+        let task = TaskId::from_external(ExternalId::new(task_id.clone()));
+        let task_page = responder_store
+            .context_history_view(
+                &context_id,
+                responder_agent.agent_id(),
+                Some(100),
+                None,
+                Some(&task),
+            )
+            .await
+            .expect("task-scoped responder view");
+        let task_texts: HashSet<String> = task_page
+            .items
+            .iter()
+            .filter_map(|item| match &item.content {
+                baml_rt_conversation::view::ConversationItemContent::Message { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            task_texts, expected_texts,
+            "task {task_id} must read only its own messages"
+        );
+    }
+}
+
 /// Parallel same-context fanout: 6 child A2A streams under one parent.
 ///
 /// Previously blocked on the global single-thread `HANDOVER_LANE` which

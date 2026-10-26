@@ -44,10 +44,65 @@ behavior-set filter live in [`agent_identity.rs`](../../crates/baml-rt-hash/src/
 and [`identity.rs`](../../crates/baml-rt-repository/src/identity.rs);
 `AgentId` derivation lives in [`ids.rs`](../../crates/baml-rt-core/src/ids.rs).
 
-**Continuity across turns is not part of this change.** This document still
-specifies how a single conversation's history is written, ordered, and
-projected. It does not define execution-context continuity across turns,
-delegation lineage, participant-scoped prompt reads, or compaction keys.
+## Execution context and agent participation (normative)
+
+`ContextId` is one execution or correlation window, not a conversation. It may
+contain ingress, several tasks, several agents, and nested delegation.
+`TaskId` remains one unit of work and an attribution/operator key. Stable
+`AgentId` is the participant identity inside a context.
+
+Delegation preserves the caller's `ContextId` and opens one fresh child
+`TaskId` per tool session. A later delegation to the same target in the same
+context gets another task, and the target may read its own rows from both.
+No new derived `a2a:` child context is produced for new traffic.
+
+Four views read the same stored provenance:
+
+| View | Scope | Consumer |
+|------|-------|----------|
+| `ContextTimeline(context_id)` | every event in the context, ordered, unfiltered by agent. Includes operator-only `audit_decision` rows. | Operator context reads and graph export; Mermaid renders the narrative from the same graph. Supports non-conversational roots such as webhooks and polling windows. |
+| `AgentParticipationView(context_id, agent_id)` | the full durable record where that agent is actor or target, across every task. This is the source of truth for "full history". | Operator inspection and the uncapped history contract. |
+| `ContextHistoryView(context_id, agent_id, window, cursor[, task_id])` | the prompt-facing projection over `AgentParticipationView`, bounded to the newest `window` events by the durable ordering key. | Agent prompts and the `context_history` retrieval resource. |
+| `TaskView(context_id, task_id)` | the complete task for replay, status, artifacts, and inspection. | Task APIs and operator task views. |
+
+Visibility and rendering rules:
+
+- A row is visible to agent P when P is its actor or target. Bystander events
+  and other agents' tool, session, and planning internals are excluded.
+- Rows from all tasks in the context are included; a task filter is for replay
+  and inspection, not for prompt scope.
+- `audit_decision` rows are operator-only. They appear in `ContextTimeline` and
+  never in `ContextHistoryView`, the retrieval tool, or an agent prompt.
+- Rendering is per event kind and relative to the reading `AgentId`. Chat roles
+  apply only to conversational invocations; signal-driven work renders labeled
+  signals.
+- A successful internal delegation is deduplicated through typed lineage: the
+  target sees the relayed request once, the caller sees the reply once, and an
+  unmatched delegation failure keeps its tool error.
+- The automatic window never claims completeness. It carries a truncation
+  marker and an opaque `(event_order, node_id)` cursor; concatenated pages
+  reconstruct `AgentParticipationView` without gaps or duplicates.
+
+### Revision pinning, ownership, and cross-runner delivery
+
+- `(context_id, package_name)` pins both the stable `AgentId` and the exact
+  `artifact_hash` on first participation. A later turn resolving another pair is
+  refused with a typed conflict instead of executing under different bytes.
+  Request data may nominate a package name; it never supplies the resolved IDs.
+- `rebind` and `close_and_fork` are the only explicit binding changes. They
+  record a revision-boundary decision and fence the old pair.
+- `undeploy` refuses to remove a revision with recently active pinned contexts
+  unless the operator supplies a recorded override that names those contexts.
+- `(context_id, agent_id)` execution ownership is an operational lease in the
+  provenance database, with a per-pair fencing token. It is not a graph node,
+  history row, or prompt row; acquisition, takeover, handoff, and refusal are
+  appended as operator-only audit decisions.
+- Remote forwarding carries the expected `AgentId` and artifact hash. The
+  receiving runner rejects a mismatch of either before execution; an ID-only
+  check is insufficient because two artifacts can share one `AgentId`.
+
+Derived `a2a:` contexts remain readable for old traffic and keep the legacy
+relay-classification fallback. No prompt-history policy depends on the prefix.
 
 ## Three boundaries (normative)
 
@@ -62,7 +117,7 @@ These separate **what happened** in the graph from **how the model is guided** i
 ## Boundary map (live A2A)
 
 1. **Write path** — Provenance events become graph nodes; `a2a_event_order` and edges define truth.
-2. **Read path** — [`conversation_context_filtered`](../crates/baml-rt-provenance/src/surreal_store/context_reader.rs) returns rows ordered by `event_order ASC, node_id ASC` (total order when `event_order` ties).
+2. **Read path** — [`ContextHistoryView`](../crates/baml-rt-provenance/src/surreal_store/context_reader.rs) applies agent visibility and the newest-tail window in the query, ordered by `event_order DESC, node_id DESC` for prompt reads. Task replay and operator pagination keep forward `event_order ASC, node_id ASC` order; both use the same durable key for ties.
 3. **Map** — [`provenance_item_to_projection_item`](../crates/baml-rt-conversation/src/projection.rs) → [`PromptProjectionItem`](../crates/baml-rt-tools/src/prompt_projection.rs).
 4. **Render** — [`project_prompt_context`](../crates/baml-rt-tools/src/prompt_projection.rs) assigns `#N` via idempotent `RefTable::insert_history` (stable per activity + source).
 5. **Provider** — [`ProjectingConversationContextProvider`](../crates/baml-rt-a2a/src/a2a_transport.rs) → merged rows → `ctx.tags['conversation_transcript']` in [`BamlExecutor`](../crates/baml-rt-quickjs/src/baml_execution.rs).
@@ -77,6 +132,9 @@ These separate **what happened** in the graph from **how the model is guided** i
 - **1:1 activity → history lines (for Message/ToolCall):** one `Message` or `ToolCall` activity yields one primary `#N` line each pass; if the same user text appears three times with three `#N` values, the graph has three `Message` activities (or a transport bug) — the projector does not dedupe.
 - **Stable `#N` for reprojection:** repeated `project_prompt_context` on the same items with the same `RefTable` produces identical rendered line content for those activities (and thus identical transcript segments).
 - **Merge / supplement:** step-executor merge uses graph-backed line objects; with stable refs, provider and supplement lines match when they represent the same activity.
+- **Context continuity:** delegation keeps the caller `ContextId`; every delegated session gets a fresh child `TaskId`; the target's prompt reads its own rows across all those tasks.
+- **No unfiltered sibling view:** sharing a context never makes another agent's internals visible. The `AgentId` filter is enforced by the provenance read path, not by the caller.
+- **Operational state is not history:** lease rows and route bindings are mutable current state. They never appear in graph export, history reads, or prompts; only their semantic decisions are audit rows.
 
 ## Live A2A update durability (post-relational-shadow excision)
 
@@ -197,6 +255,12 @@ The episode reader sorts merged status + conversation + artifacts with a **total
 | Episode `session_history` | `crates/baml-rt-conversation/src/session_history.rs` |
 | Episode merge + sort | `crates/baml-rt-provenance/src/episode/reader.rs` |
 | API DTOs | `crates/baml-rt-api/src/episode.rs`, `conversation_history.rs` |
+| Agent-scoped history read | `crates/baml-rt-provenance/src/surreal_store/context_reader.rs` |
+| Typed attribution and projection | `crates/baml-rt-conversation/src/view.rs`, `projection.rs` |
+| `context_history` retrieval resource | `crates/tools/system/src/provenance_session_tools.rs` |
+| Context route bindings | `crates/baml-rt-provenance/src/context_route_bindings.rs` |
+| Execution-ownership leases | `crates/baml-rt-provenance/src/context_agent_leases.rs` |
+| Cross-runner routing and preconditions | `crates/baml-agent-runner/src/routing.rs`, `cluster.rs` |
 
 ## Test gaps and enforced checks
 
@@ -206,5 +270,10 @@ The episode reader sorts merged status + conversation + artifacts with a **total
 - **Phase preambles** — generated phase BAML in **builder** uses an empty preamble; see `phase_executor_prompt_body_*` tests in [`phase_prompt.rs`](../../crates/baml-rt-builder/src/builder/baml_gen/session_from_ir/phase_prompt.rs). Re-run `regen_fixtures` / `baml-rt-builder` to refresh committed `agents/**/baml_src/_baml_runtime.baml` and the rendered `agents/**/baml_src/_baml_tool_schema_catalog.txt` (model-facing schema; loaded into `ctx.tags['tool_schema_prelude']` — see `../assertions/how-to-write-agents.md` §3.3.2) when the generator changes. Hand-written agent BAML is unchanged by this.
 - **Catalog source-free invariant** — `baml-rt-builder` integration tests `catalog_text_is_source_free`, `phase_function_prompts_place_contract_after_history_and_task_body`, and `phase_function_prompts_omit_per_hop_output_format` (in [`catalog_rendering_test.rs`](../../crates/baml-rt-builder/tests/catalog_rendering_test.rs)) enforce that the rendered catalog contains no BAML keywords and that tool-session prompts never duplicate `{{ ctx.output_format }}`.
 - **High `@N` for new archives** — new archive rows still advance the shared per-context counter; only **history** lines are idempotent per activity.
+- **Agent participation** — `crates/baml-rt-provenance/tests/context_history_view_test.rs` pins cross-task visibility, sibling exclusion, and window truncation.
+- **Local sequential delegation continuity** — `crates/baml-agent-runner/tests/runner_test.rs::test_internal_a2a_sequential_delegation_continuity` drives two real delegated sessions in one caller context and asserts both child tasks appear in the responder's own view while task-scoped reads stay separate.
+- **Local fanout completeness** — `test_internal_a2a_parallel_same_context_child_tasks_and_provenance` asserts per-branch inbound/outbound messages, delegation lineage, tool start/completion, and terminal task state under concurrent writes.
+- **Pinning and deploy guard** — `crates/baml-rt-provenance/tests/context_route_binding_test.rs` covers concurrent first participation and binding audit rows; `crates/baml-agent-runner/src/lib.rs` covers the recorded-override undeploy guard, rebind, fork, and artifact-bound lease rejection.
+- **Cross-runner identity** — `crates/baml-rt-api/tests/api_test.rs` rejects the same `AgentId` with a different artifact hash; the router test asserts both preconditions travel on the forwarded request.
 
 **What existing snapshots still primarily cover:** JSON shape, `SessionStep` Open + reads (SendDone present on graph only), `ArchiveReader` wiring, episode `session_history` goldens, step-executor merged history growth.
