@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -37,6 +38,7 @@
 pub mod builders;
 pub mod bus_subscriber;
 pub mod citation_queries;
+pub mod context_agent_leases;
 pub mod context_compaction;
 pub mod context_metrics_queries;
 /// Defaults for LLM conversation-context query limits.
@@ -90,6 +92,10 @@ pub mod vocabulary;
 
 pub use baml_rt_conversation::provenance_item_to_projection_item;
 pub use bus_subscriber::ProvenanceBusSubscriber;
+pub use context_agent_leases::{
+    ContextAgentFence, ContextAgentLease, ContextAgentLeaseRequest,
+    DEFAULT_CONTEXT_AGENT_LEASE_STALE_AFTER_MS, LeaseAcquisition, LeaseTransition,
+};
 pub use context_compaction::{
     COMPACTION_VALIDATION_RETRY_LIMIT, CompactionDeferReason, CompactionPrefixInput,
     CompactionPrepareError, CompactionRenderContext, CompactionRequest, CompactionSafetySignals,
@@ -121,8 +127,8 @@ pub use episode::{
 };
 pub use error::ProvenanceError;
 pub use events::{
-    AgentBootedEvent, AgentStoppedEvent, AgentType, CallScope, DelegationLinkedSpec, GlobalEvent,
-    LlmUsage, PlanStepSpec, ProvEvent, ProvEventData, ReservedAnchor, TaskScopedEvent,
+    AgentBootedEvent, AgentStoppedEvent, AgentType, AuditDecision, CallScope, DelegationLinkedSpec,
+    GlobalEvent, LlmUsage, PlanStepSpec, ProvEvent, ProvEventData, ReservedAnchor, TaskScopedEvent,
     ToolSessionStepOpKind, allocate_activity_anchor, serialized_prompt_utf8_len,
 };
 pub use graph_export::{ExportScope, ExportedGraph, GraphExporter};

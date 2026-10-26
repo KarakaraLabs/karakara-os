@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -67,6 +68,7 @@ use baml_rt_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    context_agent_leases::ContextAgentFence,
     error::{ProvenanceError, Result},
     events::ProvEvent,
     task_agent_binding::{TaskAgentBinding, TaskAgentBindingSource},
@@ -110,6 +112,14 @@ impl TaskAgentResolution {
 #[async_trait]
 pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
     async fn add_event(&self, event: ProvEvent) -> Result<()>;
+
+    /// Write one event scoped to a context-agent pair, rejecting it when
+    /// `fence` is older than the current lease.
+    ///
+    /// The fence check runs inside each event transaction, so a takeover that
+    /// commits before this write makes the write fail rather than append after
+    /// the new owner.
+    async fn add_event_fenced(&self, event: ProvEvent, fence: ContextAgentFence) -> Result<()>;
 
     async fn add_events(&self, events: Vec<ProvEvent>) -> Result<()> {
         for event in events {

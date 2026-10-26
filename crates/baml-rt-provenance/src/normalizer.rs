@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,7 +22,7 @@ use serde_json::Value;
 use crate::{
     document::ProvDocument,
     error::{ProvenanceError, Result},
-    events::{CallScope, ProvEvent, ProvEventData, ToolSessionStepOpKind},
+    events::{AuditDecision, CallScope, ProvEvent, ProvEventData, ToolSessionStepOpKind},
     graph_model::GraphNodeLabel,
     host_ingress_identity::host_ingress_message_id,
     host_ingress_types::{HostDispatchFailureKind, HostIngressKind},
@@ -2735,6 +2736,102 @@ fn normalize_event_with_registry(
                 )?;
             }
         }
+        ProvEventData::AuditDecision { decision } => {
+            use crate::types::ProvEntityId;
+
+            let context_id =
+                event
+                    .context_id_opt()
+                    .ok_or_else(|| ProvenanceError::InvalidEvent {
+                        activity_anchor: event.id().as_str().to_string(),
+                        reason: "audit decision must carry context_id".to_string(),
+                    })?;
+            let node_id = ProvEntityId::from_write_time_node_id(format!(
+                "audit-decision:{}:{}",
+                context_id.as_str(),
+                decision.identity_key()
+            ));
+            let mut attrs = base_attrs(event);
+            attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(decision.agent_id().as_str().to_string()),
+            );
+            attrs.insert(
+                "audit_decision_kind".to_string(),
+                Value::String(decision.kind().to_string()),
+            );
+            match decision {
+                AuditDecision::OwnershipAcquired {
+                    boot_event_id,
+                    runner_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_boot_event_id".to_string(),
+                        Value::String(boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_runner_id".to_string(),
+                        Value::String(runner_id.clone()),
+                    );
+                }
+                AuditDecision::OwnershipHandedOff {
+                    from_boot_event_id,
+                    to_boot_event_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_from_boot_event_id".to_string(),
+                        Value::String(from_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_boot_event_id".to_string(),
+                        Value::String(to_boot_event_id.as_str().to_string()),
+                    );
+                }
+                AuditDecision::OwnershipTakenOver {
+                    from_boot_event_id,
+                    to_boot_event_id,
+                    reason,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_from_boot_event_id".to_string(),
+                        Value::String(from_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_boot_event_id".to_string(),
+                        Value::String(to_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(reason.clone()));
+                }
+                AuditDecision::PairServedElsewhere {
+                    owner_boot_event_id,
+                    requesting_boot_event_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_owner_boot_event_id".to_string(),
+                        Value::String(owner_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_requesting_boot_event_id".to_string(),
+                        Value::String(requesting_boot_event_id.as_str().to_string()),
+                    );
+                }
+            }
+            attrs.insert(
+                prov::LABEL.to_string(),
+                Value::String(GraphNodeLabel::AuditDecision.as_str().to_string()),
+            );
+            doc.insert_entity(
+                node_id,
+                Entity {
+                    prov_type: Some(GraphNodeLabel::AuditDecision.as_str().to_string()),
+                    attributes: attrs,
+                },
+            );
+        }
         ProvEventData::ContextCompactionRecorded {
             covered_event_order_start,
             covered_event_order_end,
@@ -3002,6 +3099,13 @@ pub fn validate_event(event: &ProvEvent) -> Result<()> {
                 });
             }
         }
+        ProvEventData::AuditDecision { .. } if event.context_id_opt().is_none() => {
+            return Err(ProvenanceError::InvalidEvent {
+                activity_anchor: event.id().as_str().to_string(),
+                reason: "audit decision must carry context_id".to_string(),
+            });
+        }
+        ProvEventData::AuditDecision { .. } => {}
         _ => {}
     }
     Ok(())

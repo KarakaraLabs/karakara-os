@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1093,6 +1094,15 @@ mod tests {
     #[async_trait]
     impl ProvenanceWriter for RecordingWriter {
         async fn add_event(&self, event: ProvEvent) -> crate::error::Result<()> {
+            self.events.lock().unwrap().push(event);
+            Ok(())
+        }
+
+        async fn add_event_fenced(
+            &self,
+            event: ProvEvent,
+            _fence: crate::ContextAgentFence,
+        ) -> crate::error::Result<()> {
             self.events.lock().unwrap().push(event);
             Ok(())
         }

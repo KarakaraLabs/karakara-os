@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -376,6 +377,14 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         event: ProvEvent,
     ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
         self.provenance.add_event(event).await
+    }
+
+    async fn add_event_fenced(
+        &self,
+        event: ProvEvent,
+        fence: baml_rt_provenance::ContextAgentFence,
+    ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
+        self.provenance.add_event_fenced(event, fence).await
     }
 }
 

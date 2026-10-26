@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::{SurrealProvenanceStore, payload::payload_records_from_event};
 use crate::{
+    context_agent_leases::ContextAgentFence,
     error::{ProvenanceError, Result},
     events::ProvEventData,
     normalizer::{NormalizeContext, validate_event},
@@ -20,9 +21,12 @@ use crate::{
     task_agent_binding::event_local_executing_agent_id,
 };
 
-#[async_trait]
-impl ProvenanceWriter for SurrealProvenanceStore {
-    async fn add_event(&self, event: crate::events::ProvEvent) -> Result<()> {
+impl SurrealProvenanceStore {
+    async fn write_event(
+        &self,
+        event: crate::events::ProvEvent,
+        fence: Option<&ContextAgentFence>,
+    ) -> Result<()> {
         validate_event(&event)?;
         self.enforce_message_activity_anchor_invariant(&event)
             .await?;
@@ -147,12 +151,19 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             "provenance add_event write txn"
         );
         for plan in plans {
+            let plan = match fence {
+                Some(fence) => plan.with_fence_guard(fence),
+                None => plan,
+            };
             if plan.shared {
                 self.run_shared_event_write(context_id_opt.as_deref(), plan)
                     .await?;
             } else {
                 self.run_event_write_plan(plan).await?;
             }
+        }
+        if let Some(fence) = fence {
+            self.ensure_context_agent_fence(fence).await?;
         }
 
         self.update_context_picker_index(&event).await?;
@@ -169,5 +180,20 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             baml_rt_tools::archive_refs::invalidate_ref_table(tables, ctx);
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ProvenanceWriter for SurrealProvenanceStore {
+    async fn add_event(&self, event: crate::events::ProvEvent) -> Result<()> {
+        self.write_event(event, None).await
+    }
+
+    async fn add_event_fenced(
+        &self,
+        event: crate::events::ProvEvent,
+        fence: ContextAgentFence,
+    ) -> Result<()> {
+        self.write_event(event, Some(&fence)).await
     }
 }

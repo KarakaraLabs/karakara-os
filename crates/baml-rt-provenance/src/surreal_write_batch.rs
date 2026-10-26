@@ -43,6 +43,7 @@ use dashmap::DashMap;
 use serde_json::Value;
 
 use crate::{
+    context_agent_leases::ContextAgentFence,
     graph_model::GraphNodeLabel,
     id_semantics::{context_entity_id_string, task_entity_id_string_raw},
     normalizer::{A2aRelationType, HeadPointerRepoint, NormalizedProv},
@@ -83,6 +84,61 @@ pub(crate) struct EventWritePlan {
     pub shared: bool,
     /// Reference records this plan writes; recorded only if the transaction commits.
     coalesced: Vec<(String, u64)>,
+}
+
+/// Opening statements of every fenced transaction.
+///
+/// The event body only runs when the presented fence still matches the live
+/// lease. A stale writer therefore commits an empty transaction rather than
+/// aborting it: SurrealDB reports a transaction abort back to the client
+/// without the `THROW` payload, so the writer checks the pair again after the
+/// commit and returns the typed stale-fence error itself.
+const FENCE_GUARD_SQL: &str = "LET $lease_token = SELECT VALUE fencing_token \
+     FROM context_agent_leases \
+     WHERE context_id = $fence_ctx \
+       AND agent_id = $fence_agent \
+       AND boot_event_id = $fence_boot \
+       AND fencing_token = $fence_token \
+       AND released = false \
+     LIMIT 1;";
+
+impl EventWritePlan {
+    /// Prepend the lease-fence guard and its binds to this transaction.
+    pub(crate) fn with_fence_guard(mut self, fence: &ContextAgentFence) -> Self {
+        if self.sql.is_empty() {
+            return self;
+        }
+        let body = self
+            .sql
+            .strip_prefix("BEGIN;\n")
+            .and_then(|sql| sql.strip_suffix("\nCOMMIT;"))
+            .map(str::to_string)
+            .unwrap_or_else(|| self.sql.clone());
+        self.sql = format!(
+            "BEGIN;\n{FENCE_GUARD_SQL}\nIF array::len($lease_token) = 1 {{\n{body};\n}};\nCOMMIT;"
+        );
+        self.statement_count += 2;
+        // A stale fence commits an empty transaction. Reference records from
+        // that plan did not land, so they must not enter the coalescing cache.
+        self.coalesced.clear();
+        self.binds.push(TxBind {
+            name: "fence_ctx".to_string(),
+            value: Value::String(fence.context_id.as_str().to_string()),
+        });
+        self.binds.push(TxBind {
+            name: "fence_agent".to_string(),
+            value: Value::String(fence.agent_id.as_str().to_string()),
+        });
+        self.binds.push(TxBind {
+            name: "fence_boot".to_string(),
+            value: Value::String(fence.boot_event_id.as_str().to_string()),
+        });
+        self.binds.push(TxBind {
+            name: "fence_token".to_string(),
+            value: Value::from(fence.fencing_token),
+        });
+        self
+    }
 }
 
 /// Executable transaction plan for [`SurrealProvenanceStore::run_event_write_plan`].

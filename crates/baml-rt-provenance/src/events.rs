@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -604,6 +605,14 @@ pub enum ProvEventData {
         source_render_hash: String,
         excluded_unresolved: bool,
     },
+    /// Operator-only record of an execution-ownership decision.
+    ///
+    /// The mutable lease row and the decision are deliberately different data:
+    /// a heartbeat or token touch is operational noise, while acquiring,
+    /// handing off, taking over, or refusing a pair is a permanent fact about
+    /// why a turn ran where it did. These rows carry no message payload and are
+    /// never rendered as a chat turn or included in an agent prompt.
+    AuditDecision { decision: AuditDecision },
 }
 
 /// Why host context compaction ran.
@@ -660,6 +669,75 @@ pub struct DelegationLinkedSpec {
     pub caller_name: String,
     pub target_name: String,
     pub tool_session_id: String,
+}
+
+/// One operator-only execution-ownership decision.
+///
+/// The context is carried by the enclosing event. Each variant's fields are the
+/// decision's full explanation; none of them is a graph relationship the reader
+/// has to reconstruct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum AuditDecision {
+    /// A boot began owning the pair where no lease row existed.
+    OwnershipAcquired {
+        agent_id: AgentId,
+        boot_event_id: ActivityAnchorId,
+        runner_id: String,
+    },
+    /// A planned deploy moved ownership from one boot to another.
+    OwnershipHandedOff {
+        agent_id: AgentId,
+        from_boot_event_id: ActivityAnchorId,
+        to_boot_event_id: ActivityAnchorId,
+    },
+    /// A stale or released lease let another boot take the pair.
+    OwnershipTakenOver {
+        agent_id: AgentId,
+        from_boot_event_id: ActivityAnchorId,
+        to_boot_event_id: ActivityAnchorId,
+        reason: String,
+    },
+    /// A request for the pair reached a boot that does not own it.
+    PairServedElsewhere {
+        agent_id: AgentId,
+        owner_boot_event_id: ActivityAnchorId,
+        requesting_boot_event_id: ActivityAnchorId,
+    },
+}
+
+impl AuditDecision {
+    /// Stable wire/display kind. Deliberately distinct from the graph label.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::OwnershipAcquired { .. } => "ownership_acquired",
+            Self::OwnershipHandedOff { .. } => "ownership_handed_off",
+            Self::OwnershipTakenOver { .. } => "ownership_taken_over",
+            Self::PairServedElsewhere { .. } => "pair_served_elsewhere",
+        }
+    }
+
+    /// Agent whose pair this decision concerns.
+    #[must_use]
+    pub const fn agent_id(&self) -> &AgentId {
+        match self {
+            Self::OwnershipAcquired { agent_id, .. }
+            | Self::OwnershipHandedOff { agent_id, .. }
+            | Self::OwnershipTakenOver { agent_id, .. }
+            | Self::PairServedElsewhere { agent_id, .. } => agent_id,
+        }
+    }
+
+    /// Identity of this decision, independent of the attempt that emitted it.
+    ///
+    /// The normalizer uses this to keep a retried decision to one node rather
+    /// than one node per attempt.
+    #[must_use]
+    pub fn identity_key(&self) -> String {
+        let encoded = serde_json::to_string(self).unwrap_or_else(|_| format!("{self:?}"));
+        sha256_hex(encoded)
+    }
 }
 
 /// AgentBooted has no context by design—it is a global event before any conversation.
@@ -1824,6 +1902,25 @@ impl ProvEvent {
                 target_name,
                 tool_session_id,
             },
+        })
+    }
+
+    /// Append one operator-only ownership or binding decision.
+    pub fn audit_decision(context_id: ContextId, decision: AuditDecision) -> Self {
+        Self::audit_decision_with_id(next_activity_anchor_id(), context_id, decision)
+    }
+
+    /// Append an ownership decision with a reserved anchor.
+    pub fn audit_decision_with_id(
+        id: ActivityAnchorId,
+        context_id: ContextId,
+        decision: AuditDecision,
+    ) -> Self {
+        ProvEvent::Global(GlobalEvent {
+            id,
+            context_id,
+            timestamp_ms: now_millis(),
+            data: ProvEventData::AuditDecision { decision },
         })
     }
 

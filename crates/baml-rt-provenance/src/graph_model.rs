@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -44,6 +45,8 @@ pub enum GraphNodeLabel {
     CompactionSummary,
     /// Typed delegation lineage entity (parent/child task, caller, target, session).
     Delegation,
+    /// Operator-only record of an execution-ownership or binding decision.
+    AuditDecision,
 }
 
 impl GraphNodeLabel {
@@ -75,6 +78,7 @@ impl GraphNodeLabel {
             Self::ContextCompaction => "ContextCompaction",
             Self::CompactionSummary => "CompactionSummary",
             Self::Delegation => "Delegation",
+            Self::AuditDecision => "AuditDecision",
         }
     }
 
@@ -106,6 +110,7 @@ impl GraphNodeLabel {
             "ContextCompaction" => Some(Self::ContextCompaction),
             "CompactionSummary" => Some(Self::CompactionSummary),
             "Delegation" => Some(Self::Delegation),
+            "AuditDecision" => Some(Self::AuditDecision),
             _ => None,
         }
     }
@@ -172,9 +177,10 @@ pub enum EventGraphKind {
     HostDispatchRejected,
     ContextCompactionRecorded,
     DelegationLinked,
+    AuditDecision,
 }
 
-pub const ALL_EVENT_KINDS: [EventGraphKind; 25] = [
+pub const ALL_EVENT_KINDS: [EventGraphKind; 26] = [
     EventGraphKind::IntentResolved,
     EventGraphKind::PlanGenerated,
     EventGraphKind::PlanStepStatusChanged,
@@ -200,6 +206,7 @@ pub const ALL_EVENT_KINDS: [EventGraphKind; 25] = [
     EventGraphKind::HostDispatchRejected,
     EventGraphKind::ContextCompactionRecorded,
     EventGraphKind::DelegationLinked,
+    EventGraphKind::AuditDecision,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -489,6 +496,15 @@ const MAPPING_CONTEXT_COMPACTION_RECORDED: EventGraphMapping = EventGraphMapping
     required_properties: &[a2a::CONTEXT_ID, a2a::SUMMARY_TEXT],
 };
 
+/// Operator-only ownership or binding decision. No edges: the row itself is
+/// the explanation, and an edge would put it in agent-visible traversals.
+const MAPPING_AUDIT_DECISION: EventGraphMapping = EventGraphMapping {
+    kind: EventGraphKind::AuditDecision,
+    primary_node: GraphNodeLabel::AuditDecision,
+    expected_edges: &[],
+    required_properties: &[a2a::CONTEXT_ID, a2a::AGENT_ID],
+};
+
 pub fn event_kind_from_data(data: &ProvEventData) -> EventGraphKind {
     match data {
         ProvEventData::IntentResolved { .. } => EventGraphKind::IntentResolved,
@@ -520,6 +536,7 @@ pub fn event_kind_from_data(data: &ProvEventData) -> EventGraphKind {
         ProvEventData::ContextCompactionRecorded { .. } => {
             EventGraphKind::ContextCompactionRecorded
         }
+        ProvEventData::AuditDecision { .. } => EventGraphKind::AuditDecision,
     }
 }
 
@@ -552,6 +569,7 @@ pub fn mapping_for_event_kind(kind: EventGraphKind) -> &'static EventGraphMappin
         EventGraphKind::HostDispatchRejected => &MAPPING_HOST_DISPATCH_REJECTED,
         EventGraphKind::ContextCompactionRecorded => &MAPPING_CONTEXT_COMPACTION_RECORDED,
         EventGraphKind::DelegationLinked => &MAPPING_DELEGATION_LINKED,
+        EventGraphKind::AuditDecision => &MAPPING_AUDIT_DECISION,
     }
 }
 

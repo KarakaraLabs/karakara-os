@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -56,6 +57,17 @@ pub enum ProvenanceError {
     /// Head-pointer lookup timed out during episode assembly.
     #[error("task {task_id} executing-agent resolution timed out during episode assembly")]
     EpisodeAgentResolutionTimedOut { task_id: TaskId },
+    /// A write presented a fence older than the pair's current lease.
+    #[error(
+        "stale context-agent lease fence for context {context_id}, agent {agent_id} \
+         (boot {boot_event_id}, token {fencing_token})"
+    )]
+    StaleContextAgentLease {
+        context_id: String,
+        agent_id: String,
+        boot_event_id: String,
+        fencing_token: u64,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ProvenanceError>;

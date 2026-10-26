@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -158,7 +159,8 @@ fn dot_node_attrs(label: &str) -> (&'static str, &'static str) {
             | GraphNodeLabel::SessionStep
             | GraphNodeLabel::ContextCompaction
             | GraphNodeLabel::CompactionSummary
-            | GraphNodeLabel::Delegation,
+            | GraphNodeLabel::Delegation
+            | GraphNodeLabel::AuditDecision,
         ) => ("box", "#ecfeff"),
         None => ("box", "#f1f5f9"),
     }

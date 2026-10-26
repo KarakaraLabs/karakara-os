@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,10 +12,10 @@ use crate::{
     error::Result,
     surreal_tables::{
         TBL_AGENT_ARTIFACT_REGISTRY, TBL_AGENT_IDENTITY_REGISTRY, TBL_ARCHIVE_BODY,
-        TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_COMPACTION_INDEX,
-        TBL_CONTEXT_PICKER_INDEX, TBL_CONTEXT_PLANNING_INDEX, TBL_CONTEXT_TRANSCRIPT_INDEX,
-        TBL_EDGE, TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD, TBL_PAYLOAD_BLOB,
-        TBL_SESSION_REF_COUNTER,
+        TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_AGENT_LEASES,
+        TBL_CONTEXT_COMPACTION_INDEX, TBL_CONTEXT_PICKER_INDEX, TBL_CONTEXT_PLANNING_INDEX,
+        TBL_CONTEXT_TRANSCRIPT_INDEX, TBL_EDGE, TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD,
+        TBL_PAYLOAD_BLOB, TBL_SESSION_REF_COUNTER,
     },
 };
 
@@ -135,6 +136,13 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
         ),
         format!(
             "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_order ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, event_order"
+        ),
+        // Operational ownership row. No node/edge, no transcript index: the
+        // lease is only mutable current state and must never reach an agent
+        // view. The unique pair index makes first acquisition a CAS.
+        format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_AGENT_LEASES}"),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_context_agent_lease_pair ON {TBL_CONTEXT_AGENT_LEASES} FIELDS context_id, agent_id UNIQUE"
         ),
         // Full-text search on denormalized search_text (blob-backed bodies are not indexed in-table)
         "DEFINE ANALYZER IF NOT EXISTS payload_analyzer TOKENIZERS blank, class FILTERS snowball(english)".to_string(),
