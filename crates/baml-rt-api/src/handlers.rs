@@ -706,6 +706,25 @@ pub async fn post_a2a(
         .and_then(|id| lookup_eval_session(state.as_ref(), id))
         .and_then(|spec| spec.model);
 
+    let expected_agent_id = match headers
+        .get("x-agentium-expected-agent-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(raw) => Some(
+            baml_rt_core::ids::UuidId::parse_str(raw)
+                .map(baml_rt_core::AgentId::from_uuid)
+                .map_err(|e| {
+                    record_metric("bad_request");
+                    problem(
+                        400,
+                        "Bad Request",
+                        format!("invalid expected agent id: {e}"),
+                    )
+                })?,
+        ),
+        None => None,
+    };
+
     let expected_artifact_hash = match headers
         .get("x-agentium-expected-artifact-hash")
         .and_then(|value| value.to_str().ok())
@@ -725,7 +744,12 @@ pub async fn post_a2a(
     let run = async {
         state
             .registry
-            .handle_a2a_stream_with_precondition(&key, wire, expected_artifact_hash.as_ref())
+            .handle_a2a_stream_with_precondition(
+                &key,
+                wire,
+                expected_agent_id.as_ref(),
+                expected_artifact_hash.as_ref(),
+            )
             .await
     };
     let stream_result = match eval_model {

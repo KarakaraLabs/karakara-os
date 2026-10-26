@@ -80,10 +80,16 @@ impl AgentRegistry for RunnerRegistry {
         &self,
         key: &AgentRouteKey,
         request: A2aWireRequest,
+        expected_agent_id: Option<&AgentId>,
         expected_artifact_hash: Option<&baml_rt_core::ArtifactHash>,
     ) -> Result<BusStream<A2aStreamChunk>> {
         self.0
-            .handle_a2a_by_key_with_precondition(key, request, expected_artifact_hash)
+            .handle_a2a_by_key_with_precondition(
+                key,
+                request,
+                expected_agent_id,
+                expected_artifact_hash,
+            )
             .await
     }
 
@@ -117,6 +123,8 @@ impl A2aRequestHandler for RunnerRegistry {
 pub(crate) struct Placement {
     pub(crate) endpoint: String,
     pub(crate) service_instance_id: String,
+    /// Stable identity of the packaged agent hosted at this placement.
+    pub(crate) agent_id: AgentId,
     /// Exact package blob the placement advertised. Missing rows are not routable.
     pub(crate) artifact_hash: baml_rt_core::ArtifactHash,
 }
@@ -257,9 +265,10 @@ impl InternalA2aRouter {
                     if let (Some(caller_agent_id), Some(delegation)) = (caller_agent_id, delegation)
                     {
                         record_delegation_lineage(
-                            &routed_agent,
+                            routed_agent.provenance_writer().as_ref(),
                             caller,
                             caller_agent_id,
+                            routed_agent.agent_id(),
                             delegation,
                         )
                         .await?;
@@ -280,9 +289,10 @@ impl InternalA2aRouter {
                     if let (Some(caller_agent_id), Some(delegation)) = (caller_agent_id, delegation)
                     {
                         record_delegation_lineage(
-                            &routed_agent,
+                            routed_agent.provenance_writer().as_ref(),
                             caller,
                             caller_agent_id,
+                            routed_agent.agent_id(),
                             delegation,
                         )
                         .await?;
@@ -293,9 +303,10 @@ impl InternalA2aRouter {
                     if let (Some(caller_agent_id), Some(delegation)) = (caller_agent_id, delegation)
                     {
                         record_delegation_lineage(
-                            &routed_agent,
+                            routed_agent.provenance_writer().as_ref(),
                             caller,
                             caller_agent_id,
+                            routed_agent.agent_id(),
                             delegation,
                         )
                         .await?;
@@ -310,25 +321,56 @@ impl InternalA2aRouter {
 
         // Cluster fallback: forward to the remote runner hosting this agent.
         if let Some(resolver) = self.cluster.get() {
-            // Placement resolution does not yet return the target's stable
-            // AgentId, and neither lineage nor the context route binding must be
-            // reconstructed from the request body. Cross-runner lineage and
-            // binding admission land with placement identity (plan S11).
-            if delegation.is_some() {
-                tracing::debug!(
-                    agent = %key.agent_package.as_str(),
-                    "delegation lineage not recorded for remote target yet"
-                );
-            }
             match resolver.resolve(&key).await {
                 Ok(Some(placement)) => {
+                    let (_, context_id) = scope_and_context_from_request(
+                        request.as_ref(),
+                        placement.agent_id.clone(),
+                    );
+                    if let Some(context_id) = context_id.as_ref() {
+                        runner
+                            .admit_context_route_binding_resolved(
+                                &key,
+                                context_id,
+                                &placement.agent_id,
+                                &placement.artifact_hash,
+                            )
+                            .await?;
+                    }
+                    if let (Some(caller_agent_id), Some(delegation)) = (caller_agent_id, delegation)
+                    {
+                        record_delegation_lineage(
+                            runner.provenance_config().store().as_ref(),
+                            caller,
+                            caller_agent_id,
+                            &placement.agent_id,
+                            delegation,
+                        )
+                        .await?;
+                    }
                     tracing::info!(
                         agent = %key.agent_package.as_str(),
                         endpoint = %placement.endpoint,
                         target_service_instance_id = %placement.service_instance_id,
+                        agent_id = %placement.agent_id.as_str(),
                         artifact_hash = %placement.artifact_hash.as_str(),
                         "routing A2A request to remote runner"
                     );
+                    if let Some(context_id) = context_id.as_ref()
+                        && let Some(owner) = runner
+                            .provenance_config()
+                            .store()
+                            .read_context_agent_lease(context_id, &placement.agent_id)
+                            .await
+                            .map_err(|error| {
+                                BamlRtError::Io(std::io::Error::other(format!(
+                                    "context-agent lease read failed for {} in {context_id}: {error}",
+                                    key.agent_package.as_str()
+                                )))
+                            })?
+                    {
+                        return self.forward_to_lease_owner(&key, &owner, request).await;
+                    }
                     return self.forward_to_runner(&placement, &key, request).await;
                 }
                 Err(e) => {
@@ -372,6 +414,7 @@ impl InternalA2aRouter {
             telemetry_instance,
             ingress_service_instance_id,
             Some(placement.service_instance_id.as_str()),
+            placement.agent_id.as_str(),
             placement.artifact_hash.as_str(),
         )
         .await
@@ -462,9 +505,10 @@ impl ScopedInternalA2aRouter {
 /// Caller identity comes from the scoped router and target identity from the
 /// resolved local agent. Nothing here is read out of request metadata.
 async fn record_delegation_lineage(
-    routed_agent: &baml_rt_a2a::A2aAgent,
+    writer: &dyn baml_rt_provenance::ProvenanceWriter,
     caller: &AgentRouteKey,
     caller_agent_id: &AgentId,
+    target_agent_id: &AgentId,
     delegation: &baml_rt_core::DelegationCallContext,
 ) -> Result<()> {
     use baml_rt_provenance::{DelegationLinkedSpec, ProvEvent};
@@ -480,21 +524,17 @@ async fn record_delegation_lineage(
         parent_task_id,
         child_task_id: delegation.child_task_id.clone(),
         caller_agent_id: caller_agent_id.clone(),
-        target_agent_id: routed_agent.agent_id().clone(),
+        target_agent_id: target_agent_id.clone(),
         caller_name: caller.agent_package.as_str().to_string(),
         target_name: delegation.target_name.clone(),
         tool_session_id: delegation.tool_session_id.clone(),
     });
     let anchor = event.id().as_str().to_string();
-    routed_agent
-        .provenance_writer()
-        .add_event(event)
-        .await
-        .map_err(|err| {
-            BamlRtError::Io(std::io::Error::other(format!(
-                "delegation lineage write failed ({anchor}): {err}"
-            )))
-        })
+    writer.add_event(event).await.map_err(|err| {
+        BamlRtError::Io(std::io::Error::other(format!(
+            "delegation lineage write failed ({anchor}): {err}"
+        )))
+    })
 }
 
 /// Build scope from request so coordinator and delegated flow share one context_id.
@@ -616,6 +656,10 @@ mod tests {
                 request_text.contains("x-agentium-expected-artifact-hash:"),
                 "forwarded request must carry the placement artifact precondition: {request_text}"
             );
+            assert!(
+                request_text.contains("x-agentium-expected-agent-id:"),
+                "forwarded request must carry the placement agent precondition: {request_text}"
+            );
 
             let headers =
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
@@ -633,6 +677,10 @@ mod tests {
         let placement = Placement {
             endpoint: format!("http://{cluster_ip}:{port}"),
             service_instance_id: "runner-serving".to_string(),
+            agent_id: AgentId::from_uuid(
+                baml_rt_core::ids::UuidId::parse_str("00000000-0000-0000-0000-000000000011")
+                    .unwrap(),
+            ),
             artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"test artifact"),
         };
         let key = AgentRouteKey::new(AgentPackageName::parse("remote-agent").unwrap());

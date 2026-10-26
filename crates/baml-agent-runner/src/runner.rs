@@ -244,12 +244,27 @@ impl AgentRunner {
         let Some(artifact_hash) = artifact_hash else {
             return Ok(());
         };
+        self.admit_context_route_binding_resolved(key, context_id, agent_id, &artifact_hash)
+            .await
+    }
 
+    /// Admit a turn against a binding using an already-resolved remote pair.
+    ///
+    /// Cluster placement carries the target's stable `AgentId` and exact
+    /// artifact, so a remote target is admitted before forwarding instead of
+    /// after the receiving runner has already been chosen.
+    pub(crate) async fn admit_context_route_binding_resolved(
+        &self,
+        key: &AgentRouteKey,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        artifact_hash: &ArtifactHash,
+    ) -> Result<()> {
         let request = baml_rt_provenance::ContextRouteBindingRequest::new(
             context_id.clone(),
             key.agent_package.as_str(),
             agent_id.clone(),
-            artifact_hash,
+            artifact_hash.clone(),
         );
         match self
             .provenance_config
@@ -805,16 +820,21 @@ impl AgentRunner {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
-        self.handle_a2a_by_key_with_precondition(key, request, None)
+        self.handle_a2a_by_key_with_precondition(key, request, None, None)
             .await
     }
 
-    /// Resolve the route and verify an optional expected artifact hash against the exact
+    /// Resolve the route and verify optional expected identity against the exact
     /// booted agent selected for dispatch, before any task or provenance write.
+    ///
+    /// The receiver checks both the stable `AgentId` and the exact artifact hash:
+    /// two artifacts can share one `AgentId`, so an ID-only check would accept a
+    /// runner carrying different bytes.
     pub(crate) async fn handle_a2a_by_key_with_precondition(
         &self,
         key: &AgentRouteKey,
         request: A2aWireRequest,
+        expected_agent_id: Option<&AgentId>,
         expected_artifact_hash: Option<&ArtifactHash>,
     ) -> Result<BusStream<A2aStreamChunk>> {
         // Check drain state and resolve route atomically so requests cannot
@@ -827,6 +847,15 @@ impl AgentRunner {
                     return Err(BamlRtError::AgentDraining(format!(
                         "Agent {agent} is draining (undeploy in progress)",
                     )));
+                }
+                if let Some(expected) = expected_agent_id {
+                    let actual = booted.agent.agent_id();
+                    if actual != expected {
+                        return Err(BamlRtError::InvalidArgument(format!(
+                            "agent precondition failed for {}: expected {expected}, serving {actual}",
+                            key.agent_package.as_str()
+                        )));
+                    }
                 }
                 if let Some(expected) = expected_artifact_hash {
                     let actual = booted.artifact_hash().ok_or_else(|| {
@@ -892,12 +921,45 @@ impl AgentRunner {
         if let Some(resolver) = self.internal_a2a_router.cluster_resolver() {
             match resolver.resolve(key).await {
                 Ok(Some(placement)) => {
+                    let (_, context_id) = scope_and_context_from_request(
+                        request.as_ref(),
+                        placement.agent_id.clone(),
+                    );
+                    if let Some(context_id) = context_id.as_ref() {
+                        self.admit_context_route_binding_resolved(
+                            key,
+                            context_id,
+                            &placement.agent_id,
+                            &placement.artifact_hash,
+                        )
+                        .await?;
+                    }
                     tracing::info!(
                         agent = %key.agent_package.as_str(),
                         endpoint = %placement.endpoint,
                         target_service_instance_id = %placement.service_instance_id,
+                        agent_id = %placement.agent_id.as_str(),
+                        artifact_hash = %placement.artifact_hash.as_str(),
                         "forwarding external A2A request to remote runner"
                     );
+                    if let Some(context_id) = context_id.as_ref()
+                        && let Some(owner) = self
+                            .provenance_config
+                            .store()
+                            .read_context_agent_lease(context_id, &placement.agent_id)
+                            .await
+                            .map_err(|error| {
+                                BamlRtError::Io(std::io::Error::other(format!(
+                                    "context-agent lease read failed for {} in {context_id}: {error}",
+                                    key.agent_package.as_str()
+                                )))
+                            })?
+                    {
+                        return self
+                            .internal_a2a_router
+                            .forward_to_lease_owner(key, &owner, request)
+                            .await;
+                    }
                     return self
                         .internal_a2a_router
                         .forward_to_runner(&placement, key, request)
@@ -1277,6 +1339,7 @@ impl AgentRunner {
                 "Artifact integrity failure: booted package recorded {booted_artifact_hash}, expected {artifact_hash}"
             )));
         }
+        let booted_agent_id = booted.agent.agent_id().clone();
 
         {
             let mut agents = self.agents.write().expect("RwLock poison");
@@ -1342,7 +1405,6 @@ impl AgentRunner {
             content_hash = %content_hash.as_str(),
             "deployment record persisted; POST /deploy completing"
         );
-
         // Record agent placement in cluster registry (if cluster mode is active).
         if let Some(cluster_mgr) = self.cluster_manager.get()
             && let Err(e) = cluster_mgr
@@ -1350,6 +1412,7 @@ impl AgentRunner {
                     &route_key,
                     content_hash,
                     Some(&booted_artifact_hash),
+                    Some(&booted_agent_id),
                 )
                 .await
         {
