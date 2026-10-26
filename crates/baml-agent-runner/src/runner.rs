@@ -474,7 +474,8 @@ impl AgentRunner {
         package_file.flush().map_err(BamlRtError::Io)?;
 
         let package = AgentPackage::load_from_file(package_file.path()).await?;
-        let agent_id = package.derived_agent_id()?;
+        let identity_digest = package.identity_digest()?;
+        let agent_id = AgentId::from_identity_digest(&identity_digest);
         if let Some(expected_agent_id) = expected_agent_id
             && &agent_id != expected_agent_id
         {
@@ -501,10 +502,13 @@ impl AgentRunner {
                     entries: self.discovery_entries(),
                 })
             };
-        let (agent, booted_agent_id) = package
+        let (agent, booted_agent_id, boot_event_id) = package
             .boot(AgentPackageBootArgs {
                 agent_id: agent_id.clone(),
                 artifact_hash: artifact_hash.clone(),
+                identity_digest,
+                deployment_content_hash: content_hash.clone(),
+                repository_version,
                 shared_context_ref_store: self.shared_context_ref_store.clone(),
                 provenance_config: self.provenance_config(),
                 policy: self.access_policy(),
@@ -550,6 +554,7 @@ impl AgentRunner {
                 version: repository_version,
             },
             lifecycle: Arc::new(AtomicU8::new(0)),
+            boot_event_id,
         };
         Ok((name, route_key, booted))
     }
@@ -1193,7 +1198,11 @@ impl DeploymentManager for AgentRunner {
         //    cluster — restart will re-deploy and emit a fresh AgentBooted
         //    without an orphaned AgentStopped in the graph.
         let agent_id = booted.agent.agent_id().clone();
-        let stop_event = ProvEvent::agent_stopped(agent_id, "undeploy".to_string());
+        let stop_event = ProvEvent::agent_stopped(
+            agent_id,
+            booted.boot_event_id.clone(),
+            "undeploy".to_string(),
+        );
         let store = self.provenance_config.store();
         if let Err(e) = store.add_event(stop_event).await {
             tracing::warn!(

@@ -15,10 +15,10 @@ use super::{
 };
 use crate::{
     error::Result,
-    id_semantics::{AgentRuntimeInstanceId, AgentRuntimeInstanceInput},
+    id_semantics::{AgentNodeId, AgentNodeInput},
     metamodel::{GraphQuery, labels},
     store::TaskAgentResolution,
-    surreal_tables::TBL_AGENT_PACKAGE_INSTANCE,
+    surreal_tables::TBL_AGENT_IDENTITY_REGISTRY,
     types::ProvAgentId,
 };
 
@@ -98,7 +98,7 @@ impl SurrealProvenanceStore {
     pub(super) async fn load_agent_runtime_index_from_registry(&self) -> Result<AgentRuntimeIndex> {
         let sql = format!(
             "SELECT instance_node_id, agent_package, agent_id, agent_version \
-             FROM {TBL_AGENT_PACKAGE_INSTANCE}"
+             FROM {TBL_AGENT_IDENTITY_REGISTRY}"
         );
         let response = self.db.query(&sql).await.map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
@@ -147,11 +147,16 @@ impl SurrealProvenanceStore {
                 props.get("a2a_agent_version").and_then(Value::as_str),
                 "unknown",
             );
+            let identity_digest = normalize_agent_field(
+                props.get("identity_digest").and_then(Value::as_str),
+                "unknown",
+            );
             self.upsert_agent_package_registry_row(
                 instance_node_id,
                 &agent_package,
                 agent_id,
                 &agent_version,
+                &identity_digest,
             )
             .await?;
         }
@@ -163,15 +168,16 @@ impl SurrealProvenanceStore {
         agent_id: &AgentId,
         agent_package: &str,
         agent_version: &str,
+        identity_digest: &str,
     ) -> Result<()> {
         let instance_node_id =
-            ProvAgentId::derived::<AgentRuntimeInstanceId>(AgentRuntimeInstanceInput { agent_id })
-                .into_string();
+            ProvAgentId::derived::<AgentNodeId>(AgentNodeInput { agent_id }).into_string();
         self.upsert_agent_package_registry_row(
             &instance_node_id,
             agent_package,
             agent_id.as_str(),
             agent_version,
+            identity_digest,
         )
         .await?;
         self.invalidate_agent_runtime_index_cache();
@@ -184,14 +190,41 @@ impl SurrealProvenanceStore {
         agent_package: &str,
         agent_id: &str,
         agent_version: &str,
+        identity_digest: &str,
     ) -> Result<()> {
+        let select = format!(
+            "SELECT instance_node_id, agent_package, agent_id, agent_version, identity_digest \
+             FROM {TBL_AGENT_IDENTITY_REGISTRY} WHERE agent_id = $agent_id LIMIT 1"
+        );
+        let response = self
+            .db
+            .query(&select)
+            .bind(("agent_id", agent_id.to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        if let Some(existing) = rows.first() {
+            let exact = existing.get("instance_node_id").and_then(Value::as_str)
+                == Some(instance_node_id)
+                && existing.get("agent_package").and_then(Value::as_str) == Some(agent_package)
+                && existing.get("identity_digest").and_then(Value::as_str) == Some(identity_digest);
+            return if exact {
+                Ok(())
+            } else {
+                Err(crate::error::ProvenanceError::InvalidEvent {
+                    activity_anchor: "agent_registration".to_string(),
+                    reason: format!("immutable Agent registration mismatch for {agent_id}"),
+                })
+            };
+        }
         let sql = format!(
-            "UPSERT {TBL_AGENT_PACKAGE_INSTANCE} SET \
-               instance_node_id = $instance_node_id, \
-               agent_package = $agent_package, \
-               agent_id = $agent_id, \
-               agent_version = $agent_version \
-             WHERE instance_node_id = $instance_node_id"
+            "CREATE {TBL_AGENT_IDENTITY_REGISTRY} CONTENT {{
+               instance_node_id: $instance_node_id,
+               agent_package: $agent_package,
+               agent_id: $agent_id,
+               agent_version: $agent_version,
+               identity_digest: $identity_digest
+             }}"
         );
         self.db
             .query(&sql)
@@ -199,11 +232,95 @@ impl SurrealProvenanceStore {
             .bind(("agent_package", agent_package.to_string()))
             .bind(("agent_id", agent_id.to_string()))
             .bind(("agent_version", agent_version.to_string()))
+            .bind(("identity_digest", identity_digest.to_string()))
             .await
             .map_err(map_surreal_error)?
             .check()
             .map_err(map_surreal_error)?;
         Ok(())
+    }
+
+    pub(super) async fn register_agent_artifact(
+        &self,
+        artifact_hash: &str,
+        deployment_content_hash: &str,
+        repository_version: &str,
+    ) -> Result<()> {
+        use crate::surreal_tables::TBL_AGENT_ARTIFACT_REGISTRY;
+        let select = format!(
+            "SELECT deployment_content_hash, repository_version FROM {TBL_AGENT_ARTIFACT_REGISTRY} \
+             WHERE artifact_hash = $artifact_hash LIMIT 1"
+        );
+        let response = self
+            .db
+            .query(&select)
+            .bind(("artifact_hash", artifact_hash.to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        if let Some(existing) = rows.first() {
+            let exact = existing
+                .get("deployment_content_hash")
+                .and_then(Value::as_str)
+                == Some(deployment_content_hash)
+                && existing.get("repository_version").and_then(Value::as_str)
+                    == Some(repository_version);
+            return if exact {
+                Ok(())
+            } else {
+                Err(crate::error::ProvenanceError::InvalidEvent {
+                    activity_anchor: "agent_artifact_registration".to_string(),
+                    reason: format!(
+                        "immutable AgentArtifact registration mismatch for {artifact_hash}"
+                    ),
+                })
+            };
+        }
+        let insert = format!(
+            "CREATE {TBL_AGENT_ARTIFACT_REGISTRY} CONTENT {{
+                artifact_hash: $artifact_hash,
+                deployment_content_hash: $deployment_content_hash,
+                repository_version: $repository_version
+            }}"
+        );
+        self.db
+            .query(&insert)
+            .bind(("artifact_hash", artifact_hash.to_string()))
+            .bind((
+                "deployment_content_hash",
+                deployment_content_hash.to_string(),
+            ))
+            .bind(("repository_version", repository_version.to_string()))
+            .await
+            .map_err(map_surreal_error)?
+            .check()
+            .map_err(map_surreal_error)?;
+        Ok(())
+    }
+
+    pub(super) async fn active_boot_event_id(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Option<baml_rt_core::ids::ActivityAnchorId>> {
+        use crate::surreal_tables::TBL_NODE;
+        let sql = format!(
+            "SELECT props.a2a_activity_anchor AS boot_event_id, props.prov_time FROM {TBL_NODE} \
+             WHERE label = 'AgentBoot' AND props.a2a_agent_id = $agent_id \
+             ORDER BY props.prov_time DESC LIMIT 1"
+        );
+        let response = self
+            .db
+            .query(&sql)
+            .bind(("agent_id", agent_id.as_str().to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        Ok(rows
+            .first()
+            .and_then(|row| row.get("boot_event_id"))
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(baml_rt_core::ids::ActivityAnchorId::from))
     }
 
     pub(super) async fn execute_typed_node_query(

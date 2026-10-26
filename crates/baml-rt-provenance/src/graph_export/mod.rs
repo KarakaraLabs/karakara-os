@@ -773,7 +773,7 @@ fn derive_display_name(label: &str, props: &HashMap<String, serde_json::Value>) 
             let state = prop_str(a2a::TASK_STATE).unwrap_or_default();
             format!("📊 State {state}")
         }
-        Some(GraphNodeLabel::AgentRuntimeInstance) => {
+        Some(GraphNodeLabel::Agent | GraphNodeLabel::AgentRuntimeInstance) => {
             let agent_type = prop_str(a2a::AGENT_TYPE).unwrap_or_default();
             format!("🖥️ Agent {agent_type}")
         }
@@ -784,6 +784,10 @@ fn derive_display_name(label: &str, props: &HashMap<String, serde_json::Value>) 
         Some(GraphNodeLabel::AgentStop) => {
             let reason = prop_str("a2a_stop_reason").unwrap_or_default();
             format!("🛑 Stop {reason}")
+        }
+        Some(GraphNodeLabel::AgentArtifact) => {
+            let hash = prop_str("artifact_hash").unwrap_or_default();
+            format!("📦 Artifact {hash}")
         }
         Some(GraphNodeLabel::AgentArchive) => {
             let path = prop_str(a2a::ARCHIVE_PATH).unwrap_or_default();

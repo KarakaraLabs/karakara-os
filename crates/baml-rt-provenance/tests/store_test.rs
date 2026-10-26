@@ -428,15 +428,15 @@ async fn task_scoped_messages_without_agent_metadata_still_render_sequence_activ
     let mermaid = render_sequence_diagram(&simplified);
 
     assert!(
-        mermaid.contains("participant clickup_1_0_0"),
+        mermaid.contains("participant clickup_agent"),
         "expected named agent participant: {mermaid}"
     );
     assert!(
-        mermaid.contains("User->>+clickup_1_0_0: hello strict provenance"),
+        mermaid.contains("User->>+clickup_agent: hello strict provenance"),
         "expected user message activity line with strict graph semantics: {mermaid}"
     );
     assert!(
-        mermaid.contains("clickup_1_0_0->>-User: acknowledged"),
+        mermaid.contains("clickup_agent->>-User: acknowledged"),
         "expected agent response activity line with strict graph semantics: {mermaid}"
     );
 }

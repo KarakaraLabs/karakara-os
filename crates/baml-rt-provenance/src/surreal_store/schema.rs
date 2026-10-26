@@ -10,10 +10,11 @@ use super::helpers::map_surreal_error;
 use crate::{
     error::Result,
     surreal_tables::{
-        TBL_AGENT_PACKAGE_INSTANCE, TBL_ARCHIVE_BODY, TBL_ARCHIVE_LOCAL_COUNTER,
-        TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_COMPACTION_INDEX, TBL_CONTEXT_PICKER_INDEX,
-        TBL_CONTEXT_PLANNING_INDEX, TBL_CONTEXT_TRANSCRIPT_INDEX, TBL_EDGE,
-        TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD, TBL_PAYLOAD_BLOB, TBL_SESSION_REF_COUNTER,
+        TBL_AGENT_ARTIFACT_REGISTRY, TBL_AGENT_IDENTITY_REGISTRY, TBL_ARCHIVE_BODY,
+        TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_COMPACTION_INDEX,
+        TBL_CONTEXT_PICKER_INDEX, TBL_CONTEXT_PLANNING_INDEX, TBL_CONTEXT_TRANSCRIPT_INDEX,
+        TBL_EDGE, TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD, TBL_PAYLOAD_BLOB,
+        TBL_SESSION_REF_COUNTER,
     },
 };
 
@@ -96,12 +97,16 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
         format!(
             "DEFINE INDEX IF NOT EXISTS idx_session_ref_counter_ctx ON {TBL_SESSION_REF_COUNTER} FIELDS context_id UNIQUE"
         ),
-        format!("DEFINE TABLE IF NOT EXISTS {TBL_AGENT_PACKAGE_INSTANCE}"),
+        format!("DEFINE TABLE IF NOT EXISTS {TBL_AGENT_IDENTITY_REGISTRY}"),
         format!(
-            "DEFINE INDEX IF NOT EXISTS idx_agent_pkg_instance_node ON {TBL_AGENT_PACKAGE_INSTANCE} FIELDS instance_node_id UNIQUE"
+            "DEFINE INDEX IF NOT EXISTS idx_agent_identity_agent_id ON {TBL_AGENT_IDENTITY_REGISTRY} FIELDS agent_id UNIQUE"
         ),
         format!(
-            "DEFINE INDEX IF NOT EXISTS idx_agent_pkg_instance_package ON {TBL_AGENT_PACKAGE_INSTANCE} FIELDS agent_package"
+            "DEFINE INDEX IF NOT EXISTS idx_agent_identity_package ON {TBL_AGENT_IDENTITY_REGISTRY} FIELDS agent_package"
+        ),
+        format!("DEFINE TABLE IF NOT EXISTS {TBL_AGENT_ARTIFACT_REGISTRY}"),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_agent_artifact_hash ON {TBL_AGENT_ARTIFACT_REGISTRY} FIELDS artifact_hash UNIQUE"
         ),
         format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_PICKER_INDEX}"),
         format!(

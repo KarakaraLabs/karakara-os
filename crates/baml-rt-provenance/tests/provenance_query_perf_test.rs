@@ -264,14 +264,11 @@ async fn schema_defines_performance_indexes() {
         );
     }
 
-    let registry_info = table_info(&store, "agent_package_instance").await;
-    for name in [
-        "idx_agent_pkg_instance_node",
-        "idx_agent_pkg_instance_package",
-    ] {
+    let registry_info = table_info(&store, "agent_identity_registry").await;
+    for name in ["idx_agent_identity_agent_id", "idx_agent_identity_package"] {
         assert!(
             registry_info.contains(name),
-            "missing agent_package_instance index {name}: {registry_info}"
+            "missing agent_identity_registry index {name}: {registry_info}"
         );
     }
 

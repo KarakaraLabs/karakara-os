@@ -77,10 +77,6 @@ fn task_state_node_id(task_id: &TaskId, anchor: &ActivityAnchorId) -> String {
     format!("task_state:{}:{}", task_id.as_str(), anchor.as_str())
 }
 
-fn agent_runtime_instance_node_id(agent_id: &AgentId) -> String {
-    format!("agent_instance:{}", agent_id.as_str())
-}
-
 #[tokio::test]
 async fn was_last_transitioned_to_keeps_exactly_one_edge_after_multiple_transitions() {
     let store: Arc<baml_rt_provenance::SurrealProvenanceStore> = build_isolated_store().await;
@@ -223,7 +219,7 @@ async fn was_last_executed_by_keeps_exactly_one_edge_after_re_execution() {
         .expect("head-pointer row carries to_id");
     assert_eq!(
         to_id,
-        agent_runtime_instance_node_id(&agent_b),
+        format!("agent:{}", agent_b.as_str()),
         "WAS_LAST_EXECUTED_BY must point at the most recently-started agent"
     );
 }

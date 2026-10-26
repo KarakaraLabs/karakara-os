@@ -423,7 +423,55 @@ impl ProvDerivedIdTemplate for TaskExecutionActivityId {
     }
 }
 
-/// Agent representing a runtime instance of an agent.
+/// Stable packaged-agent identity, derived from `AgentId`.
+pub struct AgentNodeId;
+impl DerivedConstructible for AgentNodeId {}
+impl ProvIdSemantics for AgentNodeId {
+    const KIND: ProvKind = ProvKind::Agent;
+}
+impl ProvAgentSemantics for AgentNodeId {}
+impl ProvDerivedAgentSemantics for AgentNodeId {}
+impl ProvVocabularyType for AgentNodeId {
+    const VOCAB_TYPE: &'static str = "a2a:Agent";
+}
+
+pub struct AgentNodeInput<'a> {
+    pub agent_id: &'a AgentId,
+}
+
+impl ProvDerivedIdTemplate for AgentNodeId {
+    type Input<'a> = AgentNodeInput<'a>;
+
+    fn build<'a>(input: Self::Input<'a>) -> DerivedId {
+        DerivedId::from_parts("agent", [input.agent_id.as_str()])
+    }
+}
+
+/// Immutable stored package blob, keyed by its SHA-256 artifact hash.
+pub struct AgentArtifactEntityId;
+impl DerivedConstructible for AgentArtifactEntityId {}
+impl ProvIdSemantics for AgentArtifactEntityId {
+    const KIND: ProvKind = ProvKind::Entity;
+}
+impl ProvEntitySemantics for AgentArtifactEntityId {}
+impl ProvDerivedEntitySemantics for AgentArtifactEntityId {}
+impl ProvVocabularyType for AgentArtifactEntityId {
+    const VOCAB_TYPE: &'static str = "a2a:AgentArtifact";
+}
+
+pub struct AgentArtifactEntityInput<'a> {
+    pub artifact_hash: &'a str,
+}
+
+impl ProvDerivedIdTemplate for AgentArtifactEntityId {
+    type Input<'a> = AgentArtifactEntityInput<'a>;
+
+    fn build<'a>(input: Self::Input<'a>) -> DerivedId {
+        DerivedId::from_parts("agent_artifact", [input.artifact_hash])
+    }
+}
+
+/// Deprecated marker retained only to read pre-cutover graphs.
 pub struct AgentRuntimeInstanceId;
 impl DerivedConstructible for AgentRuntimeInstanceId {}
 impl ProvIdSemantics for AgentRuntimeInstanceId {
@@ -550,13 +598,17 @@ impl ProvVocabularyType for AgentBootActivityId {
 
 pub struct AgentBootActivityInput<'a> {
     pub agent_id: &'a AgentId,
+    pub boot_event_id: &'a ActivityAnchorId,
 }
 
 impl ProvDerivedIdTemplate for AgentBootActivityId {
     type Input<'a> = AgentBootActivityInput<'a>;
 
     fn build<'a>(input: Self::Input<'a>) -> DerivedId {
-        DerivedId::from_parts("agent_boot", [input.agent_id.as_str()])
+        DerivedId::from_parts(
+            "agent_boot",
+            [input.agent_id.as_str(), input.boot_event_id.as_str()],
+        )
     }
 }
 

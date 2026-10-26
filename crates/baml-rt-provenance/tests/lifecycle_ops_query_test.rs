@@ -30,7 +30,11 @@ async fn agent_stopped_is_queryable_as_lifecycle_event() {
         AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000042").unwrap());
 
     store
-        .add_event(ProvEvent::agent_stopped(agent_id, "undeploy".to_string()))
+        .add_event(ProvEvent::agent_stopped(
+            agent_id,
+            baml_rt_core::ids::ActivityAnchorId::from("boot-test"),
+            "undeploy".to_string(),
+        ))
         .await
         .expect("add_event(agent_stopped) should persist");
 

@@ -365,10 +365,7 @@ async fn host_dispatch_accepted_links_booted_runtime_instance() {
     let mermaid = baml_rt_provenance::graph_export::sequence::render_sequence_diagram(&exported);
     let clickup_lifelines = mermaid
         .lines()
-        .filter(|line| {
-            line.trim_start()
-                .starts_with("participant clickup_agent_1_0_0 ")
-        })
+        .filter(|line| line.trim_start().starts_with("participant clickup_agent "))
         .count();
     assert_eq!(
         clickup_lifelines, 1,

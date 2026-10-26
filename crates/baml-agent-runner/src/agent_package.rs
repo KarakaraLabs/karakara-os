@@ -100,6 +100,12 @@ pub(crate) struct AgentPackageBootArgs<'a> {
     pub(crate) agent_id: AgentId,
     /// Exact artifact bytes being booted. Production callers must provide the verified hash.
     pub(crate) artifact_hash: ArtifactHash,
+    /// Identity digest recomputed from this package extraction.
+    pub(crate) identity_digest: AgentIdentityDigest,
+    /// Canonical repository content hash for this deployment.
+    pub(crate) deployment_content_hash: DeploymentContentHash,
+    /// Repository version embedded in the package manifest.
+    pub(crate) repository_version: u32,
     pub(crate) shared_context_ref_store: SharedContextRefStore,
     pub(crate) provenance_config: &'a ProvenanceConfig,
     pub(crate) policy: &'a ToolAccessPolicy,
@@ -513,7 +519,10 @@ impl AgentPackage {
         Ok(built)
     }
 
-    pub(crate) async fn boot(&self, args: AgentPackageBootArgs<'_>) -> Result<(A2aAgent, AgentId)> {
+    pub(crate) async fn boot(
+        &self,
+        args: AgentPackageBootArgs<'_>,
+    ) -> Result<(A2aAgent, AgentId, baml_rt_core::ids::ActivityAnchorId)> {
         async {
             info!(
                 agent = %self.manifest.name,
@@ -581,24 +590,27 @@ impl AgentPackage {
                 )));
             }
             let writer = args.provenance_config.store().clone() as Arc<dyn ProvenanceWriter>;
-            let archive_path = args.artifact_hash.to_string();
             let agent_type_parsed =
                 AgentType::new(self.manifest.name.clone()).ok_or_else(|| {
                     BamlRtError::InvalidArgument("agent_type cannot be empty".to_string())
                 })?;
-            let boot_event = ProvEvent::agent_booted(
+            let boot_event = ProvEvent::agent_booted_with_identity(
                 agent_id.clone(),
                 agent_type_parsed,
-                self.version().to_string(),
-                archive_path,
+                args.repository_version.to_string(),
+                args.identity_digest.to_string(),
+                args.artifact_hash.to_string(),
+                args.deployment_content_hash.as_str().to_string(),
+                "local".to_string(),
             );
+            let boot_event_id = boot_event.id().clone();
             if let Err(e) = writer.add_event(boot_event).await {
                 error!(error = ?e, agent_id = %agent_id, "Failed to write AgentBooted event");
             } else {
                 info!(agent_id = %agent_id, "AgentBooted event written to provenance store");
             }
 
-            Ok((agent, agent_id))
+            Ok((agent, agent_id, boot_event_id))
         }
         .instrument(spans::load_agent_package(&self.extract_dir))
         .await
@@ -606,10 +618,6 @@ impl AgentPackage {
 
     pub(crate) fn name(&self) -> &str {
         &self.manifest.name
-    }
-
-    pub(crate) fn version(&self) -> &str {
-        &self.manifest.version
     }
 
     pub(crate) fn manifest(&self) -> &AgentManifest {
@@ -633,6 +641,7 @@ impl AgentPackage {
     }
 
     /// Derive the stable agent ID before constructing the bridge.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn derived_agent_id(&self) -> Result<AgentId> {
         Ok(AgentId::from_identity_digest(&self.identity_digest()?))
     }
@@ -673,6 +682,7 @@ pub(crate) struct BootedAgent {
     pub(crate) baml_functions: Vec<String>,
     pub(crate) provenance: DeploymentProvenance,
     pub(crate) lifecycle: Arc<AtomicU8>,
+    pub(crate) boot_event_id: baml_rt_core::ids::ActivityAnchorId,
 }
 
 impl BootedAgent {

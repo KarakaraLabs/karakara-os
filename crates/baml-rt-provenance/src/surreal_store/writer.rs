@@ -26,6 +26,28 @@ impl ProvenanceWriter for SurrealProvenanceStore {
         self.enforce_message_activity_anchor_invariant(&event)
             .await?;
         self.enforce_step_completion_gate(&event).await?;
+        // Registration is deliberately before graph normalization. A metadata
+        // mismatch must fail without an UPSERT mutating either immutable node.
+        if let ProvEventData::AgentBooted {
+            agent_id,
+            agent_type,
+            agent_version,
+            identity_digest,
+            artifact_hash,
+            deployment_content_hash,
+            ..
+        } = event.data()
+        {
+            self.upsert_agent_package_registry_on_boot(
+                agent_id,
+                agent_type.as_str(),
+                agent_version,
+                identity_digest,
+            )
+            .await?;
+            self.register_agent_artifact(artifact_hash, deployment_content_hash, agent_version)
+                .await?;
+        }
         let mut payload_records = payload_records_from_event(&event)?;
         let mut context = match event.task_id() {
             Some(tid) => {
@@ -41,9 +63,16 @@ impl ProvenanceWriter for SurrealProvenanceStore {
                 if task_agent_id.is_none() {
                     task_agent_id = event_local_executing_agent_id(&event);
                 }
+                let task_boot_event_id = match event.data() {
+                    ProvEventData::TaskExecutionStarted { agent_id, .. } => {
+                        self.active_boot_event_id(agent_id).await?
+                    }
+                    _ => None,
+                };
                 NormalizeContext {
                     task_agent_id,
                     linked_llm_call_scope_ordinal: None,
+                    task_boot_event_id,
                 }
             }
             None => NormalizeContext::default(),
@@ -120,20 +149,6 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             self.run_event_write_plan(plan).await?;
         }
 
-        if let ProvEventData::AgentBooted {
-            agent_id,
-            agent_type,
-            agent_version,
-            ..
-        } = event.data()
-        {
-            self.upsert_agent_package_registry_on_boot(
-                agent_id,
-                agent_type.as_str(),
-                agent_version,
-            )
-            .await?;
-        }
         self.update_context_picker_index(&event).await?;
         self.update_context_planning_index(&event).await?;
         self.upsert_context_compaction_index(&event).await?;

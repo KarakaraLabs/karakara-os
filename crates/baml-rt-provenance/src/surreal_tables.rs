@@ -17,8 +17,10 @@ pub(crate) const TBL_ARCHIVE_BODY: &str = "archive_body";
 pub(crate) const TBL_HISTORY_REF_REGISTRY: &str = "history_ref_registry";
 /// Monotonic per-context ref counter shared by `#N` and flat `@N` (`prefix = 1`) slots.
 pub(crate) const TBL_SESSION_REF_COUNTER: &str = "session_ref_counter";
-/// Write-maintained agent package → runtime instance node id registry.
-pub(crate) const TBL_AGENT_PACKAGE_INSTANCE: &str = "agent_package_instance";
+/// Immutable stable Agent registrations, keyed by `agent_id`.
+pub(crate) const TBL_AGENT_IDENTITY_REGISTRY: &str = "agent_identity_registry";
+/// Immutable exact-package registrations, keyed by `artifact_hash`.
+pub(crate) const TBL_AGENT_ARTIFACT_REGISTRY: &str = "agent_artifact_registry";
 /// Materialized context picker rows (latest message per context).
 pub(crate) const TBL_CONTEXT_PICKER_INDEX: &str = "context_picker_index";
 /// Ordered transcript index rows (Message / ToolCall / SessionStep per context).

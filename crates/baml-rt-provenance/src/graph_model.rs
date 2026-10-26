@@ -25,7 +25,13 @@ pub enum GraphNodeLabel {
     Artifact,
     AgentBoot,
     AgentStop,
+    /// Immutable exact stored package blob, keyed by artifact hash.
+    AgentArtifact,
+    /// Stable packaged-agent source identity, keyed by AgentId.
+    Agent,
+    /// Legacy label retained only when reading graphs written before T8.
     AgentArchive,
+    /// Legacy label retained only when reading graphs written before T8.
     AgentRuntimeInstance,
     PromptRejected,
     FailureClassificationActivity,
@@ -56,6 +62,8 @@ impl GraphNodeLabel {
             Self::Artifact => "Artifact",
             Self::AgentBoot => "AgentBoot",
             Self::AgentStop => "AgentStop",
+            Self::AgentArtifact => "AgentArtifact",
+            Self::Agent => "Agent",
             Self::AgentArchive => "AgentArchive",
             Self::AgentRuntimeInstance => "AgentRuntimeInstance",
             Self::PromptRejected => "PromptRejected",
@@ -84,6 +92,8 @@ impl GraphNodeLabel {
             "Artifact" => Some(Self::Artifact),
             "AgentBoot" => Some(Self::AgentBoot),
             "AgentStop" => Some(Self::AgentStop),
+            "AgentArtifact" => Some(Self::AgentArtifact),
+            "Agent" => Some(Self::Agent),
             "AgentArchive" => Some(Self::AgentArchive),
             "AgentRuntimeInstance" => Some(Self::AgentRuntimeInstance),
             "PromptRejected" => Some(Self::PromptRejected),

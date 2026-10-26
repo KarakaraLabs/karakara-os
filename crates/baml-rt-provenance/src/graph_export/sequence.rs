@@ -99,8 +99,10 @@ impl<'a> ResolutionMaps<'a> {
     fn build(graph: &'a ExportedGraph, indices: &GraphIndices<'a>) -> Self {
         let mut activity_to_agent = HashMap::new();
         let is_agent = |id: &str| {
-            indices.label_by_node.get(id).copied().flatten()
-                == Some(GraphNodeLabel::AgentRuntimeInstance)
+            matches!(
+                indices.label_by_node.get(id).copied().flatten(),
+                Some(GraphNodeLabel::Agent | GraphNodeLabel::AgentRuntimeInstance)
+            )
         };
         for edge in &graph.edges {
             if edge_relation_matches(&edge.relation, EDGE_WAS_EXECUTED_BY)
@@ -722,7 +724,13 @@ fn resolve_agent_package_for_node_indices(
     )?;
     let agent_id = *resolution.activity_to_agent.get(activity_id.as_str())?;
     let agent_node = indices.nodes_by_id.get(agent_id)?;
-    prop_str(agent_node, a2a::ARCHIVE_PATH)
+    let is_stable_agent =
+        indices.label_by_node.get(agent_id).copied().flatten() == Some(GraphNodeLabel::Agent);
+    prop_str(agent_node, a2a::ARCHIVE_PATH).or_else(|| {
+        is_stable_agent
+            .then(|| prop_str(agent_node, a2a::AGENT_TYPE))
+            .flatten()
+    })
 }
 
 /// Find the activity that executed this node by scanning only edges touching the node.
@@ -1537,7 +1545,7 @@ fn extract_participants(
                     has_user = true;
                 }
             }
-            Some(GraphNodeLabel::AgentRuntimeInstance) => {
+            Some(GraphNodeLabel::Agent | GraphNodeLabel::AgentRuntimeInstance) => {
                 let agent_type = node
                     .properties
                     .get(a2a::AGENT_TYPE)
@@ -1546,11 +1554,13 @@ fn extract_participants(
                 if is_infrastructure_agent(agent_type) {
                     continue;
                 }
-                if let Some(archive_path) = prop_str(node, a2a::ARCHIVE_PATH)
-                    && seen_agents.insert(archive_path.clone())
+                let participant_id =
+                    prop_str(node, a2a::ARCHIVE_PATH).or_else(|| prop_str(node, a2a::AGENT_TYPE));
+                if let Some(participant_id) = participant_id
+                    && seen_agents.insert(participant_id.clone())
                 {
                     agents.push(AgentParticipant {
-                        id: archive_path,
+                        id: participant_id,
                         label: agent_participant_label(node),
                     });
                 }
