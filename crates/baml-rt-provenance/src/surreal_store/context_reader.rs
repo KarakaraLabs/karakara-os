@@ -48,6 +48,11 @@ use crate::{
 
 /// Node scan shared by bounded read paths: same labels, same guards, same
 /// ordering key as the unbounded reader.
+///
+/// KEEP IN SYNC with the inline `SELECT` in [`fetch_scoped_conversation_nodes`]
+/// (the `ScopedConversationQuery` path). Both must select the same labels, apply
+/// the same `a2a_activity_outcome` guard, and use `props.a2a_event_order` as the
+/// ordering key. Nothing enforces that today; if you change one, change both.
 fn index_scan_sql(scoped_to: &str) -> String {
     format!(
         "SELECT node_id, label, props, props.a2a_event_order AS event_order FROM {TBL_NODE} \
