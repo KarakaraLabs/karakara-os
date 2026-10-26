@@ -34,6 +34,30 @@ pub struct ContextBindingConflict {
     pub resolved_artifact_hash: String,
 }
 
+/// An undeploy was refused because recently active contexts still pin the exact
+/// revision being removed. The operator must pass an explicit override.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextsPinnedToRevision {
+    pub package_name: String,
+    pub artifact_hash: String,
+    pub contexts: Vec<String>,
+}
+
+impl std::fmt::Display for ContextsPinnedToRevision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "package {} artifact {} is pinned by {} recently active context(s): {}",
+            self.package_name,
+            self.artifact_hash,
+            self.contexts.len(),
+            self.contexts.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for ContextsPinnedToRevision {}
+
 /// Structured tool failure for LLM-visible payloads and host retry policy.
 ///
 /// Construct this from **typed** integration errors (`impl From<NotionError> for ClassifiedToolError`,
@@ -162,6 +186,10 @@ pub enum BamlRtError {
     /// The context is pinned to a different agent revision than the turn resolved.
     #[error(transparent)]
     ContextBindingConflict(Box<ContextBindingConflict>),
+
+    /// Undeploy refused because active contexts still pin the removed revision.
+    #[error(transparent)]
+    ContextsPinnedToRevision(Box<ContextsPinnedToRevision>),
 
     /// Tool session plan step violated a correctable contract (structured for `StepExecutorOutcome`).
     #[error(transparent)]
@@ -371,6 +399,7 @@ fn code_for_classified(err: &BamlRtError, disposition: ErrorDisposition) -> Stri
         BamlRtError::SessionLifecycle(_) => "session_lifecycle".to_string(),
         BamlRtError::Conflict(_) => "conflict".to_string(),
         BamlRtError::ContextBindingConflict(_) => "context_binding_conflict".to_string(),
+        BamlRtError::ContextsPinnedToRevision(_) => "contexts_pinned_to_revision".to_string(),
         _ => "runtime_error".to_string(),
     }
 }
@@ -389,9 +418,9 @@ pub fn baml_error_disposition(err: &BamlRtError) -> ErrorDisposition {
         BamlRtError::StepPlanCorrectable(r) => r.disposition,
         BamlRtError::AgentNotFound(_) => ErrorDisposition::InformAndContinue,
         BamlRtError::AgentDraining(_) => ErrorDisposition::HostRetriable,
-        BamlRtError::Conflict(_) | BamlRtError::ContextBindingConflict(_) => {
-            ErrorDisposition::HostRetriable
-        }
+        BamlRtError::Conflict(_)
+        | BamlRtError::ContextBindingConflict(_)
+        | BamlRtError::ContextsPinnedToRevision(_) => ErrorDisposition::HostRetriable,
         BamlRtError::SessionLifecycle(
             SessionLifecycleError::ToolSessionNotFound { .. }
             | SessionLifecycleError::ToolSessionClosed { .. },

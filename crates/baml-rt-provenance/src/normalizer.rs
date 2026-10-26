@@ -2833,6 +2833,94 @@ fn normalize_event_with_registry(
                         Value::String(artifact_hash.as_str().to_string()),
                     );
                 }
+                AuditDecision::RevisionRebound {
+                    package_name,
+                    from_agent_id,
+                    from_artifact_hash,
+                    to_agent_id,
+                    to_artifact_hash,
+                    rationale,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_from_agent_id".to_string(),
+                        Value::String(from_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_from_artifact_hash".to_string(),
+                        Value::String(from_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_agent_id".to_string(),
+                        Value::String(to_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_artifact_hash".to_string(),
+                        Value::String(to_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(rationale.clone()));
+                }
+                AuditDecision::PinnedRevisionMissing {
+                    package_name,
+                    pinned_agent_id,
+                    pinned_artifact_hash,
+                    resolved_agent_id,
+                    resolved_artifact_hash,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_agent_id".to_string(),
+                        Value::String(pinned_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_artifact_hash".to_string(),
+                        Value::String(pinned_artifact_hash.as_str().to_string()),
+                    );
+                    if let Some(resolved_agent_id) = resolved_agent_id {
+                        attrs.insert(
+                            "audit_resolved_agent_id".to_string(),
+                            Value::String(resolved_agent_id.as_str().to_string()),
+                        );
+                    }
+                    if let Some(resolved_artifact_hash) = resolved_artifact_hash {
+                        attrs.insert(
+                            "audit_resolved_artifact_hash".to_string(),
+                            Value::String(resolved_artifact_hash.as_str().to_string()),
+                        );
+                    }
+                }
+                AuditDecision::UndeployOverride {
+                    package_name,
+                    artifact_hash,
+                    contexts,
+                    rationale,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_artifact_hash".to_string(),
+                        Value::String(artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_contexts".to_string(),
+                        Value::Array(
+                            contexts
+                                .iter()
+                                .map(|context| Value::String(context.clone()))
+                                .collect(),
+                        ),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(rationale.clone()));
+                }
                 AuditDecision::BindingConflict {
                     package_name,
                     pinned_agent_id,

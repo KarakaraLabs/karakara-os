@@ -118,6 +118,14 @@ pub fn map_error(error: &BamlRtError) -> A2aErrorMapping {
             "context_binding_conflict",
             retryability_for_a2a(error),
         ),
+        BamlRtError::ContextsPinnedToRevision(_) => mapping(
+            error,
+            -32009,
+            "Conflict",
+            None,
+            "contexts_pinned_to_revision",
+            retryability_for_a2a(error),
+        ),
         BamlRtError::InvalidArgumentWithSource { .. } => mapping(
             error,
             -32600,

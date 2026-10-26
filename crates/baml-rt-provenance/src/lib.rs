@@ -115,7 +115,8 @@ pub use context_compaction::{
     trigger_policy_from_budget, wire_history_byte_len,
 };
 pub use context_route_bindings::{
-    BindingResolution, ContextRouteBinding, ContextRouteBindingRequest,
+    BindingResolution, ContextRouteBinding, ContextRouteBindingRequest, ContextRouteForkRequest,
+    ContextRouteRebindRequest, DEFAULT_CONTEXT_ACTIVITY_RETENTION_MS, PinnedContextActivity,
 };
 pub use conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP;
 pub use conversation_history_resume::{ConversationResumeUiHints, resolve_resume_ui_hints};

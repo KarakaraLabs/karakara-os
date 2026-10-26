@@ -718,6 +718,31 @@ pub enum AuditDecision {
         resolved_agent_id: AgentId,
         resolved_artifact_hash: baml_rt_core::ArtifactHash,
     },
+    /// An operator moved a context route from one revision to another.
+    RevisionRebound {
+        package_name: String,
+        from_agent_id: AgentId,
+        from_artifact_hash: baml_rt_core::ArtifactHash,
+        to_agent_id: AgentId,
+        to_artifact_hash: baml_rt_core::ArtifactHash,
+        rationale: String,
+    },
+    /// A context's pinned revision no longer has an eligible deployment.
+    PinnedRevisionMissing {
+        package_name: String,
+        pinned_agent_id: AgentId,
+        pinned_artifact_hash: baml_rt_core::ArtifactHash,
+        resolved_agent_id: Option<AgentId>,
+        resolved_artifact_hash: Option<baml_rt_core::ArtifactHash>,
+    },
+    /// An operator accepted removing a revision that active contexts pinned.
+    UndeployOverride {
+        package_name: String,
+        agent_id: AgentId,
+        artifact_hash: baml_rt_core::ArtifactHash,
+        contexts: Vec<String>,
+        rationale: String,
+    },
 }
 
 impl AuditDecision {
@@ -731,6 +756,9 @@ impl AuditDecision {
             Self::PairServedElsewhere { .. } => "pair_served_elsewhere",
             Self::BindingCreated { .. } => "binding_created",
             Self::BindingConflict { .. } => "binding_conflict",
+            Self::RevisionRebound { .. } => "revision_rebound",
+            Self::PinnedRevisionMissing { .. } => "pinned_revision_missing",
+            Self::UndeployOverride { .. } => "undeploy_override",
         }
     }
 
@@ -742,10 +770,15 @@ impl AuditDecision {
             | Self::OwnershipHandedOff { agent_id, .. }
             | Self::OwnershipTakenOver { agent_id, .. }
             | Self::PairServedElsewhere { agent_id, .. }
-            | Self::BindingCreated { agent_id, .. } => agent_id,
+            | Self::BindingCreated { agent_id, .. }
+            | Self::UndeployOverride { agent_id, .. } => agent_id,
             Self::BindingConflict {
                 resolved_agent_id, ..
             } => resolved_agent_id,
+            Self::RevisionRebound { to_agent_id, .. } => to_agent_id,
+            Self::PinnedRevisionMissing {
+                pinned_agent_id, ..
+            } => pinned_agent_id,
         }
     }
 

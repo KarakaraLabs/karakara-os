@@ -282,6 +282,17 @@ WHERE boot_event_id = $boot
   AND released = false;
 "#;
 
+const RELEASE_PAIR_LEASE_SQL: &str = r#"
+UPDATE context_agent_leases SET
+    boot_event_id = NONE,
+    fencing_token = fencing_token + 1,
+    heartbeat_ms = $now,
+    released = true
+WHERE context_id = $ctx
+  AND agent_id = $agent
+  AND released = false;
+"#;
+
 fn parse_agent_id(raw: &str) -> Result<AgentId> {
     UuidId::parse_str(raw)
         .map(AgentId::from_uuid)
@@ -427,6 +438,23 @@ impl SurrealProvenanceStore {
         let before = self
             .read_stored_context_agent_lease(&request.context_id, &request.agent_id)
             .await?;
+
+        // The lease corroborates the context route binding: even with no live
+        // lease row, a boot running different bytes than the bound artifact may
+        // not acquire or take over the pair.
+        if let Some(requested_hash) = request.artifact_hash.as_ref()
+            && let Some(binding) = self
+                .read_context_route_binding_for_agent(&request.context_id, &request.agent_id)
+                .await?
+            && &binding.artifact_hash != requested_hash
+        {
+            return Err(ProvenanceError::LeaseArtifactMismatch {
+                context_id: request.context_id.as_str().to_string(),
+                agent_id: request.agent_id.as_str().to_string(),
+                held_artifact_hash: binding.artifact_hash.as_str().to_string(),
+                requested_artifact_hash: requested_hash.as_str().to_string(),
+            });
+        }
 
         if let Some(held) = before.as_ref()
             && !held.released
@@ -624,6 +652,28 @@ impl SurrealProvenanceStore {
                     Value::String(fence.boot_event_id.as_str().to_string()),
                 ),
                 ("token", Value::from(fence.fencing_token)),
+                ("now", Value::from(now_ms)),
+            ],
+        )
+        .await
+    }
+
+    /// Release one pair regardless of the holding boot.
+    ///
+    /// `rebind` and `close_and_fork` use this to cut off a boot still running
+    /// the previous artifact. The token advances so its delayed writes are
+    /// fenced out.
+    pub(crate) async fn release_context_agent_lease_for_pair(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        now_ms: u64,
+    ) -> Result<()> {
+        self.run_operational_write(
+            RELEASE_PAIR_LEASE_SQL,
+            vec![
+                ("ctx", Value::String(context_id.as_str().to_string())),
+                ("agent", Value::String(agent_id.as_str().to_string())),
                 ("now", Value::from(now_ms)),
             ],
         )

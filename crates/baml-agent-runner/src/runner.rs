@@ -1255,7 +1255,7 @@ impl AgentRunner {
                 new_content_hash = %content_hash.as_str(),
                 "superseding deployment: draining prior revision before boot (up to 30s if traffic in flight)"
             );
-            self.undeploy_by_hash(old_hash).await?;
+            self.undeploy_by_hash(old_hash, None).await?;
         }
 
         let (name, route_key, booted) = self
@@ -1378,8 +1378,11 @@ impl DeploymentManager for AgentRunner {
     async fn undeploy_by_hash(
         &self,
         content_hash: &DeploymentContentHash,
+        override_rationale: Option<&str>,
     ) -> Result<UndeployResult> {
-        // 1. Find the agent and mark as draining (stop accepting new requests).
+        // 1. Find the agent. Do not mark it draining until the deploy guard has
+        //    admitted the removal: a refused undeploy must leave the agent
+        //    serving.
         let (target_name, booted) = {
             let agents = self.agents.read().expect("RwLock poison");
             let entry = agents
@@ -1388,9 +1391,62 @@ impl DeploymentManager for AgentRunner {
             let Some((name, agent)) = entry else {
                 return Ok(UndeployResult { removed: false });
             };
-            agent.set_draining();
             (name.clone(), agent.clone())
         };
+
+        // 1a. Refuse to remove a revision recently active contexts still pin,
+        //     unless the operator recorded an explicit override.
+        let package = AgentPackageName::parse(&target_name);
+        let artifact_hash = booted.artifact_hash().cloned();
+        if let (Some(package), Some(artifact_hash)) = (package, artifact_hash) {
+            let store = self.provenance_config.store();
+            let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+            let active_since_ms =
+                now_ms.saturating_sub(baml_rt_provenance::DEFAULT_CONTEXT_ACTIVITY_RETENTION_MS);
+            let pinned = store
+                .list_pinned_context_activity(package.as_str(), &artifact_hash, active_since_ms)
+                .await
+                .map_err(|error| {
+                    BamlRtError::Io(std::io::Error::other(format!(
+                        "undeploy could not read pinned contexts for {}: {error}",
+                        package.as_str()
+                    )))
+                })?;
+            if !pinned.is_empty() {
+                let contexts: Vec<ContextId> =
+                    pinned.iter().map(|row| row.context_id.clone()).collect();
+                let Some(rationale) = override_rationale.filter(|value| !value.trim().is_empty())
+                else {
+                    return Err(BamlRtError::ContextsPinnedToRevision(Box::new(
+                        baml_rt_core::ContextsPinnedToRevision {
+                            package_name: package.as_str().to_string(),
+                            artifact_hash: artifact_hash.as_str().to_string(),
+                            contexts: contexts
+                                .iter()
+                                .map(|context| context.as_str().to_string())
+                                .collect(),
+                        },
+                    )));
+                };
+                store
+                    .record_undeploy_override(
+                        package.as_str(),
+                        booted.agent.agent_id(),
+                        &artifact_hash,
+                        &contexts,
+                        rationale,
+                        None,
+                    )
+                    .await
+                    .map_err(|error| {
+                        BamlRtError::Io(std::io::Error::other(format!(
+                            "undeploy override audit write failed for {}: {error}",
+                            package.as_str()
+                        )))
+                    })?;
+            }
+        }
+        booted.set_draining();
 
         tracing::info!(
             agent = %target_name,

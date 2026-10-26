@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2922,6 +2923,7 @@ impl DeploymentManager for SlowDeployManager {
     async fn undeploy_by_hash(
         &self,
         _content_hash: &DeploymentContentHash,
+        _override_rationale: Option<&str>,
     ) -> Result<UndeployResult> {
         std::thread::sleep(self.sleep);
         Ok(UndeployResult { removed: true })

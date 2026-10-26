@@ -233,7 +233,9 @@ pub(crate) async fn resolve_deploy_hash(
 
 fn result_label_for_domain_error(error: &BamlRtError) -> &'static str {
     match error {
-        BamlRtError::Conflict(_) | BamlRtError::ContextBindingConflict(_) => "conflict",
+        BamlRtError::Conflict(_)
+        | BamlRtError::ContextBindingConflict(_)
+        | BamlRtError::ContextsPinnedToRevision(_) => "conflict",
         BamlRtError::InvalidArgument(msg) if msg.contains("not found") => "not_found",
         BamlRtError::InvalidArgument(_) => "bad_request",
         BamlRtError::SessionLifecycle(
@@ -318,6 +320,9 @@ pub async fn post_deploy(
             Err(BamlRtError::AgentNotFound(msg)) => Err(problem(404, "Not Found", msg)),
             Err(BamlRtError::InvalidArgument(msg)) => Err(problem(400, "Bad Request", msg)),
             Err(BamlRtError::Conflict(msg)) => Err(problem(409, "Conflict", msg)),
+            Err(BamlRtError::ContextsPinnedToRevision(msg)) => {
+                Err(problem(409, "Conflict", msg.to_string()))
+            }
             Err(e) => Err(problem(500, "Internal Server Error", e.to_string())),
         }
     }
@@ -369,11 +374,13 @@ pub async fn post_undeploy(
             .map_err(|e| problem(400, "Bad Request", format!("invalid hash: {e}")))?;
         let manager_clone = Arc::clone(manager);
         let undeploy_hash = content_hash.clone();
-        let undeploy_result =
-            run_off_worker(
-                move || async move { manager_clone.undeploy_by_hash(&undeploy_hash).await },
-            )
-            .await?;
+        let override_rationale = body.override_rationale.clone();
+        let undeploy_result = run_off_worker(move || async move {
+            manager_clone
+                .undeploy_by_hash(&undeploy_hash, override_rationale.as_deref())
+                .await
+        })
+        .await?;
         match undeploy_result {
             Ok(result) if result.removed => Ok(Json(UndeployResponseDto { removed: true })),
             Ok(_) => Err(problem(
@@ -382,6 +389,9 @@ pub async fn post_undeploy(
                 format!("deployment not found for hash {hash}", hash = body.hash),
             )),
             Err(BamlRtError::InvalidArgument(msg)) => Err(problem(400, "Bad Request", msg)),
+            Err(BamlRtError::ContextsPinnedToRevision(msg)) => {
+                Err(problem(409, "Conflict", msg.to_string()))
+            }
             Err(e) => Err(problem(500, "Internal Server Error", e.to_string())),
         }
     }
@@ -558,7 +568,7 @@ pub async fn post_migrate(
         let manager_clone = Arc::clone(manager);
         let undeploy_hash = content_hash.clone();
         let undeploy_result = run_off_worker(move || async move {
-            manager_clone.undeploy_by_hash(&undeploy_hash).await
+            manager_clone.undeploy_by_hash(&undeploy_hash, None).await
         })
         .await?;
         let source_undeploy_failed = match &undeploy_result {
@@ -1487,7 +1497,9 @@ fn domain_to_problem(e: &BamlRtError, agent_package: &str) -> HttpApiProblem {
         ),
         BamlRtError::AgentDraining(msg) => (503u16, "Service Unavailable", msg.clone()),
         BamlRtError::Conflict(msg) => (409u16, "Conflict", msg.clone()),
-        BamlRtError::ContextBindingConflict(_) => (409u16, "Conflict", e.to_string()),
+        BamlRtError::ContextBindingConflict(_) | BamlRtError::ContextsPinnedToRevision(_) => {
+            (409u16, "Conflict", e.to_string())
+        }
         BamlRtError::InvalidArgument(msg) => (400u16, "Bad Request", msg.clone()),
         BamlRtError::UnsupportedAgentInstance(msg) => (400u16, "Bad Request", msg.clone()),
         BamlRtError::SessionLifecycle(

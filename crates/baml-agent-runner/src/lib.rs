@@ -1625,6 +1625,204 @@ globalThis.onChatMessage = async function(_message) {
         );
     }
 
+    async fn audit_decision_kinds(
+        store: &baml_rt_provenance::SurrealProvenanceStore,
+    ) -> Vec<String> {
+        let mut response = store
+            .db()
+            .query(
+                "SELECT * FROM prov_node \
+                 WHERE label = 'AuditDecision' ORDER BY props.a2a_event_order",
+            )
+            .await
+            .expect("audit rows query");
+        let rows: Vec<serde_json::Value> = response.take(0).expect("audit rows");
+        rows.iter()
+            .filter_map(|row| {
+                row.get("props")?
+                    .get("audit_decision_kind")?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn undeploy_guard_requires_recorded_override_for_pinned_contexts() {
+        use baml_rt_core::{
+            ArtifactHash, DeploymentContentHash, DeploymentManager, ids::ContextId,
+        };
+        use baml_rt_provenance::{
+            ContextAgentLeaseRequest, ContextRouteBindingRequest, ContextRouteForkRequest,
+            ContextRouteRebindRequest, ProvenanceError,
+        };
+
+        use crate::agent_package::AgentLifecycleState;
+
+        let prov = test_provenance_config().await;
+        let state = test_deployment_state().await;
+        let runner = make_runner(prov, state);
+
+        let agent = build_test_agent().await;
+        let artifact = ArtifactHash::from_bytes(b"undeploy-guard-revision");
+        let replacement = ArtifactHash::from_bytes(b"undeploy-guard-replacement");
+        let content_hash: DeploymentContentHash = "d".repeat(64).parse().expect("content hash");
+        let mut booted = make_booted(agent.clone(), "guarded-undeploy");
+        booted.provenance = crate::agent_package::DeploymentProvenance::Repository {
+            content_hash: content_hash.clone(),
+            artifact_hash: artifact.clone(),
+            version: 1,
+        };
+        let route_key = baml_rt_core::AgentRouteKey::new(
+            baml_rt_core::AgentPackageName::parse("guarded-undeploy").unwrap(),
+        );
+        {
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("guarded-undeploy".to_string(), booted);
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(route_key, agent.clone());
+        }
+
+        let store = runner.provenance_config().store();
+        let context_id = ContextId::from("ctx-undeploy-guard");
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        store
+            .resolve_context_route_binding(ContextRouteBindingRequest::new(
+                context_id.clone(),
+                "guarded-undeploy",
+                agent.agent_id().clone(),
+                artifact.clone(),
+            ))
+            .await
+            .expect("seed binding");
+        store
+            .db()
+            .query(
+                "UPSERT context_picker_index SET context_id=$ctx, latest_timestamp_ms=$ts, \
+                 latest_preview='pinned', first_user_message='pinned', has_host_ingress=false \
+                 WHERE context_id=$ctx",
+            )
+            .bind(("ctx", context_id.as_str().to_string()))
+            .bind(("ts", now_ms))
+            .await
+            .expect("picker write")
+            .check()
+            .expect("picker check");
+
+        let refused = DeploymentManager::undeploy_by_hash(runner.as_ref(), &content_hash, None)
+            .await
+            .expect_err("a recently active pinned context must block undeploy");
+        let baml_rt_core::BamlRtError::ContextsPinnedToRevision(refusal) = refused else {
+            panic!("expected a pinned-context refusal, got {refused:?}");
+        };
+        assert_eq!(refusal.package_name, "guarded-undeploy");
+        assert_eq!(refusal.artifact_hash, artifact.as_str());
+        assert_eq!(refusal.contexts, vec![context_id.as_str().to_string()]);
+        assert_eq!(
+            runner
+                .agents
+                .read()
+                .expect("RwLock poison")
+                .get("guarded-undeploy")
+                .expect("refused undeploy leaves the agent booted")
+                .lifecycle_state(),
+            AgentLifecycleState::Active,
+            "a refused undeploy must not start draining"
+        );
+
+        let removed = DeploymentManager::undeploy_by_hash(
+            runner.as_ref(),
+            &content_hash,
+            Some("retire pinned revision after operator review"),
+        )
+        .await
+        .expect("recorded override undeploys the revision");
+        assert!(removed.removed);
+        assert!(
+            runner
+                .agents
+                .read()
+                .expect("RwLock poison")
+                .get("guarded-undeploy")
+                .is_none()
+        );
+
+        let kinds = audit_decision_kinds(store).await;
+        assert!(
+            kinds.iter().any(|kind| kind == "undeploy_override"),
+            "override must be recorded, got {kinds:?}"
+        );
+        assert!(
+            kinds.iter().any(|kind| kind == "pinned_revision_missing"),
+            "the accepted revision loss must be recorded, got {kinds:?}"
+        );
+
+        // Rebind moves a context route to a new artifact and fences the old one.
+        let rebound_context = ContextId::from("ctx-rebind-guard");
+        store
+            .resolve_context_route_binding(ContextRouteBindingRequest::new(
+                rebound_context.clone(),
+                "guarded-undeploy",
+                agent.agent_id().clone(),
+                artifact.clone(),
+            ))
+            .await
+            .expect("seed rebind binding");
+        let rebound = store
+            .rebind_context_route_binding(ContextRouteRebindRequest {
+                context_id: rebound_context.clone(),
+                package_name: "guarded-undeploy".to_string(),
+                agent_id: agent.agent_id().clone(),
+                artifact_hash: replacement.clone(),
+                rationale: "operator approved a schema-compatible update".to_string(),
+            })
+            .await
+            .expect("explicit rebind");
+        assert_eq!(rebound.artifact_hash, replacement);
+        assert!(
+            audit_decision_kinds(store)
+                .await
+                .iter()
+                .any(|kind| kind == "revision_rebound"),
+            "rebind must record the revision boundary"
+        );
+
+        // A boot running the old artifact cannot take the rebound pair.
+        let lease_error = store
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    rebound_context.clone(),
+                    agent.agent_id().clone(),
+                    baml_rt_core::ids::ActivityAnchorId::from("prov-rebind-boot"),
+                    "runner-rebind",
+                    now_ms,
+                )
+                .with_artifact_hash(artifact.clone()),
+            )
+            .await
+            .expect_err("old artifact must not acquire a rebound pair");
+        assert!(
+            matches!(lease_error, ProvenanceError::LeaseArtifactMismatch { .. }),
+            "unexpected lease error: {lease_error:?}"
+        );
+
+        // close_and_fork pins a fresh context to the new revision.
+        let forked_context = ContextId::from("ctx-fork-guard");
+        let forked = store
+            .close_and_fork_context_route_binding(ContextRouteForkRequest {
+                old_context_id: rebound_context.clone(),
+                package_name: "guarded-undeploy".to_string(),
+                new_context_id: forked_context.clone(),
+                agent_id: agent.agent_id().clone(),
+                artifact_hash: replacement.clone(),
+                rationale: "operator forked a noisy context".to_string(),
+            })
+            .await
+            .expect("close and fork");
+        assert_eq!(forked.context_id, forked_context);
+        assert_eq!(forked.artifact_hash, replacement);
+    }
+
     // ── cluster resolver fallback ────────────────────────────────────────────
 
     /// Mock resolver: returns a fixed result for any key.
