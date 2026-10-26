@@ -44,14 +44,12 @@ type SessionHandle<T extends ToolName> = Awaited<ReturnType<typeof openToolSessi
 
 type RouteTarget = {
   agent_package: string;
-  agent_instance_id: string;
 };
 
 type DiscoveredAgent = {
   name: string;
   version: string;
   agent_package: string;
-  agent_instance_id: string;
   tools: string[];
   description?: string;
   capabilities?: string[];
@@ -64,7 +62,6 @@ type DiscoverAgentsOutput = {
 
 type AgentCandidate = {
   agent_package: string;
-  agent_instance_id: string;
   name: string;
   description: string | null;
   capabilities: string[];
@@ -175,11 +172,7 @@ function parseStringArray(value: unknown): string[] {
 function parseRouteTarget(value: unknown): RouteTarget | null {
   if (!isObject(value)) return null;
   if (typeof value.agent_package !== "string") return null;
-  if (typeof value.agent_instance_id !== "string") return null;
-  return {
-    agent_package: value.agent_package,
-    agent_instance_id: value.agent_instance_id,
-  };
+  return { agent_package: value.agent_package };
 }
 
 function parseWorkflowNodeKind(value: unknown): WorkflowNodeKind | null {
@@ -248,7 +241,7 @@ function parseWorkflowPlan(value: unknown): WorkflowPlan | null {
 }
 
 function workflowTargetKey(target: RouteTarget): string {
-  return `${target.agent_package}/${target.agent_instance_id}`;
+  return target.agent_package;
 }
 
 function tryEvaluateSimpleArithmetic(text: string): string | null {
@@ -490,13 +483,7 @@ function parseDiscoveredAgent(value: unknown): DiscoveredAgent | null {
       : typeof value.agentPackage === "string"
         ? value.agentPackage
         : null;
-  const agentInstanceId =
-    typeof value.agent_instance_id === "string"
-      ? value.agent_instance_id
-      : typeof value.agentInstanceId === "string"
-        ? value.agentInstanceId
-        : null;
-  if (!name || !version || !agentPackage || !agentInstanceId) return null;
+  if (!name || !version || !agentPackage) return null;
   if (!Array.isArray(value.tools) || !value.tools.every((entry) => typeof entry === "string")) {
     return null;
   }
@@ -510,7 +497,6 @@ function parseDiscoveredAgent(value: unknown): DiscoveredAgent | null {
     name,
     version,
     agent_package: agentPackage,
-    agent_instance_id: agentInstanceId,
     tools: value.tools,
     description: description || undefined,
     capabilities,
@@ -674,10 +660,8 @@ async function delegateToAgent(target: RouteTarget, prompt: string): Promise<str
 function buildAgentCandidates(agents: DiscoveredAgent[]): AgentCandidate[] {
   return agents
     .filter((a) => a.agent_package !== "coordinator-agent")
-    .filter((a) => a.agent_instance_id === "default")
     .map((a) => ({
       agent_package: a.agent_package,
-      agent_instance_id: a.agent_instance_id,
       name: a.name,
       description: a.description || null,
       capabilities: a.capabilities || [],
@@ -686,9 +670,7 @@ function buildAgentCandidates(agents: DiscoveredAgent[]): AgentCandidate[] {
 }
 
 function buildAgentRegistry(agents: DiscoveredAgent[]): Set<string> {
-  return new Set(
-    agents.map((agent) => `${agent.agent_package}/${agent.agent_instance_id}`),
-  );
+  return new Set(agents.map((agent) => agent.agent_package));
 }
 
 async function planWorkflow(

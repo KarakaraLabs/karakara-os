@@ -303,7 +303,7 @@ Current step instructions:
 
 Argue in the style of a Monty Python sketch.
 
-For Open: set initial_input.target to { agent_package: "argument-chapman", agent_instance_id: "default" }.
+For Open: set initial_input.target to { agent_package: "argument-chapman" }.
 
 Cleese line — this is the only text you may send to Chapman on Send (copy it exactly; do not invent substitute sketch lines or alternate wording):
 {{ first_line }}
@@ -377,7 +377,7 @@ Current step instructions:
 
 Argue in the style of a Monty Python sketch.
 
-For Open: set initial_input.target to { agent_package: "argument-chapman", agent_instance_id: "default" }.
+For Open: set initial_input.target to { agent_package: "argument-chapman" }.
 
 Cleese line — this is the only text you may send to Chapman on Send (copy it exactly; do not invent substitute sketch lines or alternate wording):
 {{ first_line }}
@@ -452,7 +452,7 @@ Current step instructions:
 
 Argue in the style of a Monty Python sketch.
 
-For Open: set initial_input.target to { agent_package: "argument-chapman", agent_instance_id: "default" }.
+For Open: set initial_input.target to { agent_package: "argument-chapman" }.
 
 Cleese line — this is the only text you may send to Chapman on Send (copy it exactly; do not invent substitute sketch lines or alternate wording):
 {{ first_line }}

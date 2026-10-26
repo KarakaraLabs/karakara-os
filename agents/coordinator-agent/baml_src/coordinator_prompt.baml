@@ -153,7 +153,7 @@ You are PLANNING what to do; you do not perform the task yourself.
     Output a structured plan:
     (1) intent_description — one sentence describing the user's high-level intent in concrete terms (not generic "delegate request").
     (2) objective — one sentence describing what we are achieving for the user.
-    (3) plan_steps — an ordered list of agent chats. Each step is one conversation with one agent: which agent (agent_package, agent_instance_id from the list) and what to send (sub_message). Use only agents from the history. Output the key as "plan_steps" (never "step").
+    (3) plan_steps — an ordered list of agent chats. Each step is one conversation with one agent: which agent (agent_package from the list) and what to send (sub_message). Use only agents from the history. Output the key as "plan_steps" (never "step").
     Intent/plan separation contract:
     - intent_description and objective MUST stay goal-level (user outcome), not execution mechanics.
     - plan_steps/sub_message MUST contain the execution mechanics.
@@ -181,11 +181,10 @@ Do not add text before or after the JSON object.
 function DecideDelegationAction(
   goal: string,
   agent_package: string,
-  agent_instance_id: string,
 ) -> SystemInternalA2aSessionPlan | string? {
   client DefaultClient
   prompt #"
-    Goal: Coordinate with agent {{ agent_package }}/{{ agent_instance_id }} to achieve: {{ goal }}
+    Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
     Return `null` when the goal is satisfied or after 2+ exchanges.
   "#
 }

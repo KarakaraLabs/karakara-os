@@ -122,11 +122,10 @@ function delegatedPromptFromOutput(output: unknown): string | null {
 async function forwardSingleDelegation(
   ctx: RunContext,
   agent_package: string,
-  agent_instance_id: string,
   goal: string,
 ): Promise<StructuredReply> {
   const session = await openToolSession("system/internal_a2a", {
-    target: { agent_package, agent_instance_id },
+    target: { agent_package },
   });
   let nextMessage = goal;
   let finished = false;
@@ -303,17 +302,11 @@ __chat_register({
         const step = steps[0];
         const stepId = "step-0";
         const agent_package = String(step.agent_package ?? "");
-        const agent_instance_id = String(step.agent_instance_id ?? "default");
         const goal = String(step.sub_message ?? objective);
         if (!agent_package) throw new Error("Delegation step did not name an agent package.");
 
         await delegateExecutable?.startStep(stepId);
-        const forwarded = await forwardSingleDelegation(
-          ctx,
-          agent_package,
-          agent_instance_id,
-          goal,
-        );
+        const forwarded = await forwardSingleDelegation(ctx, agent_package, goal);
         await delegateExecutable?.completeStep(stepId);
         await delegateExecutable?.finish();
         return { message: forwarded };
@@ -323,7 +316,6 @@ __chat_register({
         const step = steps[i];
         const stepId = "step-" + i;
         const agent_package = String(step.agent_package ?? "");
-        const agent_instance_id = String(step.agent_instance_id ?? "default");
         const goal = String(step.sub_message ?? objective);
 
         if (!agent_package) {
@@ -334,7 +326,7 @@ __chat_register({
         await delegateExecutable?.startStep(stepId);
         const delegateRun = await runGeneratedStepExecutor(
           "DecideDelegationAction",
-          { goal, agent_package, agent_instance_id },
+          { goal, agent_package },
           { max_steps: 10 },
         );
         if (delegateRun.outcome !== "completed") {

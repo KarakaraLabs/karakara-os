@@ -8,7 +8,6 @@ enum NodeKind {
 
 class WorkflowTarget {
   agent_package string
-  agent_instance_id string
 }
 
 class ForeachTemplate {
@@ -38,7 +37,6 @@ class WorkflowPlan {
 
 class AgentCandidate {
   agent_package string
-  agent_instance_id string
   name string
   description string?
   capabilities string[]
@@ -75,7 +73,7 @@ You are a coordinator planner that decomposes user requests into a workflow DAG.
     - Use foreach only when the user asks to apply an action to each item from upstream output.
     - Use clarify only when routing is genuinely ambiguous.
     - Use direct_answer for simple meta/system questions.
-    - Use ONLY agent_package/agent_instance_id pairs that appear in AVAILABLE AGENTS.
+    - Use ONLY agent_package values that appear in AVAILABLE AGENTS.
     - If no suitable specialist exists, use direct_answer or clarify instead of inventing a target.
     - For direct_answer, prompt_template must be the literal final user-facing answer text, not instructions.
     - Include a synthesize node as the final aggregation step when multiple call_agent nodes are present.

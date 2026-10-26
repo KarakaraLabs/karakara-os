@@ -75,7 +75,6 @@ export interface ClickUpOutput {
 }
 
 export interface ClickUpPlanStep { agent_package: string;
-agent_instance_id: string;
 sub_message: string;
  }
 

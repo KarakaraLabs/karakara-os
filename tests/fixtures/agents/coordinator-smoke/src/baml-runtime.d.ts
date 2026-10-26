@@ -12,7 +12,6 @@ due_date: string | null;
  }
 
 export interface AgentCandidate { agent_package: string;
-agent_instance_id: string;
 name: string;
 description: string | null;
 capabilities: string[];
@@ -185,7 +184,6 @@ final_node_id: string | null;
  }
 
 export interface WorkflowTarget { agent_package: string;
-agent_instance_id: string;
  }
 
 

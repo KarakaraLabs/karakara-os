@@ -33,7 +33,6 @@ class QueryIntent {
 
 class SelectedAgent {
   agent_package string
-  agent_instance_id string
   name string
   description string?
   capabilities string[]

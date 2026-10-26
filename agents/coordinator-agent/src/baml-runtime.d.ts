@@ -242,7 +242,7 @@ declare function ClassifyCoordinatorTurn(args: { user_message: string } & { __ba
 
 declare function CoordinatorSynthesizeReply(args: { user_message: string; plan_objective: string } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
 
-declare function DecideDelegationAction(args: { goal: string; agent_package: string; agent_instance_id: string } & { __baml_invocation_token?: string }): Promise<SystemInternalA2aSessionPlan | string | null>;
+declare function DecideDelegationAction(args: { goal: string; agent_package: string } & { __baml_invocation_token?: string }): Promise<SystemInternalA2aSessionPlan | string | null>;
 
 declare function FormatCapabilities(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
 

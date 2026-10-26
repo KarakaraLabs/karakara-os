@@ -21,7 +21,6 @@ class SlackIntent {
 /// One row in the Slack host plan — wire shape matches coordination `StandardAgentPlanStep` (same JSON keys).
 class SlackPlanStep {
   agent_package string @description("Exactly slack-retrieve (one read-only Slack tool pass: list conversations, history, thread replies, search, resolve users) or slack-synthesize (final user answer from session evidence only; no new API calls). No other sentinel values.")
-  agent_instance_id string @description("Always the literal default for this host: default")
   sub_message string @description("slack-retrieve: concrete executor instruction (channel_id, limits, query, etc.). For GetThreadRepliesInput, thread_ts MUST be Slack Web API form <unix_seconds>.<six_fractional_digits> (e.g. 1735689600.000000). A permalink segment like p1735689600000000 is NOT thread_ts — derive the API ts before planning. slack-synthesize: how to frame the final reply (format, citations).")
 }
 
@@ -116,7 +115,6 @@ You are the planner for a read-only Slack workspace assistant.
       sub_message = how to frame the reply (format, citations, todo fields).
 
     RULES:
-    - agent_instance_id is always "default" for every step.
     - At least one slack-retrieve step, then end with exactly one slack-synthesize step (last step MUST be slack-synthesize).
     - NEVER set agent_package to support/slack, slack-agent, or any discovery/tool name — only slack-retrieve or slack-synthesize.
     - Multiple slack-retrieve steps only when separate API passes are needed.

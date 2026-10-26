@@ -75,7 +75,7 @@ You are a senior frontend engineer and design systems expert for the Agentium da
     - ContentBlock: TextContentBlock | ToolNotificationBlock
     - WorkflowProgressState: { phase, nodes[], completedNodes[], iteration? }
     - StateTransition: { state, timestamp }
-    - AgentDiscoveryEntry: { agent_package, agent_instance_id, name, version, agent_card }
+    - AgentDiscoveryEntry: { agent_package, name, version, agent_card }
     - ContextMetricsResponse: { context_id, turns: TurnMetrics[], session: SessionMetrics }
 
     STYLING CONVENTIONS:

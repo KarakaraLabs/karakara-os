@@ -33,7 +33,6 @@ Output ONLY one JSON object matching StandardStructuredPlan. No prose. No markdo
 
     That step MUST use:
       agent_package: "test/synthetic_session_eval"
-      agent_instance_id: "default"
       sub_message: a single-line JSON string (valid JSON object) with:
         - "op": one of "Open", "Send", "SearchRead", "PageRead", "Finish"
         - optional "initial_input": object (use on Open when needed)

@@ -95,7 +95,6 @@ Do not add text before or after the JSON object.
 /// One row in the ClickUp host plan — wire keys match coordination `StandardAgentPlanStep`.
 class ClickUpPlanStep {
   agent_package string @description("Sentinel only: clickup-execute (one ClickUp tool session pass: navigate/list/get/create/update/delete) or clickup-format (final user answer from session evidence; no new API calls). Never clickup-agent, support/clickup, or discovery agent_package names.")
-  agent_instance_id string @description("Always the literal default for this host: default")
   sub_message string @description("clickup-execute: concrete executor instruction (IDs, operation, limits). clickup-format: how to frame the final reply (counts, table, summary).")
 }
 
@@ -144,7 +143,6 @@ You are the planner for a ClickUp workspace assistant.
       sub_message = how to frame the reply (e.g. "Answer with counts and task names" or "Markdown table of tasks").
 
     RULES:
-    - agent_instance_id is always "default" for every step.
     - At least one clickup-execute step, then end with exactly one clickup-format step.
     - NEVER emit a plan whose only step is clickup-format — that is invalid. TypeScript coordination rejects it.
     - Multiple clickup-execute steps when separate tool passes are needed (e.g. list teams then list tasks).

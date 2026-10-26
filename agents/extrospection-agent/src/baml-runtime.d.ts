@@ -188,7 +188,6 @@ export type QueryOutcome = "Both" | "Failed_only" | "Successful_only";
 export type QueryResource = "Auto" | "Llm_calls" | "Tool_calls" | "Messages";
 
 export interface SelectedAgent { agent_package: string;
-agent_instance_id: string;
 name: string;
 description: string | null;
 capabilities: string[];

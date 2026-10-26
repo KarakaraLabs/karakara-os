@@ -443,7 +443,6 @@ class SystemInternalA2aSessionPlan {
 function DecideDelegationAction__entry(
   goal: string,
   agent_package: string,
-  agent_instance_id: string,
   session_context: SessionContext
 ) -> ArchivePageReadStep | ArchiveSearchReadStep | ReadOnlyFinishStep | SystemInternalA2aOpenStep {
 
@@ -472,7 +471,7 @@ Result body is archived and is not visible yet.
 {% endfor %}{% endif %}
 Current step instructions:
 
-Goal: Coordinate with agent {{ agent_package }}/{{ agent_instance_id }} to achieve: {{ goal }}
+Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
 Return `null` when the goal is satisfied or after 2+ exchanges.
 
 Return exactly one JSON object of type `ArchivePageReadStep | ArchiveSearchReadStep | ReadOnlyFinishStep | SystemInternalA2aOpenStep`.
@@ -490,7 +489,6 @@ Phase policy:
 function DecideDelegationAction__active__system_internal_a2a(
   goal: string,
   agent_package: string,
-  agent_instance_id: string,
   session_context: SessionContext
 ) -> SystemInternalA2aSendStep | SystemInternalA2aSearchReadStep | SystemInternalA2aPageReadStep | SystemInternalA2aFinishStep | SystemInternalA2aAbortStep {
 
@@ -519,7 +517,7 @@ Result body is archived and is not visible yet.
 {% endfor %}{% endif %}
 Current step instructions:
 
-Goal: Coordinate with agent {{ agent_package }}/{{ agent_instance_id }} to achieve: {{ goal }}
+Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
 Return `null` when the goal is satisfied or after 2+ exchanges.
 
 Return exactly one JSON object of type `SystemInternalA2aAbortStep | SystemInternalA2aFinishStep | SystemInternalA2aPageReadStep | SystemInternalA2aSearchReadStep | SystemInternalA2aSendStep`.
@@ -538,7 +536,6 @@ Phase policy:
 function DecideDelegationAction__consume__system_internal_a2a(
   goal: string,
   agent_package: string,
-  agent_instance_id: string,
   session_context: SessionContext
 ) -> ReadOnlyFinishStep | SystemInternalA2aAbortStep | SystemInternalA2aFinishStep | SystemInternalA2aPageReadStep | SystemInternalA2aSearchReadStep {
 
@@ -567,7 +564,7 @@ Result body is archived and is not visible yet.
 {% endfor %}{% endif %}
 Current step instructions:
 
-Goal: Coordinate with agent {{ agent_package }}/{{ agent_instance_id }} to achieve: {{ goal }}
+Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
 Return `null` when the goal is satisfied or after 2+ exchanges.
 
 Return exactly one JSON object of type `ReadOnlyFinishStep | SystemInternalA2aAbortStep | SystemInternalA2aFinishStep | SystemInternalA2aPageReadStep | SystemInternalA2aSearchReadStep`.

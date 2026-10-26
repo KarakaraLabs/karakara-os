@@ -93,9 +93,8 @@ function validateSlackPlanForExecution(plan: SlackStructuredPlan): SlackPlanStep
       return `plan_steps[${i}].sub_message must be a non-empty string`;
     }
     const pkgRaw = s.agent_package;
-    const instRaw = s.agent_instance_id;
-    if (typeof pkgRaw !== "string" || typeof instRaw !== "string") {
-      return `plan_steps[${i}] missing agent_package or agent_instance_id`;
+    if (typeof pkgRaw !== "string") {
+      return `plan_steps[${i}] missing agent_package`;
     }
     const pkg = pkgRaw.trim().toLowerCase();
     if (pkg !== PKG_RETRIEVE && pkg !== PKG_SYNTH) {
@@ -103,7 +102,6 @@ function validateSlackPlanForExecution(plan: SlackStructuredPlan): SlackPlanStep
     }
     steps.push({
       agent_package: pkgRaw.trim(),
-      agent_instance_id: instRaw.trim() || "default",
       sub_message: s.sub_message,
     });
   }
