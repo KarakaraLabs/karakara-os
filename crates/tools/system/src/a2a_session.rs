@@ -127,6 +127,9 @@ impl ToolHandler for A2aSessionToolHandler {
             handler: self.handler.clone(),
             target: open.target,
             child_task_id: TaskId::for_delegated_child(UuidId::new(uuid::Uuid::new_v4())),
+            // One delegation identity per tool session: every send in this
+            // session re-links the same typed lineage record.
+            delegation_id: uuid::Uuid::new_v4().to_string(),
             queue: VecDeque::new(),
             output_rx: None,
             stream_handle: None,
@@ -145,6 +148,8 @@ struct A2aSession {
     target: InternalA2aTarget,
     /// Stable delegated child task id for this tool session; reused across send/resume turns.
     child_task_id: TaskId,
+    /// Host-generated delegation identity recorded as typed provenance lineage.
+    delegation_id: String,
     queue: VecDeque<InternalA2aNextOutput>,
     output_rx: Option<async_channel::Receiver<InternalA2aNextOutput>>,
     /// JoinHandle for the task that consumes the A2A stream. Aborted in Drop so the task
@@ -459,14 +464,38 @@ impl ToolSession for A2aSession {
             &self.child_task_id,
             parent_task_id.as_ref(),
         );
+        // Typed lineage is written by the trusted router from host-known values.
+        // Without a caller task scope there is no parent to link, so fall back to
+        // plain dispatch rather than inventing one.
+        let delegation = match parent_task_id {
+            Some(caller_task_id) => Some(baml_rt_core::DelegationCallContext {
+                delegation_id: self.delegation_id.clone(),
+                tool_session_id: self.ctx.session_id.to_string(),
+                caller_agent_id: self.ctx.agent_id.clone(),
+                caller_context_id: self.ctx.context_id.clone(),
+                caller_task_id: Some(caller_task_id),
+                child_task_id: self.child_task_id.clone(),
+                target_name: self.target.agent_package.clone(),
+            }),
+            None => None,
+        };
         let handler = self.handler.clone();
         let (tx, rx) = async_channel::unbounded::<InternalA2aNextOutput>();
         self.output_rx = Some(rx);
         let handle = tokio::spawn(async move {
-            match handler
-                .handle_a2a_stream(A2aWireRequest::from(request))
-                .await
-            {
+            let result = match delegation {
+                Some(delegation) => {
+                    handler
+                        .handle_delegated_a2a_stream(A2aWireRequest::from(request), delegation)
+                        .await
+                }
+                None => {
+                    handler
+                        .handle_a2a_stream(A2aWireRequest::from(request))
+                        .await
+                }
+            };
+            match result {
                 Ok(stream) => {
                     futures_util::pin_mut!(stream);
                     while let Some(response) = stream.next().await {

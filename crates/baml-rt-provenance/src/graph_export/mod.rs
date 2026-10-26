@@ -825,6 +825,11 @@ fn derive_display_name(label: &str, props: &HashMap<String, serde_json::Value>) 
             let preview: String = summary.chars().take(48).collect();
             format!("📋 Compaction summary {preview}")
         }
+        Some(GraphNodeLabel::Delegation) => {
+            let caller = prop_str(a2a::DELEGATION_CALLER_NAME).unwrap_or_default();
+            let target = prop_str(a2a::DELEGATION_TARGET_NAME).unwrap_or_default();
+            format!("🔀 Delegation {caller} → {target}")
+        }
         None => label.to_string(),
     }
 }

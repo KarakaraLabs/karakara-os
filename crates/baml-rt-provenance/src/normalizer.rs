@@ -29,15 +29,16 @@ use crate::{
         AgentArtifactEntityId, AgentArtifactEntityInput, AgentBootActivityId,
         AgentBootActivityInput, AgentNodeId, AgentNodeInput, AgentStopActivityId,
         AgentStopActivityInput, ArtifactByActivityAnchorEntityId,
-        ArtifactByActivityAnchorEntityInput, DelegationTargetEntityId, DelegationTargetEntityInput,
-        FailureClassificationActivityId, FailureClassificationActivityInput,
-        FailureClassificationEntityId, FailureClassificationEntityInput, IntentEntityId,
-        IntentEntityInput, LlmCallActivityId, LlmCallActivityInput, LlmPromptEntityId,
-        LlmPromptEntityInput, MessageEntityId, MessageEntityInput, MessageProcessingActivityId,
-        MessageProcessingActivityInput, PlanEntityId, PlanEntityInput, PlanStepEntityId,
-        PlanStepEntityInput, PromptRejectedActivityId, PromptRejectedActivityInput,
-        RunnerRuntimeInstanceId, SessionStepEntityId, SessionStepEntityInput, TaskEntityId,
-        TaskEntityInput, TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
+        ArtifactByActivityAnchorEntityInput, DelegationEntityId, DelegationEntityInput,
+        DelegationTargetEntityId, DelegationTargetEntityInput, FailureClassificationActivityId,
+        FailureClassificationActivityInput, FailureClassificationEntityId,
+        FailureClassificationEntityInput, IntentEntityId, IntentEntityInput, LlmCallActivityId,
+        LlmCallActivityInput, LlmPromptEntityId, LlmPromptEntityInput, MessageEntityId,
+        MessageEntityInput, MessageProcessingActivityId, MessageProcessingActivityInput,
+        PlanEntityId, PlanEntityInput, PlanStepEntityId, PlanStepEntityInput,
+        PromptRejectedActivityId, PromptRejectedActivityInput, RunnerRuntimeInstanceId,
+        SessionStepEntityId, SessionStepEntityInput, TaskEntityId, TaskEntityInput,
+        TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
         TaskStateEntityInput, ToolArgsEntityId, ToolArgsEntityInput, ToolCallActivityId,
         ToolCallActivityInput,
     },
@@ -317,6 +318,14 @@ pub enum A2aRelationType {
     ArtifactRealizesAgent,
     /// A task execution ran under this event-owned process lifetime.
     TaskExecutionExecutedUnderBoot,
+    /// Typed delegation lineage: `Delegation` entity → parent task that opened it.
+    DelegationParent,
+    /// Typed delegation lineage: `Delegation` entity → delegated child task.
+    DelegationChild,
+    /// Typed delegation lineage: `Delegation` entity → caller stable Agent.
+    DelegationCaller,
+    /// Typed delegation lineage: `Delegation` entity → target stable Agent.
+    DelegationTargetAgent,
 }
 
 impl A2aRelationType {
@@ -353,6 +362,10 @@ impl A2aRelationType {
             A2aRelationType::HostDispatchTarget => a2a_relations::HOST_DISPATCH_TARGET,
             A2aRelationType::ArtifactRealizesAgent => "REALIZES",
             A2aRelationType::TaskExecutionExecutedUnderBoot => "EXECUTED_UNDER_BOOT",
+            A2aRelationType::DelegationParent => a2a_relations::DELEGATION_PARENT,
+            A2aRelationType::DelegationChild => a2a_relations::DELEGATION_CHILD,
+            A2aRelationType::DelegationCaller => a2a_relations::DELEGATION_CALLER,
+            A2aRelationType::DelegationTargetAgent => a2a_relations::DELEGATION_TARGET_AGENT,
         }
     }
 }
@@ -2443,6 +2456,99 @@ fn normalize_event_with_registry(
                 "callback_dispatch_contexts_linked",
             )?;
         }
+        ProvEventData::DelegationLinked {
+            delegation_id,
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            caller_name,
+            target_name,
+            tool_session_id,
+        } => {
+            // Typed lineage: one `Delegation` entity owns the parent/child task
+            // link, the caller and target stable agents, and the tool session.
+            // Callers query this instead of parsing an `a2a:` context prefix or
+            // inferring a target from `message.metadata.kind`.
+            let context_id = event.context_id();
+            let child_entity = ensure_task_entity(&mut doc, child_task_id);
+            let parent_entity = ensure_task_entity(&mut doc, parent_task_id);
+            let caller_node = get_agent_node(&doc, caller_agent_id, &mut agent_labels)?;
+            let target_node = get_agent_node(&doc, target_agent_id, &mut agent_labels)?;
+            let delegation_entity = delegation_entity_id(context_id, delegation_id);
+
+            let mut attrs = base_attrs(event);
+            attrs.insert(
+                a2a::TASK_ID.to_string(),
+                Value::String(child_task_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(caller_agent_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_ID.to_string(),
+                Value::String(delegation_id.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_PARENT_TASK_ID.to_string(),
+                Value::String(parent_task_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_TOOL_SESSION_ID.to_string(),
+                Value::String(tool_session_id.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_CALLER_NAME.to_string(),
+                Value::String(caller_name.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_TARGET_NAME.to_string(),
+                Value::String(target_name.clone()),
+            );
+            doc.insert_entity(
+                delegation_entity.clone(),
+                Entity {
+                    prov_type: Some(prov_type::<DelegationEntityId>()),
+                    attributes: attrs,
+                },
+            );
+
+            let mut edge_attrs = derived_attrs(event);
+            edge_attrs.insert(
+                a2a::DELEGATION_ID.to_string(),
+                Value::String(delegation_id.clone()),
+            );
+            edge_attrs.insert(
+                a2a::DELEGATION_TOOL_SESSION_ID.to_string(),
+                Value::String(tool_session_id.clone()),
+            );
+            for (relation, to) in [
+                (
+                    A2aRelationType::DelegationParent,
+                    ProvNodeRef::Entity(parent_entity),
+                ),
+                (
+                    A2aRelationType::DelegationChild,
+                    ProvNodeRef::Entity(child_entity),
+                ),
+                (
+                    A2aRelationType::DelegationCaller,
+                    ProvNodeRef::Agent(caller_node),
+                ),
+                (
+                    A2aRelationType::DelegationTargetAgent,
+                    ProvNodeRef::Agent(target_node),
+                ),
+            ] {
+                derived_relations.push(A2aDerivedRelation {
+                    relation,
+                    from: ProvNodeRef::Entity(delegation_entity.clone()),
+                    to,
+                    attributes: edge_attrs.clone(),
+                });
+            }
+        }
         ProvEventData::HostSourcePollRecorded {
             source_kind,
             source_key,
@@ -2829,6 +2935,49 @@ pub fn validate_event(event: &ProvEvent) -> Result<()> {
             });
         }
         ProvEventData::CallbackDispatchContextsLinked { .. } => {}
+        ProvEventData::DelegationLinked {
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            delegation_id,
+            tool_session_id,
+            caller_name,
+            target_name,
+        } => {
+            if event.context_id_opt().is_none() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage must carry context_id".to_string(),
+                });
+            }
+            if delegation_id.trim().is_empty() || tool_session_id.trim().is_empty() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires delegation_id and tool_session_id"
+                        .to_string(),
+                });
+            }
+            if caller_name.trim().is_empty() || target_name.trim().is_empty() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires caller and target package names"
+                        .to_string(),
+                });
+            }
+            if caller_agent_id == target_agent_id {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage caller and target must differ".to_string(),
+                });
+            }
+            if parent_task_id == child_task_id {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires a fresh child task".to_string(),
+                });
+            }
+        }
         ProvEventData::HostSourcePollRecorded { .. }
         | ProvEventData::HostDispatchAccepted { .. }
         | ProvEventData::HostDispatchRejected { .. }
@@ -3337,6 +3486,15 @@ fn delegation_target_entity_id(scope_key: &str, ordinal: u64) -> ProvEntityId {
 /// Task entity id: derived from `TaskId` to provide stable task identity.
 fn task_entity_id(task_id: &TaskId) -> ProvEntityId {
     ProvEntityId::derived::<TaskEntityId>(TaskEntityInput { task_id })
+}
+
+/// Delegation lineage entity: one per `(context, delegation_id)`, so a retried
+/// delegation write re-links the same node instead of appending a duplicate.
+fn delegation_entity_id(context_id: &ContextId, delegation_id: &str) -> ProvEntityId {
+    ProvEntityId::derived::<DelegationEntityId>(DelegationEntityInput {
+        context_id,
+        delegation_id,
+    })
 }
 
 /// Public helper so the store can build the task entity id string for graph lookups.

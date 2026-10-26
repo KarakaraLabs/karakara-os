@@ -62,6 +62,10 @@ fn known_edge_labels() -> HashSet<&'static str> {
         a2a_relations::TASK_STATUS_TRANSITION,
         a2a_relations::MESSAGE_CALL,
         a2a_relations::HOST_DISPATCH_TARGET,
+        a2a_relations::DELEGATION_PARENT,
+        a2a_relations::DELEGATION_CHILD,
+        a2a_relations::DELEGATION_CALLER,
+        a2a_relations::DELEGATION_TARGET_AGENT,
     ] {
         s.insert(label);
     }
@@ -105,6 +109,11 @@ fn known_property_keys() -> HashSet<&'static str> {
         a2a::HOST_INGRESS_SOURCE_KEY,
         a2a::HOST_INGRESS_RECORD_COUNT,
         a2a::HOST_INGRESS_ROUTING_KEY,
+        a2a::DELEGATION_ID,
+        a2a::DELEGATION_PARENT_TASK_ID,
+        a2a::DELEGATION_TOOL_SESSION_ID,
+        a2a::DELEGATION_CALLER_NAME,
+        a2a::DELEGATION_TARGET_NAME,
     ] {
         s.insert(key);
     }

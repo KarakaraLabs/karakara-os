@@ -49,7 +49,7 @@ pub mod time;
 pub mod types;
 
 pub use a2a_handler::{
-    A2aJsChatHost, A2aRequestHandler, collect_a2a_stream_one_shot,
+    A2aJsChatHost, A2aRequestHandler, DelegationCallContext, collect_a2a_stream_one_shot,
     collect_a2a_stream_until_one_shot,
 };
 pub use a2a_sse::{A2aSseDecoder, A2aSseParseError, parse_a2a_sse_json_rpc_chunks};

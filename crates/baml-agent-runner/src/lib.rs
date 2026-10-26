@@ -1399,7 +1399,14 @@ globalThis.onChatMessage = async function(_message) {
 
         let caller_pkg = AgentPackageName::parse("caller-agent").unwrap();
         let caller_key = AgentRouteKey::new(caller_pkg);
-        let scoped = ScopedInternalA2aRouter::new(caller_key, runner.internal_a2a_router().clone());
+        let caller_agent_id = baml_rt_core::ids::AgentId::from_uuid(
+            baml_rt_core::ids::UuidId::new(uuid::Uuid::new_v4()),
+        );
+        let scoped = ScopedInternalA2aRouter::new(
+            caller_key,
+            caller_agent_id,
+            runner.internal_a2a_router().clone(),
+        );
         use baml_rt_a2a::A2aRequestHandler as _;
         let request_val = json!({
             "jsonrpc": "2.0", "method": "message.sendStream",

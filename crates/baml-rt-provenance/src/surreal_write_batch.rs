@@ -729,7 +729,11 @@ fn build_graph_fragment(normalized: &NormalizedProv, context_id: Option<&str>) -
             | A2aRelationType::LifecycleStopInformedByBoot
             | A2aRelationType::HostDispatchTarget
             | A2aRelationType::ArtifactRealizesAgent
-            | A2aRelationType::TaskExecutionExecutedUnderBoot => {
+            | A2aRelationType::TaskExecutionExecutedUnderBoot
+            | A2aRelationType::DelegationParent
+            | A2aRelationType::DelegationChild
+            | A2aRelationType::DelegationCaller
+            | A2aRelationType::DelegationTargetAgent => {
                 let from_label = label_for_prov_node_ref(
                     &relation.from,
                     &entity_labels,

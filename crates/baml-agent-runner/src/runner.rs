@@ -492,6 +492,7 @@ impl AgentRunner {
         let route_key = AgentRouteKey::new(package_name);
         let scoped_router: Arc<dyn A2aRequestHandler> = Arc::new(ScopedInternalA2aRouter::new(
             route_key.clone(),
+            agent_id.clone(),
             self.internal_a2a_router().clone(),
         ));
         let catalogue: Arc<dyn AgentLister> =

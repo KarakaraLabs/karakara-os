@@ -530,6 +530,23 @@ pub enum ProvEventData {
         dispatch_task_id: TaskId,
         agent_id: AgentId,
     },
+    /// Typed delegation lineage recorded by the trusted runtime before local
+    /// dispatch or remote forwarding.
+    ///
+    /// One record per delegated tool session. It is the only supported source
+    /// for child-task to parent-task, caller, target, and tool-session
+    /// correlation: callers must not reconstruct any of it from
+    /// `message.metadata.kind`, `referenceTaskIds`, or an `a2a:` context prefix.
+    DelegationLinked {
+        delegation_id: String,
+        parent_task_id: TaskId,
+        child_task_id: TaskId,
+        caller_agent_id: AgentId,
+        target_agent_id: AgentId,
+        caller_name: String,
+        target_name: String,
+        tool_session_id: String,
+    },
     /// Host recorded one task-daemon / producer poll window (`host.source-records.v1`).
     HostSourcePollRecorded {
         source_kind: String,
@@ -624,6 +641,25 @@ pub struct GlobalEvent {
     pub context_id: ContextId,
     pub timestamp_ms: u64,
     pub data: ProvEventData,
+}
+
+/// Full field set of a typed delegation lineage record.
+///
+/// Supplied by the trusted runtime from host-known values: the running caller's
+/// stable identity, the selected target's stable identity, and the tool session
+/// that owns the exchange. None of it is read back out of the A2A request body.
+#[derive(Debug, Clone)]
+pub struct DelegationLinkedSpec {
+    pub context_id: ContextId,
+    /// Host-generated per delegated tool session; stable across its sends.
+    pub delegation_id: String,
+    pub parent_task_id: TaskId,
+    pub child_task_id: TaskId,
+    pub caller_agent_id: AgentId,
+    pub target_agent_id: AgentId,
+    pub caller_name: String,
+    pub target_name: String,
+    pub tool_session_id: String,
 }
 
 /// AgentBooted has no context by design—it is a global event before any conversation.
@@ -1754,6 +1790,39 @@ impl ProvEvent {
                 dispatch_context_id,
                 dispatch_task_id,
                 agent_id,
+            },
+        })
+    }
+
+    /// Typed delegation lineage for one delegated tool session.
+    ///
+    /// Retries are idempotent through the derived `Delegation` entity identity in
+    /// the normalizer, which is keyed by `(context_id, delegation_id)`.
+    pub fn delegation_linked(spec: DelegationLinkedSpec) -> Self {
+        let DelegationLinkedSpec {
+            context_id,
+            delegation_id,
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            caller_name,
+            target_name,
+            tool_session_id,
+        } = spec;
+        ProvEvent::Global(GlobalEvent {
+            id: next_activity_anchor_id(),
+            context_id,
+            timestamp_ms: now_millis(),
+            data: ProvEventData::DelegationLinked {
+                delegation_id,
+                parent_task_id,
+                child_task_id,
+                caller_agent_id,
+                target_agent_id,
+                caller_name,
+                target_name,
+                tool_session_id,
             },
         })
     }

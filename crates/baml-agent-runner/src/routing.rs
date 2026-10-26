@@ -178,6 +178,22 @@ impl InternalA2aRouter {
         caller: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
+        self.route_from_delegated(caller, None, request, None).await
+    }
+
+    /// Route one delegated `system/internal_a2a` request.
+    ///
+    /// When `caller_agent_id` and `delegation` are present the trusted runtime
+    /// records typed delegation lineage **before** dispatch. A failed lineage
+    /// write fails the delegation: without it, later projections cannot
+    /// attribute the child's work to a caller and target pair.
+    pub(crate) async fn route_from_delegated(
+        &self,
+        caller: &AgentRouteKey,
+        caller_agent_id: Option<&AgentId>,
+        request: A2aWireRequest,
+        delegation: Option<&baml_rt_core::DelegationCallContext>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
         let runner = self.runner.get().ok_or_else(|| {
             BamlRtError::InvalidArgument(
                 "InternalA2aRouter: runner not set (route_from called before set_runner)".into(),
@@ -212,6 +228,10 @@ impl InternalA2aRouter {
         };
 
         if let Some(routed_agent) = local_agent {
+            if let (Some(caller_agent_id), Some(delegation)) = (caller_agent_id, delegation) {
+                record_delegation_lineage(&routed_agent, caller, caller_agent_id, delegation)
+                    .await?;
+            }
             let scope = scope_from_request(request.as_ref(), routed_agent.agent_id().clone());
             return context::with_scope(scope.as_scope().clone(), async move {
                 routed_agent.handle_a2a_stream(request).await
@@ -221,6 +241,16 @@ impl InternalA2aRouter {
 
         // Cluster fallback: forward to the remote runner hosting this agent.
         if let Some(resolver) = self.cluster.get() {
+            if delegation.is_some() {
+                // Placement resolution does not yet return the target's stable
+                // AgentId, and lineage must never be reconstructed from the
+                // request body. Cross-runner lineage lands with placement
+                // identity (plan S11).
+                tracing::debug!(
+                    agent = %key.agent_package.as_str(),
+                    "delegation lineage not recorded for remote target yet"
+                );
+            }
             match resolver.resolve(&key).await {
                 Ok(Some(placement)) => {
                     tracing::info!(
@@ -283,13 +313,63 @@ impl InternalA2aRouter {
 #[derive(Clone)]
 pub(crate) struct ScopedInternalA2aRouter {
     caller: AgentRouteKey,
+    /// Stable identity of the running caller, supplied by the boot that owns it.
+    caller_agent_id: AgentId,
     router: Arc<InternalA2aRouter>,
 }
 
 impl ScopedInternalA2aRouter {
-    pub(crate) fn new(caller: AgentRouteKey, router: Arc<InternalA2aRouter>) -> Self {
-        Self { caller, router }
+    pub(crate) fn new(
+        caller: AgentRouteKey,
+        caller_agent_id: AgentId,
+        router: Arc<InternalA2aRouter>,
+    ) -> Self {
+        Self {
+            caller,
+            caller_agent_id,
+            router,
+        }
     }
+}
+
+/// Record typed delegation lineage from host-known values.
+///
+/// Caller identity comes from the scoped router and target identity from the
+/// resolved local agent. Nothing here is read out of request metadata.
+async fn record_delegation_lineage(
+    routed_agent: &baml_rt_a2a::A2aAgent,
+    caller: &AgentRouteKey,
+    caller_agent_id: &AgentId,
+    delegation: &baml_rt_core::DelegationCallContext,
+) -> Result<()> {
+    use baml_rt_provenance::{DelegationLinkedSpec, ProvEvent};
+
+    let Some(parent_task_id) = delegation.caller_task_id.clone() else {
+        return Err(BamlRtError::InvalidArgument(
+            "delegation lineage requires a caller task scope".to_string(),
+        ));
+    };
+    let event = ProvEvent::delegation_linked(DelegationLinkedSpec {
+        context_id: delegation.caller_context_id.clone(),
+        delegation_id: delegation.delegation_id.clone(),
+        parent_task_id,
+        child_task_id: delegation.child_task_id.clone(),
+        caller_agent_id: caller_agent_id.clone(),
+        target_agent_id: routed_agent.agent_id().clone(),
+        caller_name: caller.agent_package.as_str().to_string(),
+        target_name: delegation.target_name.clone(),
+        tool_session_id: delegation.tool_session_id.clone(),
+    });
+    let anchor = event.id().as_str().to_string();
+    routed_agent
+        .provenance_writer()
+        .add_event(event)
+        .await
+        .map_err(|err| {
+            BamlRtError::Io(std::io::Error::other(format!(
+                "delegation lineage write failed ({anchor}): {err}"
+            )))
+        })
 }
 
 /// Build scope from request so coordinator and delegated flow share one context_id.
@@ -321,6 +401,21 @@ impl A2aRequestHandler for ScopedInternalA2aRouter {
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
         self.router.route_from(&self.caller, request).await
+    }
+
+    async fn handle_delegated_a2a_stream(
+        &self,
+        request: A2aWireRequest,
+        delegation: baml_rt_core::DelegationCallContext,
+    ) -> Result<BusStream<A2aStreamChunk>> {
+        self.router
+            .route_from_delegated(
+                &self.caller,
+                Some(&self.caller_agent_id),
+                request,
+                Some(&delegation),
+            )
+            .await
     }
 }
 

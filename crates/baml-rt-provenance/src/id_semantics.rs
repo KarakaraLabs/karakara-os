@@ -238,6 +238,38 @@ impl ProvDerivedIdTemplate for DelegationTargetEntityId {
     }
 }
 
+/// Entity representing one typed delegation link: a parent task opened a
+/// delegated child task for a target agent through a tool session.
+///
+/// Derived from `(context_id, delegation_id)` so a retried delegation write is
+/// idempotent: the same session re-links the same node instead of minting a new one.
+pub struct DelegationEntityId;
+impl DerivedConstructible for DelegationEntityId {}
+impl ProvIdSemantics for DelegationEntityId {
+    const KIND: ProvKind = ProvKind::Entity;
+}
+impl ProvEntitySemantics for DelegationEntityId {}
+impl ProvDerivedEntitySemantics for DelegationEntityId {}
+impl ProvVocabularyType for DelegationEntityId {
+    const VOCAB_TYPE: &'static str = a2a_types::DELEGATION;
+}
+
+pub struct DelegationEntityInput<'a> {
+    pub context_id: &'a ContextId,
+    pub delegation_id: &'a str,
+}
+
+impl ProvDerivedIdTemplate for DelegationEntityId {
+    type Input<'a> = DelegationEntityInput<'a>;
+
+    fn build<'a>(input: Self::Input<'a>) -> DerivedId {
+        DerivedId::from_parts(
+            "delegation",
+            [input.context_id.as_str(), input.delegation_id],
+        )
+    }
+}
+
 /// Entity representing a task.
 pub struct TaskEntityId;
 impl DerivedConstructible for TaskEntityId {}
@@ -253,7 +285,6 @@ impl ProvVocabularyType for TaskEntityId {
 pub struct TaskEntityInput<'a> {
     pub task_id: &'a TaskId,
 }
-
 impl ProvDerivedIdTemplate for TaskEntityId {
     type Input<'a> = TaskEntityInput<'a>;
 
@@ -829,6 +860,14 @@ pub fn context_entity_id_string(context_id: &str) -> String {
 
 /// Canonical Task entity node_id from a raw task_id string.
 /// Mirrors `TaskEntityId::build` for read-path graph lookups.
+/// Stable `Agent` node id string from a stable `AgentId`.
+///
+/// Mirrors [`AgentNodeId::build`] so read paths can scope a context query to one
+/// agent without walking the package registry.
+pub fn agent_node_id_string(agent_id: &AgentId) -> String {
+    DerivedId::from_parts("agent", [agent_id.as_str()]).into_string()
+}
+
 pub fn task_entity_id_string_raw(task_id: &str) -> String {
     DerivedId::from_parts("task", [task_id]).into_string()
 }

@@ -157,7 +157,8 @@ fn dot_node_attrs(label: &str) -> (&'static str, &'static str) {
             | GraphNodeLabel::FailureClassification
             | GraphNodeLabel::SessionStep
             | GraphNodeLabel::ContextCompaction
-            | GraphNodeLabel::CompactionSummary,
+            | GraphNodeLabel::CompactionSummary
+            | GraphNodeLabel::Delegation,
         ) => ("box", "#ecfeff"),
         None => ("box", "#f1f5f9"),
     }

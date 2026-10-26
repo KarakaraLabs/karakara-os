@@ -42,6 +42,8 @@ pub enum GraphNodeLabel {
     ContextCompaction,
     /// Summary text entity emitted by compaction.
     CompactionSummary,
+    /// Typed delegation lineage entity (parent/child task, caller, target, session).
+    Delegation,
 }
 
 impl GraphNodeLabel {
@@ -72,6 +74,7 @@ impl GraphNodeLabel {
             Self::SessionStep => "SessionStep",
             Self::ContextCompaction => "ContextCompaction",
             Self::CompactionSummary => "CompactionSummary",
+            Self::Delegation => "Delegation",
         }
     }
 
@@ -102,6 +105,7 @@ impl GraphNodeLabel {
             "SessionStep" => Some(Self::SessionStep),
             "ContextCompaction" => Some(Self::ContextCompaction),
             "CompactionSummary" => Some(Self::CompactionSummary),
+            "Delegation" => Some(Self::Delegation),
             _ => None,
         }
     }
@@ -167,9 +171,10 @@ pub enum EventGraphKind {
     HostDispatchAccepted,
     HostDispatchRejected,
     ContextCompactionRecorded,
+    DelegationLinked,
 }
 
-pub const ALL_EVENT_KINDS: [EventGraphKind; 24] = [
+pub const ALL_EVENT_KINDS: [EventGraphKind; 25] = [
     EventGraphKind::IntentResolved,
     EventGraphKind::PlanGenerated,
     EventGraphKind::PlanStepStatusChanged,
@@ -194,6 +199,7 @@ pub const ALL_EVENT_KINDS: [EventGraphKind; 24] = [
     EventGraphKind::HostDispatchAccepted,
     EventGraphKind::HostDispatchRejected,
     EventGraphKind::ContextCompactionRecorded,
+    EventGraphKind::DelegationLinked,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -414,6 +420,26 @@ const MAPPING_CALLBACK_DISPATCH_CONTEXTS_LINKED: EventGraphMapping = EventGraphM
     required_properties: &[a2a::TASK_ID, a2a::CONTEXT_ID],
 };
 
+/// Typed delegation lineage: one `Delegation` entity per delegated tool session.
+const MAPPING_DELEGATION_LINKED: EventGraphMapping = EventGraphMapping {
+    kind: EventGraphKind::DelegationLinked,
+    primary_node: GraphNodeLabel::Delegation,
+    expected_edges: &[
+        a2a_relations::DELEGATION_PARENT,
+        a2a_relations::DELEGATION_CHILD,
+        a2a_relations::DELEGATION_CALLER,
+        a2a_relations::DELEGATION_TARGET_AGENT,
+    ],
+    required_properties: &[
+        a2a::CONTEXT_ID,
+        a2a::DELEGATION_ID,
+        a2a::DELEGATION_PARENT_TASK_ID,
+        a2a::DELEGATION_TOOL_SESSION_ID,
+        a2a::DELEGATION_CALLER_NAME,
+        a2a::DELEGATION_TARGET_NAME,
+    ],
+};
+
 const MAPPING_HOST_SOURCE_POLL_RECORDED: EventGraphMapping = EventGraphMapping {
     kind: EventGraphKind::HostSourcePollRecorded,
     primary_node: GraphNodeLabel::Message,
@@ -487,6 +513,7 @@ pub fn event_kind_from_data(data: &ProvEventData) -> EventGraphKind {
         ProvEventData::CallbackDispatchContextsLinked { .. } => {
             EventGraphKind::CallbackDispatchContextsLinked
         }
+        ProvEventData::DelegationLinked { .. } => EventGraphKind::DelegationLinked,
         ProvEventData::HostSourcePollRecorded { .. } => EventGraphKind::HostSourcePollRecorded,
         ProvEventData::HostDispatchAccepted { .. } => EventGraphKind::HostDispatchAccepted,
         ProvEventData::HostDispatchRejected { .. } => EventGraphKind::HostDispatchRejected,
@@ -524,6 +551,7 @@ pub fn mapping_for_event_kind(kind: EventGraphKind) -> &'static EventGraphMappin
         EventGraphKind::HostDispatchAccepted => &MAPPING_HOST_DISPATCH_ACCEPTED,
         EventGraphKind::HostDispatchRejected => &MAPPING_HOST_DISPATCH_REJECTED,
         EventGraphKind::ContextCompactionRecorded => &MAPPING_CONTEXT_COMPACTION_RECORDED,
+        EventGraphKind::DelegationLinked => &MAPPING_DELEGATION_LINKED,
     }
 }
 
