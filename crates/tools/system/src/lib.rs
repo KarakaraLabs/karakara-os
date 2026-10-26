@@ -36,6 +36,7 @@ pub use tools::{
     DiscoverAgentsNextOutput, DiscoverAgentsOpenInput, DiscoverAgentsSendInput,
     DiscoverToolsNextOutput, DiscoverToolsOpenInput, DiscoverToolsSendInput, InternalA2aCompletion,
     InternalA2aNextOutput, InternalA2aOpenInput, InternalA2aSendInput, InternalA2aTarget,
+    ProvenanceAgentRefDto, ProvenanceContextHistoryPageDto, ProvenanceContextHistoryRowDto,
     ProvenanceQueryNextOutput, ProvenanceQueryOpenInput, ProvenanceQuerySendInput,
     ToolDiscoveryRecordDto,
 };

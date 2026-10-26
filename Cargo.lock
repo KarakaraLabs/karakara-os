@@ -2492,6 +2492,7 @@ dependencies = [
  "baml-derive 0.2.2",
  "baml-derive-core",
  "baml-rt",
+ "baml-rt-conversation",
  "baml-rt-core",
  "baml-rt-provenance",
  "baml-rt-tools",

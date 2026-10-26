@@ -411,6 +411,7 @@ pub mod storage_safe {
     pub const A2A_ARTIFACT_ID: &str = "a2a_artifact_id";
     pub const A2A_ARTIFACT_TYPE: &str = "a2a_artifact_type";
     pub const A2A_CONTEXT_ID: &str = "a2a_context_id";
+    pub const A2A_DELEGATION_PARENT_TASK_ID: &str = "a2a_delegation_parent_task_id";
     pub const A2A_TIMESTAMP_MS: &str = "a2a_timestamp_ms";
     pub const A2A_EVENT_ORDER: &str = "a2a_event_order";
     pub const A2A_FAILURE_CLASS: &str = "a2a_failure_class";

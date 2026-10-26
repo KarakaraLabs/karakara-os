@@ -127,7 +127,7 @@ pub fn system_introspection_metadata() -> ToolFunctionMetadata {
     >::new(
         name,
         class_name,
-        "Queries provenance rows for the current context with compact token-aware output. Open session, send filters/grouping, then read() returns one result page.".to_string(),
+        "Queries provenance rows for the current context with compact token-aware output, or pages this agent's own context history with resource `context_history`. Open session, send filters/grouping or a history cursor, then read() returns one result page.".to_string(),
     )
     .with_tags(vec!["system".to_string(), "discovery".to_string()])
     .with_access(ToolAccess::Read)
@@ -150,7 +150,7 @@ pub fn system_extrospection_metadata() -> ToolFunctionMetadata {
     >::new(
         name,
         class_name,
-        "Queries provenance rows across contexts and agents with compact token-aware output. Open session, send filters/grouping, then read() returns one result page.".to_string(),
+        "Queries provenance rows across contexts and agents with compact token-aware output, or pages one agent's context history with resource `context_history`. Open session, send filters/grouping or a history cursor, then read() returns one result page.".to_string(),
     )
     .with_tags(vec!["system".to_string(), "discovery".to_string()])
     .with_access(ToolAccess::Read)

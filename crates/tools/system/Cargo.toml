@@ -7,6 +7,7 @@ publish = false
 description = "System tool bundle (e.g. system/a2a for agent-to-agent calls)"
 
 [dependencies]
+baml-rt-conversation = { path = "../../baml-rt-conversation" }
 baml-rt-core = { path = "../../baml-rt-core" }
 baml-rt-provenance = { path = "../../baml-rt-provenance" }
 baml-rt-tools = { path = "../../baml-rt-tools" }

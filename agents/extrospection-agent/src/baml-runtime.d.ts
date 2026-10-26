@@ -79,6 +79,12 @@ export interface NeedClarification { kind: "clarify";
 question: string;
  }
 
+export interface ProvenanceAgentRefDto {
+  agentId: string;
+  name?: string | null;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface ProvenanceArchiveRecordDto {
   archiveRef: string;
   payloads: (ProvenancePayloadLlmCallDto | ProvenancePayloadLlmResultDto | ProvenancePayloadToolCallDto | ProvenancePayloadToolResultDto)[];
@@ -89,6 +95,26 @@ export interface ProvenanceArchiveSummaryDto {
   archiveRef: string;
   payloadCount: number;
   payloadSources: string[];
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenanceContextHistoryPageDto {
+  items: ProvenanceContextHistoryRowDto[];
+  cursor?: string | null;
+  hasMore: boolean;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProvenanceContextHistoryRowDto {
+  activityAnchor: string;
+  role: string;
+  timestampMs: number;
+  eventKind?: string | null;
+  actor?: ProvenanceAgentRefDto | null;
+  target?: ProvenanceAgentRefDto | null;
+  taskId?: string | null;
+  sourceIdentity?: string | null;
+  content: JsonValue;
   [key: string]: JsonValue | undefined;
 }
 
@@ -129,6 +155,7 @@ export interface ProvenancePayloadToolResultDto {
 export interface ProvenanceQueryNextOutput {
   payloadJson?: string | null;
   readResult?: SessionReadResultDto | null;
+  contextHistory?: ProvenanceContextHistoryPageDto | null;
   retrievalBudget?: ProvenanceRetrievalBudgetDto | null;
   budgetExhausted?: boolean | null;
   done: boolean;

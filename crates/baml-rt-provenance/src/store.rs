@@ -592,4 +592,26 @@ pub trait ProvenanceOpsQuery: Send + Sync {
     ) -> Result<Option<ProvenanceArchiveRecord>> {
         Ok(None)
     }
+
+    /// One agent-scoped page of the prompt-facing context history view.
+    ///
+    /// This is the retrieval-tool entrypoint for
+    /// [`SurrealProvenanceStore::context_history_view`]: the rows carry the same
+    /// visibility, window, and delegation-dedup behavior the prompt uses, so a
+    /// model can never page in a row its prompt hid. Implementations that do not
+    /// back a conversation store may keep the default refusal; answering with an
+    /// empty page would read to a model as "the history is complete".
+    async fn context_history_view(
+        &self,
+        _context_id: &ContextId,
+        _agent_id: &AgentId,
+        _window: Option<usize>,
+        _cursor: Option<&ContextHistoryCursor>,
+        _task_id: Option<&TaskId>,
+    ) -> Result<ContextHistoryPage> {
+        Err(crate::error::ProvenanceError::InvalidEvent {
+            activity_anchor: String::new(),
+            reason: "this provenance store does not expose a context history view".to_string(),
+        })
+    }
 }

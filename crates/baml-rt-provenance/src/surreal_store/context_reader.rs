@@ -43,7 +43,7 @@ use crate::{
         ContextHistoryCursor, ContextHistoryPage, ProvenanceContextReader, ProvenanceQueryApi,
     },
     surreal_tables::{PAYLOAD_ROW_SELECT, TBL_EDGE, TBL_NODE, TBL_PAYLOAD},
-    vocabulary::{a2a, a2a_relations, context_scope, semantic_labels},
+    vocabulary::{a2a, a2a_relations, context_scope, semantic_labels, storage_safe},
 };
 
 /// Node scan shared by bounded read paths: same labels, same guards, same
@@ -75,16 +75,26 @@ fn is_elided_delegation_payload(
         return false;
     }
     let props = row.get("props").unwrap_or(&Value::Null);
-    if props.get(a2a::TOOL_NAME).and_then(Value::as_str) != Some("system/internal_a2a") {
+    if props
+        .get(storage_safe::A2A_TOOL_NAME)
+        .and_then(Value::as_str)
+        != Some("system/internal_a2a")
+    {
         return false;
     }
     // Keep failures: an unmatched delegation error must stay visible.
-    if props.get(a2a::ACTIVITY_OUTCOME).and_then(Value::as_str) != Some("Success") {
+    if props
+        .get(storage_safe::A2A_ACTIVITY_OUTCOME)
+        .and_then(Value::as_str)
+        != Some("Success")
+    {
         return false;
     }
     let (Some(caller), Some(parent_task)) = (
-        props.get(a2a::AGENT_ID).and_then(Value::as_str),
-        props.get(a2a::TASK_ID).and_then(Value::as_str),
+        props
+            .get(storage_safe::A2A_AGENT_ID)
+            .and_then(Value::as_str),
+        props.get(storage_safe::A2A_TASK_ID).and_then(Value::as_str),
     ) else {
         return false;
     };
@@ -100,7 +110,7 @@ fn stored_event_order(props: &Value) -> u64 {
 
 fn task_id_from_props(props: &Value) -> Option<TaskId> {
     props
-        .get(a2a::TASK_ID)
+        .get(storage_safe::A2A_TASK_ID)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -113,7 +123,7 @@ fn task_id_from_props(props: &Value) -> Option<TaskId> {
 /// traversal (`Message <- A2AMessageProcessing -> Agent`), so their attribution
 /// fills in once the agent-scoped read provides it.
 fn agent_ref_from_props(props: &Value) -> Option<AgentRef> {
-    let raw = props.get(a2a::AGENT_ID)?.as_str()?;
+    let raw = props.get(storage_safe::A2A_AGENT_ID)?.as_str()?;
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
@@ -122,7 +132,7 @@ fn agent_ref_from_props(props: &Value) -> Option<AgentRef> {
     Some(AgentRef {
         agent_id: AgentId::from_uuid(agent_id),
         name: props
-            .get(a2a::AGENT_TYPE)
+            .get(storage_safe::A2A_AGENT_TYPE)
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -364,10 +374,6 @@ impl SurrealProvenanceStore {
     /// The window is the newest `window` visible rows by the durable ordering key
     /// `(event_order, node_id)`. `cursor` pages older-ward and is exclusive;
     /// `truncated` says that older visible rows exist outside the window.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "read shape mirrors the documented view contract; a params struct would only duplicate it"
-    )]
     pub async fn context_history_view(
         &self,
         context_id: &ContextId,
@@ -411,7 +417,14 @@ impl SurrealProvenanceStore {
             rows.retain(|row| !is_elided_delegation_payload(row, &proven));
         }
         if rows.is_empty() {
-            return Ok(ContextHistoryPage::default());
+            // The window was selected before dedup elided it. Keep the cursor and
+            // the truncation flag so the reader can continue older-ward instead of
+            // treating an elided-only window as the end of the history.
+            return Ok(ContextHistoryPage {
+                items: Vec::new(),
+                cursor: next_cursor.map(|cursor| cursor.encode()),
+                truncated,
+            });
         }
         // Hydrate only the selected window: payloads, citations, and edge maps are
         // all keyed off these rows.
@@ -477,11 +490,18 @@ impl SurrealProvenanceStore {
             None => "",
         };
         let base = index_scan_sql(scoped_to);
-        let arms = [
-            (task_message.as_str(), msg_filter.as_str()),
-            (task_tool.as_str(), call_filter.as_str()),
-            (task_session.as_str(), call_filter.as_str()),
-        ];
+        // Without a task filter the tool and session arms would run the same
+        // `label IN ['ToolCall', 'SessionStep']` clause twice and return every
+        // call twice. With a task filter the two arms are disjoint: each one is
+        // restricted to the label its task edge belongs to.
+        let no_task_filter = String::new();
+        let mut arms: Vec<(&str, &str)> = vec![(task_message.as_str(), msg_filter.as_str())];
+        if task_id.is_some() {
+            arms.push((task_tool.as_str(), call_filter.as_str()));
+            arms.push((task_session.as_str(), call_filter.as_str()));
+        } else {
+            arms.push((no_task_filter.as_str(), call_filter.as_str()));
+        }
         let mut rows: Vec<Value> = Vec::new();
         for (task_filter_sql, agent_filter_sql) in arms {
             let sql = format!(
@@ -1521,10 +1541,13 @@ impl SurrealProvenanceStore {
         context_id: &ContextId,
     ) -> Result<std::collections::HashSet<(String, String)>> {
         let ctx = context_id.as_str();
-        // SurrealDB needs the colon-bearing prop name quoted.
-        let q = "SELECT node_id, props FROM prov_node WHERE label = 'Delegation' \
-                 AND props.`a2a:context_id` = $ctx"
-            .to_string();
+        // Stored property keys are the storage-safe underscore form; a
+        // colon-bearing key never matches a row written by the normalizer.
+        let q = format!(
+            "SELECT node_id, props FROM {TBL_NODE} WHERE label = 'Delegation' \
+             AND props.{} = $ctx",
+            storage_safe::A2A_CONTEXT_ID
+        );
         let rows: Vec<Value> = self
             .db
             .query(&q)
@@ -1538,10 +1561,12 @@ impl SurrealProvenanceStore {
         let mut by_child_task: Vec<(String, (String, String))> = Vec::new();
         for row in &rows {
             let props = row.get("props").cloned().unwrap_or(Value::Null);
-            let child_task = props.get(a2a::TASK_ID).and_then(Value::as_str);
-            let caller = props.get(a2a::AGENT_ID).and_then(Value::as_str);
+            let child_task = props.get(storage_safe::A2A_TASK_ID).and_then(Value::as_str);
+            let caller = props
+                .get(storage_safe::A2A_AGENT_ID)
+                .and_then(Value::as_str);
             let parent = props
-                .get(a2a::DELEGATION_PARENT_TASK_ID)
+                .get(storage_safe::A2A_DELEGATION_PARENT_TASK_ID)
                 .and_then(Value::as_str);
             let (Some(child_task), Some(caller), Some(parent)) = (child_task, caller, parent)
             else {
@@ -1683,7 +1708,7 @@ impl SurrealProvenanceStore {
                 continue;
             };
             let name = props
-                .get(a2a::AGENT_TYPE)
+                .get(storage_safe::A2A_AGENT_TYPE)
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -1718,7 +1743,7 @@ struct MessageAgentOwnership {
 
 fn agent_id_from_agent_node(props: &Value, node_id: &str) -> Option<AgentId> {
     let raw = props
-        .get(a2a::AGENT_ID)
+        .get(storage_safe::A2A_AGENT_ID)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())

@@ -271,6 +271,32 @@ class SessionReadResultDto {
   @@dynamic
 }
 
+class ProvenanceAgentRefDto {
+  agentId string
+  name (string | null)?
+  @@dynamic
+}
+
+class ProvenanceContextHistoryRowDto {
+  activityAnchor string
+  role string
+  timestampMs int
+  eventKind (string | null)?
+  actor (ProvenanceAgentRefDto | null)?
+  target (ProvenanceAgentRefDto | null)?
+  taskId (string | null)?
+  sourceIdentity (string | null)?
+  content OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  @@dynamic
+}
+
+class ProvenanceContextHistoryPageDto {
+  items ProvenanceContextHistoryRowDto[]
+  cursor (string | null)?
+  hasMore bool
+  @@dynamic
+}
+
 class ProvenanceRetrievalBudgetDto {
   callsUsed int
   callsCap int
@@ -284,6 +310,7 @@ class ProvenanceRetrievalBudgetDto {
 class ProvenanceQueryNextOutput {
   payloadJson (string | null)?
   readResult (SessionReadResultDto | null)?
+  contextHistory (ProvenanceContextHistoryPageDto | null)?
   retrievalBudget (ProvenanceRetrievalBudgetDto | null)?
   budgetExhausted (bool | null)?
   done bool
@@ -306,7 +333,7 @@ class SessionReadEnvelope {
 
 class ProvenanceQuerySendInput {
   read (SessionReadEnvelope | null)?
-  resource string
+  resource string @description("What to read. Ops resources: llm_calls, tool_calls, messages, aggregates. `context_history` pages the caller-scoped conversation history the prompt itself was built from, oldest-ward, with the same visibility and delegation dedup. It always spans the context like the prompt does, so taskId does not filter it.")
   contextId (string | null)?
   taskId (string | null)?
   agentId (string | null)?
@@ -320,7 +347,7 @@ class ProvenanceQuerySendInput {
   sortDir (string | null)?
   outcome (string | null)?
   pageSize (int | null)?
-  cursor (string | null)?
+  cursor (string | null)? @description("Opaque cursor from a previous context_history page. Omit for the newest window. Malformed or stale cursors are rejected; an empty items array means the history is exhausted.")
   topK (int | null)?
   @@dynamic
 }
@@ -328,7 +355,7 @@ class ProvenanceQuerySendInput {
 /// Tool card for system/extrospection: metadata for polymorphic Open selection.
 class SystemExtrospectionToolCard {
   tool_name "system/extrospection"
-  description "Queries provenance rows across contexts and agents with compact token-aware output. Open session, send filters/grouping, then read() returns one result page."
+  description "Queries provenance rows across contexts and agents with compact token-aware output, or pages one agent's context history with resource `context_history`. Open session, send filters/grouping or a history cursor, then read() returns one result page."
   session_policy "Strict"
   capability "Streaming"
   invocation_mode "session"
