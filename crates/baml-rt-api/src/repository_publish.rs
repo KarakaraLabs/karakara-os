@@ -12,8 +12,9 @@ use baml_rt_builder::builder::{
 use baml_rt_core::{ArtifactHash, join_error_message};
 use baml_rt_repository::{
     RepositoryService,
-    commands::{PublishCommand, PublishResult},
+    commands::{ForkCommand, PublishCommand, PublishResult},
     entry::{SourceBundle, VersionReservation},
+    ids::ContentHash,
     package::source_bundle_from_tar_gz,
 };
 // Register tool inventory for repository-side artifact builds (POST /repository/publish).
@@ -54,18 +55,123 @@ pub async fn publish_with_build(
     outcome.map(Json)
 }
 
+struct BuiltArtifact {
+    bytes: Arc<[u8]>,
+    artifact_hash: ArtifactHash,
+    identity_digest: baml_rt_repository::AgentIdentityDigest,
+    source: SourceBundle,
+    expected_hash: ContentHash,
+    dev_artifacts: Option<baml_rt_repository::DevArtifactsBundle>,
+}
+
 async fn publish_reserved_artifact(
     svc: Arc<RepositoryService>,
     cmd: PublishCommand,
     reservation: &VersionReservation,
 ) -> Result<PublishResult, HttpApiProblem> {
     let repository_version = reservation.version.as_u32();
-    let source_versioned = cmd.source.with_manifest_version(repository_version);
     tracing::info!(
         agent = %cmd.name,
         repository_version,
         "building repository artifact"
     );
+    let built = build_reserved_artifact(
+        svc.clone(),
+        cmd.source.with_manifest_version(repository_version),
+        repository_version,
+    )
+    .await?;
+
+    // Blob first: a failure here leaves neither an entry nor a claim on one, and an orphan
+    // blob is harmless because it is content addressed.
+    svc.put_built_blob(&built.artifact_hash, &built.bytes)
+        .await
+        .map_err(HttpApiProblem::from)?;
+
+    let cmd = PublishCommand {
+        name: cmd.name,
+        source: built.source,
+        rationale: cmd.rationale,
+        origin: cmd.origin,
+    };
+    let result = svc
+        .publish_built(cmd, reservation, built.artifact_hash, built.identity_digest)
+        .await
+        .map_err(HttpApiProblem::from)?;
+    verify_published_hash(&result, &built.expected_hash)?;
+    store_dev_artifacts(&svc, &result.hash, built.dev_artifacts).await?;
+    Ok(result)
+}
+
+/// Fork an existing entry and publish the built forked source (POST /repository/fork).
+pub async fn fork_with_build(
+    State(svc): State<Arc<RepositoryService>>,
+    Json(cmd): Json<ForkCommand>,
+) -> Result<Json<PublishResult>, HttpApiProblem> {
+    let reservation = svc
+        .reserve_version(&cmd.new_name)
+        .await
+        .map_err(HttpApiProblem::from)?;
+
+    let outcome = fork_reserved_artifact(svc.clone(), cmd, &reservation).await;
+    if outcome.is_err()
+        && let Err(e) = svc.release_version(&reservation).await
+    {
+        tracing::warn!(
+            agent = %reservation.name,
+            version = reservation.version.as_u32(),
+            error = %e,
+            "failed to release version reservation after fork failure; it will expire"
+        );
+    }
+    outcome.map(Json)
+}
+
+async fn fork_reserved_artifact(
+    svc: Arc<RepositoryService>,
+    cmd: ForkCommand,
+    reservation: &VersionReservation,
+) -> Result<PublishResult, HttpApiProblem> {
+    let repository_version = reservation.version.as_u32();
+    tracing::info!(
+        agent = %cmd.new_name,
+        forked_from = %cmd.source_hash,
+        repository_version,
+        "building forked repository artifact"
+    );
+    let built = build_reserved_artifact(
+        svc.clone(),
+        cmd.source.with_manifest_version(repository_version),
+        repository_version,
+    )
+    .await?;
+
+    svc.put_built_blob(&built.artifact_hash, &built.bytes)
+        .await
+        .map_err(HttpApiProblem::from)?;
+
+    let cmd = ForkCommand {
+        source_hash: cmd.source_hash,
+        new_name: cmd.new_name,
+        source: built.source,
+        rationale: cmd.rationale,
+        fork_description: cmd.fork_description,
+        tags: cmd.tags,
+    };
+    let result = svc
+        .fork_built(cmd, reservation, built.artifact_hash, built.identity_digest)
+        .await
+        .map_err(HttpApiProblem::from)?;
+    verify_published_hash(&result, &built.expected_hash)?;
+    store_dev_artifacts(&svc, &result.hash, built.dev_artifacts).await?;
+    Ok(result)
+}
+
+async fn build_reserved_artifact(
+    svc: Arc<RepositoryService>,
+    source_versioned: SourceBundle,
+    repository_version: u32,
+) -> Result<BuiltArtifact, HttpApiProblem> {
     let (built, dev_artifacts): (Arc<[u8]>, Option<baml_rt_repository::DevArtifactsBundle>) = {
         let (bytes, artifacts) = build_artifact(source_versioned, svc.clone())
             .await
@@ -110,45 +216,45 @@ async fn publish_reserved_artifact(
                     .detail(e.to_string())
             })?;
 
-    let expected = extracted
+    let expected_hash = extracted
         .with_manifest_version(repository_version)
         .compute_hash();
 
-    // Blob first: a failure here leaves neither an entry nor a claim on one, and an orphan
-    // blob is harmless because it is content addressed.
-    svc.put_built_blob(&artifact_hash, built.as_ref())
-        .await
-        .map_err(HttpApiProblem::from)?;
-
-    let cmd = PublishCommand {
-        name: cmd.name,
+    Ok(BuiltArtifact {
+        bytes: built,
+        artifact_hash,
+        identity_digest,
         source: extracted,
-        rationale: cmd.rationale,
-        origin: cmd.origin,
-    };
-    let result = svc
-        .publish_built(cmd, reservation, artifact_hash, Some(identity_digest))
-        .await
-        .map_err(HttpApiProblem::from)?;
-    if expected.as_str() != result.hash.as_str() {
-        return Err(
-            HttpApiProblem::new(http_api_problem::StatusCode::INTERNAL_SERVER_ERROR).detail(
-                format!(
-                    "internal invariant: published hash {} != canonical hash {} from packaged artifact (same rules as insert_entry)",
-                    result.hash.as_str(),
-                    expected.as_str()
-                ),
-            ),
-        );
-    }
+        expected_hash,
+        dev_artifacts,
+    })
+}
 
-    if let Some(artifacts) = dev_artifacts {
-        svc.put_dev_artifacts(&result.hash, &artifacts)
+fn verify_published_hash(
+    result: &PublishResult,
+    expected_hash: &ContentHash,
+) -> Result<(), HttpApiProblem> {
+    if result.hash.as_str() == expected_hash.as_str() {
+        return Ok(());
+    }
+    Err(HttpApiProblem::new(http_api_problem::StatusCode::INTERNAL_SERVER_ERROR).detail(format!(
+        "internal invariant: published hash {} != canonical hash {} from packaged artifact (same rules as insert_entry)",
+        result.hash.as_str(),
+        expected_hash.as_str()
+    )))
+}
+
+async fn store_dev_artifacts(
+    svc: &RepositoryService,
+    hash: &ContentHash,
+    artifacts: Option<baml_rt_repository::DevArtifactsBundle>,
+) -> Result<(), HttpApiProblem> {
+    if let Some(artifacts) = artifacts {
+        svc.put_dev_artifacts(hash, &artifacts)
             .await
             .map_err(HttpApiProblem::from)?;
     }
-
-    Ok(result)
+    Ok(())
 }
 
 async fn build_artifact(

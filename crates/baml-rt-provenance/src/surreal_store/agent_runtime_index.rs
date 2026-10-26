@@ -18,9 +18,46 @@ use crate::{
     id_semantics::{AgentNodeId, AgentNodeInput},
     metamodel::{GraphQuery, labels},
     store::TaskAgentResolution,
-    surreal_tables::TBL_AGENT_IDENTITY_REGISTRY,
+    surreal_tables::{
+        TBL_AGENT_ARTIFACT_REGISTRY, TBL_AGENT_IDENTITY_REGISTRY, TBL_EDGE, TBL_NODE,
+    },
     types::ProvAgentId,
 };
+
+/// Exact operation -> boot -> artifact version resolution for ops rows.
+#[derive(Debug, Clone, Default)]
+pub(super) struct AgentVersionIndex {
+    by_task_id: HashMap<String, String>,
+    by_boot_event_id: HashMap<String, String>,
+    by_activity_id: HashMap<String, String>,
+}
+
+impl AgentVersionIndex {
+    pub(super) fn version_for_row(&self, row: &Value) -> Option<&str> {
+        row.get("a2a_boot_event_id")
+            .and_then(Value::as_str)
+            .and_then(|boot| self.by_boot_event_id.get(boot))
+            .or_else(|| {
+                row.get("task_id")
+                    .and_then(Value::as_str)
+                    .and_then(|task| self.by_task_id.get(task))
+            })
+            .or_else(|| {
+                row.get("activity_id")
+                    .and_then(Value::as_str)
+                    .and_then(|activity| self.by_activity_id.get(activity))
+            })
+            .map(String::as_str)
+    }
+}
+
+fn prop_str<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
+    row.get("props")
+        .and_then(Value::as_object)
+        .and_then(|props| props.get(key))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+}
 
 /// Outcome of checking whether `agent_package` adds information when `task_id`
 /// is already set (task head pointer implies executing agent).
@@ -286,6 +323,125 @@ impl SurrealProvenanceStore {
             .check()
             .map_err(map_surreal_error)?;
         Ok(())
+    }
+
+    pub(super) async fn load_agent_version_index(&self) -> Result<AgentVersionIndex> {
+        let mut index = AgentVersionIndex::default();
+
+        let artifact_sql =
+            format!("SELECT artifact_hash, repository_version FROM {TBL_AGENT_ARTIFACT_REGISTRY}");
+        let artifact_response = self
+            .db
+            .query(artifact_sql)
+            .await
+            .map_err(map_surreal_error)?;
+        let artifact_rows: Vec<Value> = check_and_take_zero(artifact_response, map_surreal_error)?;
+        let version_by_artifact: HashMap<String, String> = artifact_rows
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    row.get("artifact_hash")?.as_str()?.to_string(),
+                    row.get("repository_version")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+
+        let boot_response = self
+            .db
+            .query(format!(
+                "SELECT * FROM {TBL_NODE} WHERE label = 'AgentBoot'"
+            ))
+            .await
+            .map_err(map_surreal_error)?;
+        let boot_rows: Vec<Value> = check_and_take_zero(boot_response, map_surreal_error)?;
+        let mut version_by_boot_node: HashMap<String, String> = HashMap::new();
+        for row in &boot_rows {
+            let Some(node_id) = row.get("node_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(anchor) = prop_str(row, "a2a_activity_anchor") else {
+                continue;
+            };
+            let Some(version) = prop_str(row, "artifact_hash")
+                .and_then(|artifact| version_by_artifact.get(artifact))
+            else {
+                continue;
+            };
+            version_by_boot_node.insert(node_id.to_string(), version.clone());
+            index
+                .by_boot_event_id
+                .insert(anchor.to_string(), version.clone());
+        }
+
+        let execution_response = self
+            .db
+            .query(format!(
+                "SELECT * FROM {TBL_NODE} WHERE label = 'A2ATaskExecution'"
+            ))
+            .await
+            .map_err(map_surreal_error)?;
+        let execution_rows: Vec<Value> =
+            check_and_take_zero(execution_response, map_surreal_error)?;
+        let task_by_execution: HashMap<String, String> = execution_rows
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    row.get("node_id")?.as_str()?.to_string(),
+                    prop_str(row, "a2a_task_id")?.to_string(),
+                ))
+            })
+            .collect();
+
+        let task_boot_response = self
+            .db
+            .query(format!(
+                "SELECT from_id, to_id FROM {TBL_EDGE} WHERE rel_type = 'EXECUTED_UNDER_BOOT'"
+            ))
+            .await
+            .map_err(map_surreal_error)?;
+        let task_boot_rows: Vec<Value> =
+            check_and_take_zero(task_boot_response, map_surreal_error)?;
+        for row in &task_boot_rows {
+            let Some(from_id) = row.get("from_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(to_id) = row.get("to_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(version) = version_by_boot_node.get(to_id) else {
+                continue;
+            };
+            index
+                .by_activity_id
+                .insert(from_id.to_string(), version.clone());
+            if let Some(task_id) = task_by_execution.get(from_id) {
+                index.by_task_id.insert(task_id.clone(), version.clone());
+            }
+        }
+
+        let stop_response = self
+            .db
+            .query(format!(
+                "SELECT * FROM {TBL_NODE} WHERE label = 'AgentStop'"
+            ))
+            .await
+            .map_err(map_surreal_error)?;
+        let stop_rows: Vec<Value> = check_and_take_zero(stop_response, map_surreal_error)?;
+        for row in &stop_rows {
+            let Some(node_id) = row.get("node_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(boot) = prop_str(row, "a2a_boot_event_id") else {
+                continue;
+            };
+            if let Some(version) = index.by_boot_event_id.get(boot) {
+                index
+                    .by_activity_id
+                    .insert(node_id.to_string(), version.clone());
+            }
+        }
+
+        Ok(index)
     }
 
     pub(super) async fn execute_typed_node_query(

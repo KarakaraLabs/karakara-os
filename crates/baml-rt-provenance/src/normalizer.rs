@@ -1503,6 +1503,10 @@ fn normalize_event_with_registry(
             let stop_activity_id = stop_activity_id(agent_id, event.id());
             let mut stop_attrs = base_attrs(event);
             stop_attrs.insert("a2a_stop_reason".to_string(), Value::String(reason.clone()));
+            stop_attrs.insert(
+                "a2a_boot_event_id".to_string(),
+                Value::String(boot_event_id.as_str().to_string()),
+            );
             doc.insert_activity(
                 stop_activity_id.clone(),
                 Activity {
@@ -3075,6 +3079,12 @@ fn ensure_task_execution_activity(
         a2a::CONTEXT_ID.to_string(),
         Value::String(context_id.as_str().to_string()),
     );
+    if let Some(boot_event_id) = context.and_then(|c| c.task_boot_event_id.as_ref()) {
+        attrs.insert(
+            "a2a_boot_event_id".to_string(),
+            Value::String(boot_event_id.as_str().to_string()),
+        );
+    }
     let agent_id = agent_id_override
         .or_else(|| context.and_then(|c| c.task_agent_id.as_ref()))
         .cloned();

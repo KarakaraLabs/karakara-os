@@ -34,8 +34,14 @@ existing artifact keeps all three stable.
 
 Startup restore passes the persisted `artifact_hash` as an expectation. If the
 repository resolves the content hash to different bytes, restore fails instead of
-booting the mismatch. Cluster placements carry the artifact hash as well, so the
-forwarding side can audit and verify which blob the target runner advertised.
+booting the mismatch.
+
+Cluster placements require an artifact hash; rows without one are not routable.
+The forwarding runner sends it as the `X-Agentium-Expected-Artifact-Hash`
+precondition. The receiving runner compares it with the exact `BootedAgent`
+selected for dispatch before creating a task or writing execution provenance,
+and returns `412 Precondition Failed` on mismatch. Direct public requests may
+omit the header.
 
 ## Deployment Semantics (MVP)
 

@@ -60,12 +60,12 @@ async fn artifact_hash_verified_from_publish_to_boot() {
             },
             &reservation,
             artifact_hash.clone(),
-            None,
+            common::test_identity_digest(),
         )
         .await
         .expect("publish built artifact");
 
-    assert_eq!(published.artifact_hash.as_ref(), Some(&artifact_hash));
+    assert_eq!(published.artifact_hash, artifact_hash);
 
     let entry = svc
         .get_by_hash(&published.hash)

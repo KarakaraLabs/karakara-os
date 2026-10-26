@@ -722,6 +722,10 @@ pub fn api_router_with_services_and_deploy(
                 "/publish",
                 axum::routing::post(repository_publish::publish_with_build),
             )
+            .route(
+                "/fork",
+                axum::routing::post(repository_publish::fork_with_build),
+            )
             .with_state(repo_service.clone());
         let enable_external_tool_router = axum::Router::new()
             .route(
@@ -1073,6 +1077,35 @@ fn repository_openapi_fragment() -> serde_json::Value {
                     "security": runner_token_security
                 }
             },
+            "/repository/drafts": {
+                "post": {
+                    "tags": ["repository"],
+                    "summary": "Create a source-only draft (operator-authenticated)",
+                    "description": "Drafts allocate a repository version for lineage and review but are not deployment candidates.",
+                    "operationId": "repository_publish_draft",
+                    "responses": {
+                        "200": { "description": "Draft result" },
+                        "400": { "description": "Invalid source bundle" },
+                        "401": { "description": "Missing or invalid runner token" },
+                        "409": { "description": "Version or hash conflict" }
+                    },
+                    "security": runner_token_security
+                }
+            },
+            "/repository/drafts/fork": {
+                "post": {
+                    "tags": ["repository"],
+                    "summary": "Create a source-only fork draft (operator-authenticated)",
+                    "operationId": "repository_fork_draft",
+                    "responses": {
+                        "200": { "description": "Draft fork result" },
+                        "401": { "description": "Missing or invalid runner token" },
+                        "404": { "description": "Parent entry not found" },
+                        "422": { "description": "Lineage violation" }
+                    },
+                    "security": runner_token_security
+                }
+            },
             "/repository/publish": {
                 "post": {
                     "tags": ["repository"],
@@ -1090,7 +1123,7 @@ fn repository_openapi_fragment() -> serde_json::Value {
             "/repository/fork": {
                 "post": {
                     "tags": ["repository"],
-                    "summary": "Fork an existing entry to create a new lineage branch (operator-authenticated)",
+                    "summary": "Fork an existing entry, build the forked source, and store a deployable version (operator-authenticated)",
                     "operationId": "repository_fork",
                     "responses": {
                         "200": { "description": "Fork result" },

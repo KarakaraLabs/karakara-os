@@ -167,6 +167,7 @@ pub async fn forward_stream_request(
     agent_instance_id: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
+    expected_artifact_hash: &str,
 ) -> Result<BusStream<A2aStreamChunk>, BamlRtError> {
     let span = spans::cluster_a2a_forward(
         agent_package,
@@ -183,6 +184,7 @@ pub async fn forward_stream_request(
     let agent_instance_id = agent_instance_id.to_string();
     let ingress_service_instance_id = ingress_service_instance_id.to_string();
     let target_service_instance_id = target_service_instance_id.map(str::to_string);
+    let expected_artifact_hash = expected_artifact_hash.to_string();
 
     async move {
         let start = Instant::now();
@@ -236,6 +238,12 @@ pub async fn forward_stream_request(
             let mut injector = opentelemetry_http::HeaderInjector(request.headers_mut());
             propagator.inject_context(&ctx, &mut injector);
         });
+        request.headers_mut().insert(
+            "x-agentium-expected-artifact-hash",
+            reqwest::header::HeaderValue::from_str(&expected_artifact_hash).map_err(|e| {
+                BamlRtError::InvalidArgument(format!("invalid expected artifact hash header: {e}"))
+            })?,
+        );
 
         let resp = client.execute(request).await.map_err(|e| {
             let err = BamlRtError::Io(std::io::Error::other(format!(

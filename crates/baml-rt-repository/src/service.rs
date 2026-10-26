@@ -18,7 +18,7 @@ use baml_rt_tools::{
 };
 
 use crate::{
-    commands::{ForkCommand, PublishCommand, PublishOrigin, PublishResult},
+    commands::{DraftResult, ForkCommand, PublishCommand, PublishOrigin, PublishResult},
     entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp, VersionReservation},
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
@@ -208,13 +208,20 @@ impl RepositoryService {
     // Publish
     // -----------------------------------------------------------------------
 
-    /// Publish a new agent version.
+    /// Create a source-only draft for review or lineage work.
     ///
-    /// Reserves the version, then records parentage, inserts the entry at the reserved
-    /// version, and writes lineage edges. The reservation is released on failure.
-    pub async fn publish(&self, cmd: PublishCommand) -> Result<PublishResult> {
+    /// Drafts are not deployment candidates. Release paths must use
+    /// [`publish_built`](Self::publish_built) with a built artifact.
+    pub async fn publish_draft(&self, cmd: PublishCommand) -> Result<DraftResult> {
         let reservation = self.reserve_version(&cmd.name).await?;
-        self.publish_reserved(cmd, &reservation, None, None).await
+        let stored = self
+            .publish_with_reservation(cmd, &reservation, None, None)
+            .await?;
+        Ok(DraftResult {
+            hash: stored.hash,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
     }
 
     /// Reserve the next free version for `name`.
@@ -234,31 +241,51 @@ impl RepositoryService {
 
     /// Publish a source bundle that realizes an already-built package artifact.
     ///
-    /// The artifact must already be stored under `artifact_hash`. Prefer this over
-    /// [`publish`](Self::publish) after a build: the caller holds the version reservation
-    /// so the artifact manifest and the entry agree.
+    /// The artifact must already be stored under `artifact_hash`. The caller holds the
+    /// version reservation so the artifact manifest and the entry agree.
     pub async fn publish_built(
         &self,
         cmd: PublishCommand,
         reservation: &VersionReservation,
         artifact_hash: ArtifactHash,
-        identity_digest: Option<AgentIdentityDigest>,
+        identity_digest: AgentIdentityDigest,
     ) -> Result<PublishResult> {
-        self.publish_reserved(cmd, reservation, Some(artifact_hash), identity_digest)
+        let stored = self
+            .publish_with_reservation(
+                cmd,
+                reservation,
+                Some(artifact_hash.clone()),
+                Some(identity_digest.clone()),
+            )
+            .await?;
+        Ok(PublishResult {
+            hash: stored.hash,
+            artifact_hash,
+            identity_digest,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    /// Publish at an explicitly reserved version with an already-built artifact.
+    pub async fn publish_reserved(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: ArtifactHash,
+        identity_digest: AgentIdentityDigest,
+    ) -> Result<PublishResult> {
+        self.publish_built(cmd, reservation, artifact_hash, identity_digest)
             .await
     }
 
-    /// Publish at an explicitly reserved version.
-    ///
-    /// The reservation is released on failure. On success the store consumes it together
-    /// with the entry insert.
-    pub async fn publish_reserved(
+    async fn publish_with_reservation(
         &self,
         cmd: PublishCommand,
         reservation: &VersionReservation,
         artifact_hash: Option<ArtifactHash>,
         identity_digest: Option<AgentIdentityDigest>,
-    ) -> Result<PublishResult> {
+    ) -> Result<RepositoryEntry> {
         if reservation.name != cmd.name {
             let _ = self.release_version(reservation).await;
             return Err(RepositoryError::VersionConflict {
@@ -288,7 +315,7 @@ impl RepositoryService {
         reservation: &VersionReservation,
         artifact_hash: Option<ArtifactHash>,
         identity_digest: Option<AgentIdentityDigest>,
-    ) -> Result<PublishResult> {
+    ) -> Result<RepositoryEntry> {
         let _span = crate::spans::publish(cmd.name.as_str());
 
         // Determine parentage, generation, and deferred edge descriptors.
@@ -392,26 +419,74 @@ impl RepositoryService {
             hash = %stored.hash,
             version = %stored.version_ref,
             generation = stored.generation.as_u32(),
-            event = "published"
+            event = if stored.artifact_hash.is_some() { "published" } else { "drafted" }
         );
 
-        let deployable = stored.artifact_hash.is_some() && stored.identity_digest.is_some();
-        Ok(PublishResult {
-            hash: stored.hash,
-            artifact_hash: stored.artifact_hash,
-            identity_digest: stored.identity_digest,
-            deployable,
-            version_ref: stored.version_ref,
-            generation: stored.generation,
-        })
+        Ok(stored)
     }
 
     // -----------------------------------------------------------------------
     // Fork
     // -----------------------------------------------------------------------
 
-    /// Fork an existing entry into a new lineage.
-    pub async fn fork(&self, cmd: ForkCommand) -> Result<PublishResult> {
+    /// Create a source-only fork draft in a new lineage.
+    ///
+    /// The fork is not a deployment candidate until it is built and published.
+    pub async fn fork_draft(&self, cmd: ForkCommand) -> Result<DraftResult> {
+        let stored = self.finish_fork(cmd, None, None, None).await?;
+        Ok(DraftResult {
+            hash: stored.hash,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    /// Fork an existing entry and publish the already-built forked artifact.
+    pub async fn fork_built(
+        &self,
+        cmd: ForkCommand,
+        reservation: &VersionReservation,
+        artifact_hash: ArtifactHash,
+        identity_digest: AgentIdentityDigest,
+    ) -> Result<PublishResult> {
+        if reservation.name != cmd.new_name {
+            let _ = self.release_version(reservation).await;
+            return Err(RepositoryError::VersionConflict {
+                name: cmd.new_name.clone(),
+                version: reservation.version,
+            });
+        }
+        let stored = self
+            .finish_fork(
+                cmd,
+                Some(artifact_hash.clone()),
+                Some(identity_digest.clone()),
+                Some(reservation),
+            )
+            .await;
+        let stored = match stored {
+            Ok(stored) => stored,
+            Err(error) => {
+                let _ = self.release_version(reservation).await;
+                return Err(error);
+            }
+        };
+        Ok(PublishResult {
+            hash: stored.hash,
+            artifact_hash,
+            identity_digest,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    async fn finish_fork(
+        &self,
+        cmd: ForkCommand,
+        artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
+        reservation: Option<&VersionReservation>,
+    ) -> Result<RepositoryEntry> {
         let _span = crate::spans::fork(cmd.source_hash.as_str(), cmd.new_name.as_str());
 
         // Verify source exists
@@ -432,8 +507,8 @@ impl RepositoryService {
 
         let new_entry = NewEntry {
             name: cmd.new_name.clone(),
-            artifact_hash: None,
-            identity_digest: None,
+            artifact_hash,
+            identity_digest,
             source: cmd.source,
             parentage,
             generation,
@@ -441,9 +516,14 @@ impl RepositoryService {
             tags: cmd.tags,
         };
 
-        // Store atomically assigns version (v1 for a new lineage), writes it
-        // into manifest, computes hash.
-        let stored = self.metadata.insert_entry(&new_entry).await?;
+        let stored = match reservation {
+            Some(reservation) => {
+                self.metadata
+                    .insert_reserved_entry(&new_entry, reservation)
+                    .await?
+            }
+            None => self.metadata.insert_entry(&new_entry).await?,
+        };
 
         // Record fork edge using the store-assigned hash.
         let edge = LineageEdge {
@@ -459,18 +539,10 @@ impl RepositoryService {
             hash = %stored.hash,
             version = %stored.version_ref,
             forked_from = %cmd.source_hash,
-            event = "forked"
+            event = if stored.artifact_hash.is_some() { "forked" } else { "fork_drafted" }
         );
 
-        let deployable = stored.artifact_hash.is_some() && stored.identity_digest.is_some();
-        Ok(PublishResult {
-            hash: stored.hash,
-            artifact_hash: stored.artifact_hash,
-            identity_digest: stored.identity_digest,
-            deployable,
-            version_ref: stored.version_ref,
-            generation: stored.generation,
-        })
+        Ok(stored)
     }
 
     // -----------------------------------------------------------------------

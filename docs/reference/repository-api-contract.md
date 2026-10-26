@@ -43,11 +43,16 @@ Publish is source-first and server-owned:
 4. Built bytes are stored under `artifact_hash`, then the entry is inserted with
    the reserved version and both derived values.
 
-A publish result returns `hash`, `artifact_hash`, `identity_digest`,
-`deployable`, `version_ref`, and `generation`. Callers can deploy or pin the
-exact artifact without rehashing. `deployable=false` means the entry is a
-source-only repository record (for example a standalone `/publish` or a fork)
-and the runner will reject it until it is republished through the build path.
+A successful release result returns `hash`, `artifact_hash`, `identity_digest`,
+`version_ref`, and `generation`. Both hashes are required: a release endpoint
+never creates a source-only entry. Callers can deploy or pin the exact artifact
+without rehashing.
+
+Source-only records are drafts, not releases. The standalone repository crate
+exposes them under `/repository/drafts` and `/repository/drafts/fork` with a
+separate `DraftResult`; it does not expose `/publish` or `/fork` because it
+cannot build an artifact. The host application wires `/repository/publish` and
+`/repository/fork` to its builder.
 
 Reservation consumption keeps the reservation row in place while the entry is
 inserted, so a second publisher cannot reserve the same version in the gap. An
@@ -63,7 +68,10 @@ write. Clients do not upload arbitrary blobs to establish publish provenance.
 ## Required Repository Endpoints (MVP)
 
 - `GET /repository/blobs/{hash}` — `{hash}` is the artifact hash
-- `POST /repository/publish`
+- `POST /repository/publish` (host-built, deployable)
+- `POST /repository/fork` (host-built, deployable)
+- `POST /repository/drafts` (source-only)
+- `POST /repository/drafts/fork` (source-only)
 - `GET /repository/entries`
 - `GET /repository/entries/{hash}`
 - `GET /repository/entries?name=<name>&version=<version>`

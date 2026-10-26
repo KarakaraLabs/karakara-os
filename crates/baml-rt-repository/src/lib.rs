@@ -68,7 +68,8 @@ mod metrics;
 mod spans;
 
 // --- Re-exports for public API ---
-pub use commands::{ForkCommand, PublishCommand, PublishResult};
+pub use baml_rt_hash::AgentIdentityDigest;
+pub use commands::{DraftResult, ForkCommand, PublishCommand, PublishResult};
 pub use dev_artifacts::{DevArtifactsBundle, dev_artifacts_blob_hash, resolve_package_hash};
 pub use entry::{
     ChangeRationale, NewEntry, RepositoryEntry, RepositoryEntryHeader, SourceBundle,

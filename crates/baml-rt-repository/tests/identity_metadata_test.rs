@@ -11,10 +11,11 @@
 use std::sync::Arc;
 
 use baml_rt_repository::{
-    commands::{PublishCommand, PublishOrigin},
+    commands::{ForkCommand, PublishCommand, PublishOrigin},
     entry::ChangeRationale,
     identity_digest_from_tar_gz,
     ids::{AgentName, ArtifactHash},
+    lineage::EdgeDescription,
     service::RepositoryService,
     storage::{BlobStore, LineageStore, MetadataStore, SearchStore},
     surreal_store::SurrealStore,
@@ -114,7 +115,7 @@ async fn republish_keeps_identity_and_bumps_version() {
                 },
                 &reservation,
                 artifact_hash.clone(),
-                Some(digest_v1.clone()),
+                digest_v1.clone(),
             )
             .await
             .expect("publish built artifact");
@@ -132,14 +133,8 @@ async fn republish_keeps_identity_and_bumps_version() {
         "republish bumps the version"
     );
 
-    let result_digest_0 = results[0]
-        .identity_digest
-        .clone()
-        .expect("publish result carries the identity digest");
-    let result_digest_1 = results[1]
-        .identity_digest
-        .clone()
-        .expect("publish result carries the identity digest");
+    let result_digest_0 = results[0].identity_digest.clone();
+    let result_digest_1 = results[1].identity_digest.clone();
     assert_eq!(result_digest_0, digest_v1);
     assert_eq!(result_digest_1, digest_v1);
 
@@ -165,8 +160,90 @@ async fn republish_keeps_identity_and_bumps_version() {
         );
         assert_eq!(
             entry.artifact_hash.as_ref(),
-            result.artifact_hash.as_ref(),
+            Some(&result.artifact_hash),
             "the stored entry records the blob it realizes"
         );
     }
+}
+
+#[tokio::test]
+async fn fork_built_returns_a_deployable_result_with_lineage() {
+    let store = Arc::new(common::setup_store().await);
+    let svc = service(&store);
+    let parent_name: AgentName = "fork-built-parent".parse().expect("valid name");
+    let child_name: AgentName = "fork-built-child".parse().expect("valid name");
+
+    let parent_blob = package("parent");
+    let parent_artifact = ArtifactHash::from_bytes(&parent_blob);
+    let parent_digest = identity_digest_from_tar_gz(&parent_blob).expect("parent digest");
+    let parent_reservation = svc
+        .reserve_version(&parent_name)
+        .await
+        .expect("reserve parent");
+    svc.put_built_blob(&parent_artifact, &parent_blob)
+        .await
+        .expect("store parent blob");
+    let parent = svc
+        .publish_built(
+            PublishCommand {
+                name: parent_name,
+                source: common::make_source(
+                    "export function run() { return 1; }",
+                    "fork-built-parent",
+                    &[],
+                    "",
+                    &[],
+                ),
+                rationale: ChangeRationale::new("parent").expect("rationale"),
+                origin: PublishOrigin::Original,
+            },
+            &parent_reservation,
+            parent_artifact,
+            parent_digest.clone(),
+        )
+        .await
+        .expect("publish parent");
+
+    let child_blob = package("child");
+    let child_artifact = ArtifactHash::from_bytes(&child_blob);
+    let child_digest = identity_digest_from_tar_gz(&child_blob).expect("child digest");
+    let child_reservation = svc
+        .reserve_version(&child_name)
+        .await
+        .expect("reserve child");
+    svc.put_built_blob(&child_artifact, &child_blob)
+        .await
+        .expect("store child blob");
+    let child = svc
+        .fork_built(
+            ForkCommand {
+                source_hash: parent.hash.clone(),
+                new_name: child_name,
+                source: common::make_source(
+                    "export function run() { return 2; }",
+                    "fork-built-child",
+                    &[],
+                    "",
+                    &[],
+                ),
+                rationale: ChangeRationale::new("fork").expect("rationale"),
+                fork_description: EdgeDescription::new("built fork").expect("description"),
+                tags: Vec::new(),
+            },
+            &child_reservation,
+            child_artifact,
+            child_digest.clone(),
+        )
+        .await
+        .expect("fork built");
+
+    assert_eq!(child.artifact_hash, ArtifactHash::from_bytes(&child_blob));
+    assert_eq!(child.identity_digest, child_digest);
+    assert_eq!(child.generation, parent.generation.increment());
+    let entry = svc
+        .get_by_hash(&child.hash)
+        .await
+        .expect("lookup fork")
+        .expect("fork entry");
+    assert_eq!(entry.artifact_hash, Some(child.artifact_hash));
 }

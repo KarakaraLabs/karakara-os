@@ -23,7 +23,7 @@ The repository is the **memory layer** for an agent development and selection (A
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        HTTP API (Axum)                            │
-│  /agents  /entries  /search  /lineage  /blobs  /fork  /publish*  │
+│  /agents  /entries  /search  /lineage  /blobs  /drafts           │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
                     ┌──────────▼───────────┐
@@ -37,7 +37,7 @@ The repository is the **memory layer** for an agent development and selection (A
               └──────────────────────────────────┘
 ```
 
-`*` `/publish` is wired by default but can be omitted from the public router (see [Router composition](#router-composition)).
+Release-producing `/publish` and `/fork` are host routes: this crate cannot build artifacts, so it exposes source-only `/drafts` and `/drafts/fork` instead.
 
 ### Single Backend, Trait-Separated Surface
 
@@ -263,14 +263,16 @@ SearchQuery {
 
 ### Router composition
 
-`baml-rt-repository` exposes four router builders so hosts can choose how `/publish` is wired:
+`baml-rt-repository` exposes router builders for the routes it can serve without a builder:
 
 | Builder | Routes | Intended use |
 |---|---|---|
-| `repository_router(service)` | All routes including `POST /publish` | Standalone repository deployments |
-| `repository_router_without_publish(service)` | All routes except `POST /publish` | Hosts that orchestrate publish externally (e.g. the runner, which builds before storing) |
+| `repository_router(service)` | Read + draft routes, no release publish/fork | Standalone or embedded repository use |
+| `repository_router_without_publish(service)` | Compatibility alias with the same release-free surface | Hosts that wire publish/fork themselves |
 | `repository_read_router(service)` | Read-only routes (agents, versions, entries, lineage, blobs, search) | Mount unauthenticated for public discovery and pull |
-| `repository_mutation_router(service)` | `POST /fork`, tag CRUD | Mount behind operator authentication |
+| `repository_mutation_router(service)` | `POST /drafts`, `POST /drafts/fork`, tag CRUD | Mount behind operator authentication |
+
+The host application mounts `/repository/publish` and `/repository/fork` to `repository_publish::publish_with_build` / `fork_with_build`. Both build a package, compute `artifact_hash` and `identity_digest`, and only then insert the entry.
 
 The split read/mutation routers reflect how `baml-agent-runner` exposes the repository in cluster mode: the read router is reachable without credentials, and the mutation router (plus the runner's own `/deploy`) sits behind the runner token.
 
@@ -283,8 +285,10 @@ The split read/mutation routers reflect how `baml-agent-runner` exposes the repo
 | `GET` | `/entries` | List or filter entries by `name`/`name+version` query parameters |
 | `GET` | `/entries/{hash}` | Retrieve an entry by content hash |
 | `GET` | `/entries/{name}/{version}` | Retrieve an entry by `name@version` |
-| `POST` | `/publish` | Publish a new entry (Original / Iteration / Influenced) |
-| `POST` | `/fork` | Fork an existing entry into a new agent lineage |
+| `POST` | `/drafts` | Create a source-only draft (not deployable) |
+| `POST` | `/drafts/fork` | Create a source-only fork draft (not deployable) |
+
+Host-only release routes: `POST /repository/publish` and `POST /repository/fork` build before storing and always return an artifact hash plus identity digest.
 | `POST` | `/search` | Run a structured search query |
 | `GET` | `/lineage/{hash}?depth={n}` | Get a lineage subgraph (ancestors + direct descendants) |
 | `GET` | `/blobs/{hash}` | Download the tar.gz blob by artifact hash |
@@ -298,7 +302,7 @@ All errors use RFC 7807 Problem Details via `http-api-problem`.
 ```
 Client                    RepositoryService              SurrealStore
   │                              │                              │
-  │  POST /publish               │                              │
+  │  POST /publish (host-built)  │                              │
   │  { name, source, origin,     │                              │
   │    rationale }               │                              │
   │ ────────────────────────────▶│                              │

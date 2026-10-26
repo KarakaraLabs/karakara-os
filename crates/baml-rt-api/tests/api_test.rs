@@ -32,9 +32,9 @@ use baml_rt_api::{
 };
 use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentCard, AgentDiscoveryEntry, AgentDispatchAck,
-    AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, BamlRtError, BusStream,
-    DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord, EventSchemaVersion,
-    EventSourceKind, EventSubscription, Outcome, Result, UndeployResult,
+    AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, ArtifactHash, BamlRtError,
+    BusStream, DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    EventSchemaVersion, EventSourceKind, EventSubscription, Outcome, Result, UndeployResult,
     bus::SessionStepOp,
     event_subscription::{EventSourceKey, EventSourceKeyPrefix},
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
@@ -307,6 +307,7 @@ struct MockRegistry {
     dispatch_err_message: Option<String>,
     /// When set, capture the route key passed to handle_a2a_stream (for routing tests).
     key_captured: Option<std::sync::Arc<std::sync::Mutex<Option<AgentRouteKey>>>>,
+    expected_artifact: Option<ArtifactHash>,
 }
 
 struct OtelTestFixture {
@@ -1077,6 +1078,7 @@ impl MockRegistry {
             dispatch_ok: None,
             dispatch_err_message: None,
             key_captured: None,
+            expected_artifact: None,
         }
     }
 
@@ -1151,6 +1153,22 @@ impl AgentRegistry for MockRegistry {
         Err(BamlRtError::AgentNotFound(
             "Agent pkg/inst not found".to_string(),
         ))
+    }
+
+    async fn handle_a2a_stream_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        expected_artifact_hash: Option<&ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
+        if let Some(required) = self.expected_artifact.as_ref()
+            && expected_artifact_hash != Some(required)
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "artifact precondition failed: expected {required}, got {expected_artifact_hash:?}"
+            )));
+        }
+        self.handle_a2a_stream(key, request).await
     }
 
     async fn handle_dispatch(
@@ -3362,4 +3380,37 @@ async fn get_semiotic_activity_returns_gate_rollups_from_provenance_rows() {
     assert_eq!(incident["severity"], "critical");
     assert_eq!(incident["drill"]["contextId"], "ctx-1");
     assert!(incident["drill"].get("provenanceTab").is_none());
+}
+
+#[tokio::test]
+async fn a2a_artifact_precondition_mismatch_returns_412() {
+    let mut registry =
+        MockRegistry::with_entries(vec![discovery_entry("pkg", "default", "pkg", "1.0.0")]);
+    registry.expected_artifact = Some(ArtifactHash::from_bytes(b"expected artifact"));
+
+    let app = api_router(Arc::new(registry), None, None).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agents/pkg/a2a")
+                .header("content-type", "application/json")
+                .header(
+                    "x-agentium-expected-artifact-hash",
+                    ArtifactHash::from_bytes(b"different artifact").as_str(),
+                )
+                .body(Body::from(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "message.sendStream",
+                        "params": {}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
 }

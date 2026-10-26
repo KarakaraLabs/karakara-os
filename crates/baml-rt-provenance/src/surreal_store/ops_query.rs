@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use super::{
     SurrealProvenanceStore,
-    agent_runtime_index::normalize_agent_field_for_ops,
+    agent_runtime_index::{AgentVersionIndex, normalize_agent_field_for_ops},
     helpers::{
         json_value_from_embedded_string, normalize_payload_text_query, parse_json_object_field,
     },
@@ -354,6 +354,7 @@ fn resolve_tool_session_phase_for_ops_row(
 fn apply_agent_identity_fields(
     row: &mut Map<String, Value>,
     identity_by_agent_id: &HashMap<String, String>,
+    version_index: &AgentVersionIndex,
 ) {
     let Some(agent_id) = row.get("agent_id").and_then(Value::as_str) else {
         return;
@@ -361,24 +362,26 @@ fn apply_agent_identity_fields(
     let Some(agent_package) = identity_by_agent_id.get(agent_id) else {
         return;
     };
-    let agent_version = row
-        .get("agent_version")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-        .to_string();
     row.insert(
         "agent_package".to_string(),
         Value::String(agent_package.clone()),
     );
-    row.insert(
-        "agent_version".to_string(),
-        Value::String(agent_version.clone()),
-    );
-    row.insert(
-        "agent_display".to_string(),
-        Value::String(format!("{agent_package}/{agent_version}")),
-    );
+    if let Some(agent_version) = version_index.version_for_row(&Value::Object(row.clone())) {
+        row.insert(
+            "agent_version".to_string(),
+            Value::String(agent_version.to_string()),
+        );
+        row.insert(
+            "agent_display".to_string(),
+            Value::String(format!("{agent_package}/{agent_version}")),
+        );
+    } else {
+        row.remove("agent_version");
+        row.insert(
+            "agent_display".to_string(),
+            Value::String(agent_package.clone()),
+        );
+    }
 }
 
 /// Nest drift fields into a "drift" sub-object.
@@ -701,6 +704,7 @@ impl ProvenanceOpsQuery for SurrealProvenanceStore {
 
         let agent_runtime_index = self.load_agent_runtime_index().await?;
         let identity_by_agent_id = agent_runtime_index.identity_by_agent_id.clone();
+        let agent_version_index = self.load_agent_version_index().await?;
         let package_resolution = self
             .resolve_ops_agent_package_filter(&request.filters, &agent_runtime_index)
             .await?;
@@ -947,7 +951,7 @@ impl ProvenanceOpsQuery for SurrealProvenanceStore {
             }
 
             // Apply agent identity fields (agent_package, agent_version, agent_display)
-            apply_agent_identity_fields(row, &identity_by_agent_id);
+            apply_agent_identity_fields(row, &identity_by_agent_id, &agent_version_index);
 
             match request.resource {
                 ProvenanceOpsResource::LlmCalls | ProvenanceOpsResource::Aggregates => {

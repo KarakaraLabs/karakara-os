@@ -641,17 +641,43 @@ impl AgentRunner {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
+        self.handle_a2a_by_key_with_precondition(key, request, None)
+            .await
+    }
+
+    /// Resolve the route and verify an optional expected artifact hash against the exact
+    /// booted agent selected for dispatch, before any task or provenance write.
+    pub(crate) async fn handle_a2a_by_key_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        expected_artifact_hash: Option<&ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
         // Check drain state and resolve route atomically so requests cannot
         // slip between a drain check and the route lookup.
         let routed_agent = {
             let agents = self.agents.read().expect("RwLock poison");
-            if let Some(booted) = agents.get(key.agent_package.as_str())
-                && booted.lifecycle_state() == AgentLifecycleState::Draining
-            {
-                let agent = key.agent_package.as_str();
-                return Err(BamlRtError::AgentDraining(format!(
-                    "Agent {agent} is draining (undeploy in progress)",
-                )));
+            if let Some(booted) = agents.get(key.agent_package.as_str()) {
+                if booted.lifecycle_state() == AgentLifecycleState::Draining {
+                    let agent = key.agent_package.as_str();
+                    return Err(BamlRtError::AgentDraining(format!(
+                        "Agent {agent} is draining (undeploy in progress)",
+                    )));
+                }
+                if let Some(expected) = expected_artifact_hash {
+                    let actual = booted.artifact_hash().ok_or_else(|| {
+                        BamlRtError::InvalidArgument(format!(
+                            "agent {} has no artifact hash for precondition verification",
+                            key.agent_package.as_str()
+                        ))
+                    })?;
+                    if actual != expected {
+                        return Err(BamlRtError::InvalidArgument(format!(
+                            "artifact precondition failed for {}: expected {expected}, serving {actual}",
+                            key.agent_package.as_str()
+                        )));
+                    }
+                }
             }
             let routed_agents = self.routed_agents.read().expect("RwLock poison");
             routed_agents.get(key).cloned()

@@ -74,23 +74,26 @@ pub struct ForkCommand {
 // PublishResult — the outcome of a successful publish or fork
 // ---------------------------------------------------------------------------
 
-/// Returned after a successful publish or fork.
+/// Returned after a successful release-producing publish or fork.
+///
+/// Every successful result is deployable: the artifact blob and behavior-set identity
+/// were produced by the build path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishResult {
     pub hash: ContentHash,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_hash: Option<ArtifactHash>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity_digest: Option<AgentIdentityDigest>,
-    /// False for source-only publish/fork paths that did not build a package blob.
-    /// The entry is still a valid repository record, but the runner cannot deploy it.
-    pub deployable: bool,
+    pub artifact_hash: ArtifactHash,
+    pub identity_digest: AgentIdentityDigest,
     pub version_ref: crate::ids::VersionRef,
     pub generation: crate::ids::Generation,
 }
 
-impl PublishResult {
-    pub fn is_deployable(&self) -> bool {
-        self.deployable
-    }
+/// Returned after a source-only draft operation.
+///
+/// Drafts allocate a repository version for lineage and review, but they are not
+/// deployment candidates. Release endpoints never return this type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftResult {
+    pub hash: ContentHash,
+    pub version_ref: crate::ids::VersionRef,
+    pub generation: crate::ids::Generation,
 }

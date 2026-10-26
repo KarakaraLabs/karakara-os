@@ -21,8 +21,8 @@ use axum::{
 };
 use baml_rt_a2a::RegistryDispatchPort;
 use baml_rt_core::{
-    A2aWireRequest, AgentDispatchRequest, AgentPackageName, AgentRouteKey, BamlRtError,
-    DeploymentContentHash, DeploymentStatus, ProducedEvent,
+    A2aWireRequest, AgentDispatchRequest, AgentPackageName, AgentRouteKey, ArtifactHash,
+    BamlRtError, DeploymentContentHash, DeploymentStatus, ProducedEvent,
     ids::{AgentId, ContextId, TaskId},
     join_error_message,
 };
@@ -695,8 +695,28 @@ pub async fn post_a2a(
         .and_then(|id| lookup_eval_session(state.as_ref(), id))
         .and_then(|spec| spec.model);
 
+    let expected_artifact_hash = match headers
+        .get("x-agentium-expected-artifact-hash")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(raw) => Some(raw.parse::<ArtifactHash>().map_err(|e| {
+            record_metric("bad_request");
+            problem(
+                400,
+                "Bad Request",
+                format!("invalid expected artifact hash: {e}"),
+            )
+        })?),
+        None => None,
+    };
+
     let wire = A2aWireRequest::from(body);
-    let run = async { state.registry.handle_a2a_stream(&key, wire).await };
+    let run = async {
+        state
+            .registry
+            .handle_a2a_stream_with_precondition(&key, wire, expected_artifact_hash.as_ref())
+            .await
+    };
     let stream_result = match eval_model {
         Some(model) => baml_rt_llm_config::with_eval_model_override(Some(model), run).await,
         None => run.await,
@@ -725,6 +745,12 @@ pub async fn post_a2a(
             Ok(Sse::new(sse_stream).keep_alive(KeepAlive::default()))
         }
         Err(e) => {
+            if expected_artifact_hash.is_some()
+                && e.to_string().contains("artifact precondition failed")
+            {
+                record_metric("precondition_failed");
+                return Err(problem(412, "Precondition Failed", e.to_string()));
+            }
             record_metric(result_label_for_domain_error(&e));
             Err(domain_to_problem(&e, &agent_package))
         }

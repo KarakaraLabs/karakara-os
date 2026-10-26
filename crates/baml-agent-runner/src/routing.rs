@@ -75,6 +75,17 @@ impl AgentRegistry for RunnerRegistry {
         self.0.handle_a2a_by_key(key, request).await
     }
 
+    async fn handle_a2a_stream_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        expected_artifact_hash: Option<&baml_rt_core::ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
+        self.0
+            .handle_a2a_by_key_with_precondition(key, request, expected_artifact_hash)
+            .await
+    }
+
     async fn handle_dispatch(
         &self,
         key: &AgentRouteKey,
@@ -105,9 +116,8 @@ impl A2aRequestHandler for RunnerRegistry {
 pub(crate) struct Placement {
     pub(crate) endpoint: String,
     pub(crate) service_instance_id: String,
-    /// Exact package blob the placement advertised. Restore and routing use it to
-    /// keep artifact selection pinned instead of re-deriving from the package name.
-    pub(crate) artifact_hash: Option<baml_rt_core::ArtifactHash>,
+    /// Exact package blob the placement advertised. Missing rows are not routable.
+    pub(crate) artifact_hash: baml_rt_core::ArtifactHash,
 }
 
 /// Resolves an agent route key to the placement of the runner hosting it.
@@ -217,7 +227,7 @@ impl InternalA2aRouter {
                         agent = %key.agent_package.as_str(),
                         endpoint = %placement.endpoint,
                         target_service_instance_id = %placement.service_instance_id,
-                        artifact_hash = ?placement.artifact_hash.as_ref().map(baml_rt_core::ArtifactHash::as_str),
+                        artifact_hash = %placement.artifact_hash.as_str(),
                         "routing A2A request to remote runner"
                     );
                     return self.forward_to_runner(&placement, &key, request).await;
@@ -263,6 +273,7 @@ impl InternalA2aRouter {
             telemetry_instance,
             ingress_service_instance_id,
             Some(placement.service_instance_id.as_str()),
+            placement.artifact_hash.as_str(),
         )
         .await
     }
@@ -370,6 +381,11 @@ mod tests {
                     break;
                 }
             }
+            let request_text = String::from_utf8_lossy(&acc).to_ascii_lowercase();
+            assert!(
+                request_text.contains("x-agentium-expected-artifact-hash:"),
+                "forwarded request must carry the placement artifact precondition: {request_text}"
+            );
 
             let headers =
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
@@ -387,7 +403,7 @@ mod tests {
         let placement = Placement {
             endpoint: format!("http://{cluster_ip}:{port}"),
             service_instance_id: "runner-serving".to_string(),
-            artifact_hash: None,
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"test artifact"),
         };
         let key = AgentRouteKey::new(AgentPackageName::parse("remote-agent").unwrap());
         let request = A2aWireRequest::from(serde_json::json!({

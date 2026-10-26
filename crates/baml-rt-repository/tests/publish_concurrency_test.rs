@@ -61,8 +61,13 @@ async fn publish_one(
         rationale: ChangeRationale::new(format!("publisher {index}")).expect("rationale"),
         origin: PublishOrigin::Original,
     };
-    svc.publish_built(cmd, &reservation, artifact_hash, None)
-        .await
+    svc.publish_built(
+        cmd,
+        &reservation,
+        artifact_hash,
+        common::test_identity_digest(),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -98,10 +103,7 @@ async fn concurrent_publishes_agree_on_version_identity_and_blob() {
     );
 
     for result in &results {
-        let artifact_hash = result
-            .artifact_hash
-            .clone()
-            .expect("publish result must carry the artifact hash");
+        let artifact_hash = result.artifact_hash.clone();
         let entry = svc
             .get_by_hash(&result.hash)
             .await

@@ -88,9 +88,16 @@ Boot verifies both values. A mismatch between the supplied `AgentId` or
 `ArtifactHash` and the extracted package fails before the agent starts serving.
 The `AgentBooted` event records the real process identity, not a placeholder.
 Task execution carries that boot event ID explicitly, so provenance links a task
-to the process lifetime and artifact that actually executed it. Startup restore
-also verifies the persisted deployment artifact hash against the repository entry
-before booting.
+to the process lifetime and artifact that actually executed it. Ops rows resolve
+`agent_version` only through that exact boot-to-artifact path; rows with no such
+path omit the version and display the package alone. Startup restore also verifies
+the persisted deployment artifact hash against the repository entry before
+booting.
+
+Cluster placements require an artifact hash. Forwarded A2A requests carry
+`X-Agentium-Expected-Artifact-Hash`; the receiving runner compares it with the
+exact `BootedAgent` selected for dispatch before creating a task, and returns
+`412 Precondition Failed` on mismatch.
 `AutoGenerate` identity is limited to ephemeral tests and development agents;
 production boot paths pass the identity explicitly.
 

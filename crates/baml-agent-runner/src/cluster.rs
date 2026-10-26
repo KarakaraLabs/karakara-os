@@ -180,6 +180,7 @@ impl ClusterEndpointResolver for PlacementResolver {
                 "SELECT * FROM cluster_agent_placements \
                  WHERE agent_package = $pkg \
                  AND status = 'active' \
+                 AND artifact_hash IS NOT NONE \
                  AND runner_id IN (\
                    SELECT VALUE runner_id FROM cluster_runners \
                    WHERE last_heartbeat_ms > (time::millis(time::now()) - $ttl)\
@@ -245,8 +246,12 @@ impl ClusterEndpointResolver for PlacementResolver {
         let artifact_hash = row
             .get("artifact_hash")
             .and_then(|v| v.as_str())
-            .map(str::parse)
-            .transpose()
+            .ok_or_else(|| {
+                BamlRtError::Io(std::io::Error::other(format!(
+                    "placement for {pkg} on runner {runner_id} has no artifact_hash"
+                )))
+            })?
+            .parse()
             .map_err(|e| {
                 BamlRtError::Io(std::io::Error::other(format!(
                     "placement for {pkg} on runner {runner_id} has invalid artifact_hash: {e}"
@@ -397,7 +402,8 @@ impl ClusterManager {
         key: &AgentRouteKey,
         content_hash: &DeploymentContentHash,
     ) -> Result<(), BamlRtError> {
-        self.record_placement_with_artifact(key, content_hash, None)
+        let artifact_hash = ArtifactHash::from_bytes(b"test placement artifact");
+        self.record_placement_with_artifact(key, content_hash, Some(&artifact_hash))
             .await
     }
 
@@ -1117,6 +1123,9 @@ mod tests {
         let key = test_route_key();
         let pkg = key.agent_package.as_str();
         let hash = test_hash().as_str().to_string();
+        let artifact_hash = baml_rt_core::ArtifactHash::from_bytes(b"placement artifact")
+            .as_str()
+            .to_string();
         db.query(
             "CREATE type::record('cluster_runners', $rid_a) SET \
                runner_id = $rid_a, endpoint = $endpoint_a, \
@@ -1128,12 +1137,12 @@ mod tests {
                last_heartbeat_ms = time::millis(time::now());\
              CREATE type::record('cluster_agent_placements', $key_a) SET \
                agent_package = $pkg, \
-               content_hash = $hash, runner_id = $rid_a, \
+               content_hash = $hash, artifact_hash = $artifact_hash, runner_id = $rid_a, \
                runner_endpoint = $endpoint_a, status = $status, \
                updated_at_ms = $ts_a;\
              CREATE type::record('cluster_agent_placements', $key_b) SET \
                agent_package = $pkg, \
-               content_hash = $hash, runner_id = $rid_b, \
+               content_hash = $hash, artifact_hash = $artifact_hash, runner_id = $rid_b, \
                runner_endpoint = $endpoint_b, status = $status, \
                updated_at_ms = $ts_b",
         )
@@ -1147,6 +1156,7 @@ mod tests {
         .bind(("key_b", format!("{pkg}/{rid_b}")))
         .bind(("pkg", pkg.to_string()))
         .bind(("hash", hash))
+        .bind(("artifact_hash", artifact_hash))
         .bind(("status", PLACEMENT_STATUS_ACTIVE.to_string()))
         .bind(("ts_a", ts_a))
         .bind(("ts_b", ts_b))

@@ -15,6 +15,11 @@ use baml_rt_repository::{
     surreal_store::SurrealStore,
 };
 
+/// Deterministic non-empty identity digest for repository tests that exercise blob/version paths.
+pub fn test_identity_digest() -> baml_rt_repository::AgentIdentityDigest {
+    "a".repeat(64).parse().expect("valid test identity digest")
+}
+
 pub fn make_source(
     content: &str,
     manifest_name: &str,
