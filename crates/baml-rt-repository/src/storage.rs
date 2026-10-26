@@ -19,10 +19,10 @@ use async_trait::async_trait;
 use baml_rt_tools::{external_tools::ExternalToolSnapshot, mcp_snapshot::McpServerSnapshot};
 
 use crate::{
-    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag},
+    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, VersionReservation},
     error::Result,
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Version, VersionRef},
+    ids::{AgentName, ArtifactHash, ContentHash, Version, VersionRef},
     lineage::{AncestryNode, LineageEdge, LineageSubgraph},
     mcp::{McpRegistryServer, McpRegistryServerVersion, McpRegistryToolVersion},
     search::SearchQuery,
@@ -32,10 +32,8 @@ use crate::{
 // BlobStore — tar.gz storage
 // ---------------------------------------------------------------------------
 
-/// Stores and retrieves distributable tar.gz packages by content hash.
-///
-/// The blob store is content-addressable: the `ContentHash` determines the
-/// storage path. The store does not interpret the blob contents.
+/// Stores content-addressed bytes. Agent package artifacts use [`ArtifactHash`], while
+/// legacy repository-owned auxiliary data uses [`ContentHash`].
 #[async_trait]
 pub trait BlobStore: Send + Sync {
     /// Write a tar.gz blob for the given hash. Overwrites if already present
@@ -50,6 +48,12 @@ pub trait BlobStore: Send + Sync {
 
     /// Delete a blob. No-op if the blob does not exist.
     async fn delete(&self, hash: &ContentHash) -> Result<()>;
+
+    /// Write an exact package blob, keyed by its [`ArtifactHash`].
+    async fn put_artifact(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()>;
+
+    /// Retrieve an exact package blob by [`ArtifactHash`].
+    async fn get_artifact(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +73,8 @@ pub trait MetadataStore: Send + Sync {
     /// computing the content hash.
     ///
     /// The store:
-    /// 1. Assigns the next version for the agent lineage.
+    /// 1. Assigns the next version for the agent lineage, skipping versions held by
+    ///    live reservations.
     /// 2. Writes the version into the manifest.
     /// 3. Computes the canonical content hash from the versioned source.
     /// 4. Persists the entry.
@@ -77,6 +82,28 @@ pub trait MetadataStore: Send + Sync {
     /// Returns the complete `RepositoryEntry` with the assigned version, hash,
     /// and timestamp. Fails if the content hash already exists.
     async fn insert_entry(&self, entry: &NewEntry) -> Result<RepositoryEntry>;
+
+    /// Next version an insert for this lineage would receive, counting live reservations.
+    async fn next_version(&self, name: &AgentName) -> Result<Version>;
+
+    /// Reserve the next free version for `name` for `ttl_ms` milliseconds.
+    ///
+    /// Publishing reserves before building so the artifact and the entry agree on one
+    /// version. Reservations expire so a crashed publisher cannot block a version forever.
+    async fn reserve_version(&self, name: &AgentName, ttl_ms: u64) -> Result<VersionReservation>;
+
+    /// Release a reservation. No-op when it was already consumed or has expired.
+    async fn release_version(&self, reservation: &VersionReservation) -> Result<()>;
+
+    /// Insert an entry at the exact version held by `reservation`.
+    ///
+    /// Fails with [`RepositoryError::VersionConflict`](crate::error::RepositoryError::VersionConflict)
+    /// when the lineage no longer agrees with the reserved version.
+    async fn insert_reserved_entry(
+        &self,
+        entry: &NewEntry,
+        reservation: &VersionReservation,
+    ) -> Result<RepositoryEntry>;
 
     /// Retrieve a full entry by content hash.
     async fn get_by_hash(&self, hash: &ContentHash) -> Result<Option<RepositoryEntry>>;

@@ -55,8 +55,8 @@ pub use a2a_handler::{
 pub use a2a_sse::{A2aSseDecoder, A2aSseParseError, parse_a2a_sse_json_rpc_chunks};
 pub use a2a_wire::{A2aStreamChunk, A2aWireRequest};
 pub use agent_routing::{
-    AgentCard, AgentDiscoveryEntry, AgentInstanceId, AgentLister, AgentPackageName, AgentRouteKey,
-    DispatchTarget, route_key_from_request,
+    AgentCard, AgentDiscoveryEntry, AgentLister, AgentPackageName, AgentRouteKey, DispatchTarget,
+    route_key_from_request,
 };
 pub use backoff::ExponentialBackoff;
 pub use baml_rt_citation::Citation;
@@ -79,8 +79,8 @@ pub use context::{
 pub use deferred::DeferredHolder;
 pub use deployed_agent_lookup::DeployedAgentLookup;
 pub use deployment::{
-    DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord, DeploymentStatus,
-    UndeployResult,
+    ArtifactHash, DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    DeploymentStatus, UndeployResult,
 };
 pub use dispatch::{
     AgentDispatchAck, AgentDispatchRequest, AgentDispatchRoutingKey,
@@ -121,8 +121,8 @@ pub use host_wire::{
     wire as host_wire_versions,
 };
 pub use ids::{
-    ActivityAnchorId, AgentId, ArtifactId, ContextId, CorrelationId, ExecutionSessionId, IntentId,
-    MessageId, PlanId, PlanStepId, TaskId,
+    AGENTIUM_AGENT_NAMESPACE, ActivityAnchorId, AgentId, ArtifactId, ContextId, CorrelationId,
+    ExecutionSessionId, IntentId, MessageId, PlanId, PlanStepId, TaskId,
 };
 pub use ingress_store::{IngressId, IngressItem, IngressStore, ingress_store_not_installed};
 pub use json::to_json_value;

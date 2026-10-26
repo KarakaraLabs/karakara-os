@@ -230,40 +230,40 @@ async fn file_backed_export_renders_expected_sequence_flow() {
 
     assert!(mermaid.contains("sequenceDiagram"), "{mermaid}");
     assert!(mermaid.contains("actor User"), "{mermaid}");
-    assert!(mermaid.contains("participant clickup_1_0_0"), "{mermaid}");
+    assert!(mermaid.contains("participant clickup_agent"), "{mermaid}");
     assert!(mermaid.contains("participant clickup"), "{mermaid}");
     assert!(
-        mermaid.contains("User->>+clickup_1_0_0: how many tasks are in to do?"),
+        mermaid.contains("User->>+clickup_agent: how many tasks are in to do?"),
         "{mermaid}"
     );
     assert!(
-        mermaid.contains("clickup_1_0_0->>+LLM_openai_generic:") && mermaid.contains("7475ms"),
+        mermaid.contains("clickup_agent->>+LLM_openai_generic:") && mermaid.contains("7475ms"),
         "{mermaid}"
     );
     assert!(
-        mermaid.contains("clickup_1_0_0->>+clickup: action=ListTeams"),
+        mermaid.contains("clickup_agent->>+clickup: action=ListTeams"),
         "{mermaid}"
     );
     assert!(
-        mermaid.contains("clickup-->>-clickup_1_0_0: 976ms"),
+        mermaid.contains("clickup-->>-clickup_agent: 976ms"),
         "{mermaid}"
     );
     assert!(
-        mermaid.contains("clickup_1_0_0->>-User: Found 1 team(s)"),
+        mermaid.contains("clickup_agent->>-User: Found 1 team(s)"),
         "{mermaid}"
     );
 
     let user_pos = mermaid
-        .find("User->>+clickup_1_0_0:")
+        .find("User->>+clickup_agent:")
         .expect("user message");
     let llm_pos = mermaid
-        .find("clickup_1_0_0->>+LLM_openai_generic:")
+        .find("clickup_agent->>+LLM_openai_generic:")
         .expect("llm request arrow");
     let tool_pos = mermaid
-        .find("clickup_1_0_0->>+clickup: action=ListTeams")
+        .find("clickup_agent->>+clickup: action=ListTeams")
         .expect("tool call");
     let final_pos = mermaid
-        .find("clickup_1_0_0->>-User: Found 1 team(s)")
+        .find("clickup_agent->>-User: Found 1 team(s)")
         .expect("agent response");
     assert!(
         user_pos < llm_pos && llm_pos < tool_pos && tool_pos < final_pos,

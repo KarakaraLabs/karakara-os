@@ -17,7 +17,6 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
 pub struct InternalA2aTarget {
     pub agent_package: String,
-    pub agent_instance_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
@@ -428,7 +427,6 @@ pub struct AgentCardDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_version: Option<u32>,
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub tools: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

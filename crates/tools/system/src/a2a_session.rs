@@ -187,7 +187,7 @@ fn parse_send_input(raw: Value) -> std::result::Result<Vec<ConversationPart>, St
 /// inbound `Message` provenance does NOT land on the caller's user-facing
 /// conversation context. Stable across hops in the same delegated child task.
 ///
-/// Format: `a2a:<caller_ctx>:<pkg>/<inst>:<child_task_id>`. The `a2a:` prefix
+/// Format: `a2a:<caller_ctx>:<pkg>:<child_task_id>`. The `a2a:` prefix
 /// lets readers (UI picker, conversation projection) skip these contexts when
 /// surfacing human-visible chats. Including the child task id prevents
 /// concurrent delegated sessions to the same target from colliding on one
@@ -200,7 +200,6 @@ fn derive_a2a_child_context_id(
     baml_rt_core::ids::ContextId::for_a2a_child(
         caller_context_id,
         &target.agent_package,
-        &target.agent_instance_id,
         child_task_id,
     )
 }
@@ -233,8 +232,7 @@ fn build_send_stream_request(
                 "kind": "agent-to-agent",
                 "callerContextId": caller_context_id.as_str(),
                 "target": {
-                    "agent_package": target.agent_package,
-                    "agent_instance_id": target.agent_instance_id
+                    "agent_package": target.agent_package
                 }
             }
         }
@@ -768,7 +766,6 @@ mod tests {
     fn responder_target() -> InternalA2aTarget {
         InternalA2aTarget {
             agent_package: "responder-agent".to_string(),
-            agent_instance_id: "default".to_string(),
         }
     }
 

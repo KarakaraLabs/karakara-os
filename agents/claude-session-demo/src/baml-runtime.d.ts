@@ -648,7 +648,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ChooseClaudeDevAction" | "ChooseClaudeDevAction__active__claude_dev" | "ChooseClaudeDevAction__entry";
+export type StepExecutorFunctionName = "ChooseClaudeDevAction" | "ChooseClaudeDevAction__active__claude_dev" | "ChooseClaudeDevAction__consume__claude_dev" | "ChooseClaudeDevAction__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -709,6 +709,7 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   ChooseClaudeDevAction: { args: Parameters<typeof ChooseClaudeDevAction>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseClaudeDevAction>>; };
   ChooseClaudeDevAction__active__claude_dev: { args: Parameters<typeof ChooseClaudeDevAction__active__claude_dev>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseClaudeDevAction__active__claude_dev>>; };
+  ChooseClaudeDevAction__consume__claude_dev: { args: Parameters<typeof ChooseClaudeDevAction__consume__claude_dev>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseClaudeDevAction__consume__claude_dev>>; };
   ChooseClaudeDevAction__entry: { args: Parameters<typeof ChooseClaudeDevAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseClaudeDevAction__entry>>; };
 }
 

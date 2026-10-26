@@ -102,7 +102,6 @@ impl AgentRegistry for TestRegistry {
 fn dispatch_echo_discovery_entry() -> AgentDiscoveryEntry {
     AgentDiscoveryEntry {
         agent_package: "dispatch-echo".into(),
-        agent_instance_id: "default".into(),
         name: "dispatch-echo".into(),
         version: "1.0.0".into(),
         agent_card: AgentCard {
@@ -111,7 +110,6 @@ fn dispatch_echo_discovery_entry() -> AgentDiscoveryEntry {
             content_hash: None,
             repository_version: None,
             agent_package: "dispatch-echo".into(),
-            agent_instance_id: "default".into(),
             tools: vec![],
             baml_functions: vec![],
             description: Some("Fixture: echoes dispatch requests".into()),
@@ -133,7 +131,6 @@ fn dispatch_echo_discovery_entry() -> AgentDiscoveryEntry {
 fn dispatch_echo_callback_subscription_discovery_entry() -> AgentDiscoveryEntry {
     AgentDiscoveryEntry {
         agent_package: "dispatch-echo".into(),
-        agent_instance_id: "default".into(),
         name: "dispatch-echo".into(),
         version: "1.0.0".into(),
         agent_card: AgentCard {
@@ -142,7 +139,6 @@ fn dispatch_echo_callback_subscription_discovery_entry() -> AgentDiscoveryEntry 
             content_hash: None,
             repository_version: None,
             agent_package: "dispatch-echo".into(),
-            agent_instance_id: "default".into(),
             tools: vec![],
             baml_functions: vec![],
             description: Some("Fixture: callback subscription only".into()),

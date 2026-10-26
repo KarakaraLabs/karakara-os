@@ -8,11 +8,13 @@
 //! content (ts + baml + manifest.json) with mutable metadata (tags) and
 //! structural lineage information.
 
-use baml_rt_hash::{CanonicalHasher, ContentHash, HashInput, HashInputFile};
+use baml_rt_hash::{
+    AgentIdentityDigest, ArtifactHash, CanonicalHasher, ContentHash, HashInput, HashInputFile,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::{AgentName, Generation, VersionRef},
+    ids::{AgentName, Generation, Version, VersionRef},
     lineage::Parentage,
 };
 
@@ -326,6 +328,10 @@ impl std::fmt::Display for Timestamp {
 pub struct NewEntry {
     /// Agent lineage name — determines which version sequence this belongs to.
     pub name: AgentName,
+    /// Exact built package blob for this entry, when publication produced one.
+    pub artifact_hash: Option<ArtifactHash>,
+    /// Behavior-set identity digest of the built package, when publication produced one.
+    pub identity_digest: Option<AgentIdentityDigest>,
     /// Complete source content (manifest version will be overwritten by the store).
     pub source: SourceBundle,
     /// How this entry relates to existing entries.
@@ -336,6 +342,22 @@ pub struct NewEntry {
     pub change_rationale: ChangeRationale,
     /// Initial tags to attach.
     pub tags: Vec<Tag>,
+}
+
+// ---------------------------------------------------------------------------
+// VersionReservation — one publisher holding the version it will build
+// ---------------------------------------------------------------------------
+
+/// A version held by one publisher between reservation and entry insert.
+///
+/// Reserving before a build keeps two concurrent publishes from building for the same
+/// version. Reservations expire, so a crashed publisher cannot block a version forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionReservation {
+    pub name: AgentName,
+    pub version: Version,
+    /// Opaque token identifying the holder. Only the holder can consume or release it.
+    pub holder: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +379,13 @@ pub struct RepositoryEntry {
     // --- Identity ---
     pub hash: ContentHash,
     pub version_ref: VersionRef,
+    /// Exact built package blob for this repository entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<ArtifactHash>,
+
+    /// Behavior-set identity digest of the built package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_digest: Option<AgentIdentityDigest>,
 
     // --- Content ---
     pub source: SourceBundle,

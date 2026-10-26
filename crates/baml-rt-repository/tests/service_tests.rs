@@ -34,7 +34,7 @@ async fn publish_original_assigns_v1() {
     let svc = setup_service().await;
 
     let result = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "weather-agent".parse().unwrap(),
             source: make_source("v1 code"),
             rationale: ChangeRationale::new("initial version").unwrap(),
@@ -53,7 +53,7 @@ async fn publish_iteration_creates_fork_edge() {
 
     // Publish v1
     let r1 = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "iter-agent".parse().unwrap(),
             source: make_source("v1 code"),
             rationale: ChangeRationale::new("initial").unwrap(),
@@ -65,7 +65,7 @@ async fn publish_iteration_creates_fork_edge() {
 
     // Publish v2 as iteration
     let r2 = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "iter-agent".parse().unwrap(),
             source: make_source("v2 code"),
             rationale: ChangeRationale::new("improved accuracy").unwrap(),
@@ -91,7 +91,7 @@ async fn publish_influenced_records_influence_edges() {
 
     // Publish two source agents
     let s1 = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "source-one".parse().unwrap(),
             source: make_source("source one code"),
             rationale: ChangeRationale::new("initial").unwrap(),
@@ -101,7 +101,7 @@ async fn publish_influenced_records_influence_edges() {
         .unwrap();
 
     let s2 = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "source-two".parse().unwrap(),
             source: make_source("source two code"),
             rationale: ChangeRationale::new("initial").unwrap(),
@@ -112,7 +112,7 @@ async fn publish_influenced_records_influence_edges() {
 
     // Publish influenced agent
     let result = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "synthesized-agent".parse().unwrap(),
             source: make_source("synthesized code"),
             rationale: ChangeRationale::new("combined from sources").unwrap(),
@@ -148,7 +148,7 @@ async fn publish_influenced_missing_source_fails() {
     let fake_hash = format!("{:0>64}", "deadbeef").parse().unwrap();
 
     let result = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "bad-synth".parse().unwrap(),
             source: make_source("code"),
             rationale: ChangeRationale::new("testing").unwrap(),
@@ -173,7 +173,7 @@ async fn fork_creates_new_lineage() {
     let svc = setup_service().await;
 
     let original = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "original-agent".parse().unwrap(),
             source: make_source("original code"),
             rationale: ChangeRationale::new("initial").unwrap(),
@@ -183,7 +183,7 @@ async fn fork_creates_new_lineage() {
         .unwrap();
 
     let forked = svc
-        .fork(ForkCommand {
+        .fork_draft(ForkCommand {
             source_hash: original.hash.clone(),
             new_name: "forked-agent".parse().unwrap(),
             source: make_source("forked code with improvements"),
@@ -210,7 +210,7 @@ async fn fork_missing_source_fails() {
     let fake = format!("{:0>64}", "cafebabe").parse().unwrap();
 
     let result = svc
-        .fork(ForkCommand {
+        .fork_draft(ForkCommand {
             source_hash: fake,
             new_name: "orphan-fork".parse().unwrap(),
             source: make_source("code"),
@@ -232,7 +232,7 @@ async fn retrieval_by_hash_and_version() {
     let svc = setup_service().await;
 
     let published = svc
-        .publish(PublishCommand {
+        .publish_draft(PublishCommand {
             name: "retrieve-me".parse().unwrap(),
             source: make_source("retrieval test"),
             rationale: ChangeRationale::new("testing retrieval").unwrap(),
@@ -264,7 +264,7 @@ async fn retrieval_by_hash_and_version() {
 async fn search_finds_published_agents() {
     let svc = setup_service().await;
 
-    svc.publish(PublishCommand {
+    svc.publish_draft(PublishCommand {
         name: "searchable-one".parse().unwrap(),
         source: common::make_source(
             "first agent",
@@ -279,7 +279,7 @@ async fn search_finds_published_agents() {
     .await
     .unwrap();
 
-    svc.publish(PublishCommand {
+    svc.publish_draft(PublishCommand {
         name: "searchable-two".parse().unwrap(),
         source: common::make_source(
             "second agent",
@@ -318,7 +318,7 @@ async fn search_finds_published_agents() {
 async fn list_agents_and_versions() {
     let svc = setup_service().await;
 
-    svc.publish(PublishCommand {
+    svc.publish_draft(PublishCommand {
         name: "listed-a".parse().unwrap(),
         source: make_source("a v1"),
         rationale: ChangeRationale::new("init").unwrap(),
@@ -327,7 +327,7 @@ async fn list_agents_and_versions() {
     .await
     .unwrap();
 
-    svc.publish(PublishCommand {
+    svc.publish_draft(PublishCommand {
         name: "listed-a".parse().unwrap(),
         source: make_source("a v2"),
         rationale: ChangeRationale::new("update").unwrap(),
@@ -336,7 +336,7 @@ async fn list_agents_and_versions() {
     .await
     .unwrap();
 
-    svc.publish(PublishCommand {
+    svc.publish_draft(PublishCommand {
         name: "listed-b".parse().unwrap(),
         source: make_source("b v1"),
         rationale: ChangeRationale::new("init").unwrap(),

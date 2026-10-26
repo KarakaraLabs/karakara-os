@@ -10,7 +10,6 @@
 // Shared standard planning types
 class StandardAgentPlanStep {
   agent_package string @description("Exact agent_package from discovery results (e.g. 'extrospection-agent'). Copy verbatim — do not truncate or reformat.")
-  agent_instance_id string @description("Agent instance ID, usually 'default'. Copy from discovery results.")
   sub_message string
 }
 
@@ -211,7 +210,6 @@ class AgentCardDto {
   contentHash (string | null)?
   repositoryVersion (int | null)?
   agentPackage string
-  agentInstanceId string
   tools string[]
   description (string | null)?
   capabilities string[]
@@ -340,7 +338,6 @@ class InternalA2aNextOutput {
 
 class InternalA2aTarget {
   agent_package string
-  agent_instance_id string
   @@dynamic
 }
 

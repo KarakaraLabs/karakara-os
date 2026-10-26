@@ -194,7 +194,7 @@ impl SurrealProvenanceStore {
                 continue;
             }
             if let Some(ref package) = scope.agent_package {
-                let Some((agent_package, _version)) = agent_runtime_index
+                let Some(agent_package) = agent_runtime_index
                     .identity_by_agent_id
                     .get(agent_id.as_str())
                 else {

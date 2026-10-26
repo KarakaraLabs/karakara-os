@@ -32,10 +32,9 @@ use baml_rt_api::{
 };
 use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentCard, AgentDiscoveryEntry, AgentDispatchAck,
-    AgentDispatchRequest, AgentInstanceId, AgentLister, AgentPackageName, AgentRouteKey,
-    BamlRtError, BusStream, DeployResult, DeploymentContentHash, DeploymentManager,
-    DeploymentRecord, EventSchemaVersion, EventSourceKind, EventSubscription, Outcome, Result,
-    UndeployResult,
+    AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, ArtifactHash, BamlRtError,
+    BusStream, DeployResult, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    EventSchemaVersion, EventSourceKind, EventSubscription, Outcome, Result, UndeployResult,
     bus::SessionStepOp,
     event_subscription::{EventSourceKey, EventSourceKeyPrefix},
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
@@ -308,6 +307,7 @@ struct MockRegistry {
     dispatch_err_message: Option<String>,
     /// When set, capture the route key passed to handle_a2a_stream (for routing tests).
     key_captured: Option<std::sync::Arc<std::sync::Mutex<Option<AgentRouteKey>>>>,
+    expected_artifact: Option<ArtifactHash>,
 }
 
 struct OtelTestFixture {
@@ -1078,6 +1078,7 @@ impl MockRegistry {
             dispatch_ok: None,
             dispatch_err_message: None,
             key_captured: None,
+            expected_artifact: None,
         }
     }
 
@@ -1154,6 +1155,22 @@ impl AgentRegistry for MockRegistry {
         ))
     }
 
+    async fn handle_a2a_stream_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        expected_artifact_hash: Option<&ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
+        if let Some(required) = self.expected_artifact.as_ref()
+            && expected_artifact_hash != Some(required)
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "artifact precondition failed: expected {required}, got {expected_artifact_hash:?}"
+            )));
+        }
+        self.handle_a2a_stream(key, request).await
+    }
+
     async fn handle_dispatch(
         &self,
         key: &AgentRouteKey,
@@ -1174,14 +1191,13 @@ impl AgentRegistry for MockRegistry {
     }
 }
 
-fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDiscoveryEntry {
+fn discovery_entry(pkg: &str, _inst: &str, name: &str, version: &str) -> AgentDiscoveryEntry {
     let card = AgentCard {
         name: name.to_string(),
         version: version.to_string(),
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec![],
         baml_functions: vec![],
         description: None,
@@ -1191,7 +1207,6 @@ fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDis
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1200,7 +1215,7 @@ fn discovery_entry(pkg: &str, inst: &str, name: &str, version: &str) -> AgentDis
 
 fn discovery_entry_with_card(
     pkg: &str,
-    inst: &str,
+    _inst: &str,
     name: &str,
     version: &str,
     description: Option<&str>,
@@ -1212,7 +1227,6 @@ fn discovery_entry_with_card(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec![
             "system/internal_a2a".to_string(),
             "support/calculate".to_string(),
@@ -1225,7 +1239,6 @@ fn discovery_entry_with_card(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1234,7 +1247,7 @@ fn discovery_entry_with_card(
 
 fn discovery_entry_with_subscriptions(
     pkg: &str,
-    inst: &str,
+    _inst: &str,
     name: &str,
     version: &str,
     subscriptions: Vec<EventSubscription>,
@@ -1245,7 +1258,6 @@ fn discovery_entry_with_subscriptions(
         content_hash: None,
         repository_version: None,
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         tools: vec!["system/internal_a2a".to_string()],
         baml_functions: vec![],
         description: Some(format!("{name} subscribes to task-daemon events")),
@@ -1255,7 +1267,6 @@ fn discovery_entry_with_subscriptions(
     };
     AgentDiscoveryEntry {
         agent_package: pkg.to_string(),
-        agent_instance_id: inst.to_string(),
         name: name.to_string(),
         version: version.to_string(),
         agent_card: card,
@@ -1423,7 +1434,6 @@ async fn get_agents_includes_provenance_fields_when_present() {
         ),
         repository_version: Some(7),
         agent_package: "clickup-agent".to_string(),
-        agent_instance_id: "default".to_string(),
         tools: vec!["support/clickup".to_string()],
         baml_functions: vec![],
         description: Some("ClickUp automation".to_string()),
@@ -1433,7 +1443,6 @@ async fn get_agents_includes_provenance_fields_when_present() {
     };
     let entries = vec![AgentDiscoveryEntry {
         agent_package: "clickup-agent".to_string(),
-        agent_instance_id: "default".to_string(),
         name: "ClickUp Agent".to_string(),
         version: "1.2.3".to_string(),
         agent_card: card,
@@ -1663,7 +1672,7 @@ async fn post_a2a_returns_jsonrpc_array() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/pkg/default/a2a")
+                .uri("/agents/pkg/a2a")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{"jsonrpc":"2.0","method":"tasks.list","params":{},"id":null}"#,
@@ -1699,7 +1708,7 @@ async fn post_dispatch_returns_buffered_ack() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/pkg/default/dispatch")
+                .uri("/agents/pkg/dispatch")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{
@@ -1738,7 +1747,7 @@ async fn post_a2a_span_records_agent_identity_and_service_instance_fields() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/pkg/default/a2a")
+                .uri("/agents/pkg/a2a")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{"jsonrpc":"2.0","method":"tasks.list","params":{},"id":null}"#,
@@ -1797,7 +1806,7 @@ async fn post_dispatch_span_records_agent_identity_and_service_instance_fields()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/pkg/default/dispatch")
+                .uri("/agents/pkg/dispatch")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{
@@ -1842,7 +1851,7 @@ async fn post_a2a_bad_package_does_not_leak_raw_into_identity_span() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/bad.pkg/default/a2a")
+                .uri("/agents/bad.pkg/a2a")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{"jsonrpc":"2.0","method":"tasks.list","params":{},"id":null}"#,
@@ -1864,47 +1873,6 @@ async fn post_a2a_bad_package_does_not_leak_raw_into_identity_span() {
             assert!(
                 AgentPackageName::parse(&package).is_some(),
                 "no span may carry raw public input as agent_package: got {package}"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn post_a2a_bad_instance_does_not_leak_raw_into_identity_span() {
-    let fixture = OtelTestFixture::new();
-    let registry: Arc<dyn AgentRegistry> =
-        Arc::new(MockRegistry::with_entries(vec![discovery_entry(
-            "pkg", "default", "pkg", "1.0.0",
-        )]));
-    let app = api_router(registry, None, None).await;
-    let span_baseline = fixture.span_count();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/agents/pkg/bad.instance/a2a")
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    r#"{"jsonrpc":"2.0","method":"tasks.list","params":{},"id":null}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let spans = fixture.spans_after(span_baseline);
-    for span in &spans {
-        assert_ne!(
-            span.name.as_ref(),
-            "baml_rt_api.post_a2a",
-            "post_a2a info span must not be emitted for bad identifiers — raw path would poison telemetry cardinality"
-        );
-        if let Some(instance) = attr_value(span, "agent_instance_id") {
-            assert!(
-                AgentInstanceId::parse(&instance).is_some(),
-                "no span may carry raw public input as agent_instance_id: got {instance}"
             );
         }
     }
@@ -1924,7 +1892,7 @@ async fn post_dispatch_bad_package_does_not_leak_raw_into_identity_span() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/bad.pkg/default/dispatch")
+                .uri("/agents/bad.pkg/dispatch")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{
@@ -1956,51 +1924,6 @@ async fn post_dispatch_bad_package_does_not_leak_raw_into_identity_span() {
 }
 
 #[tokio::test]
-async fn post_dispatch_bad_instance_does_not_leak_raw_into_identity_span() {
-    let fixture = OtelTestFixture::new();
-    let registry: Arc<dyn AgentRegistry> =
-        Arc::new(MockRegistry::with_entries(vec![discovery_entry(
-            "pkg", "default", "pkg", "1.0.0",
-        )]));
-    let app = api_router(registry, None, None).await;
-    let span_baseline = fixture.span_count();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/agents/pkg/bad.instance/dispatch")
-                .header("Content-Type", "application/json")
-                .body(Body::from(
-                    r#"{
-                        "routing_key":"event:intake",
-                        "message_type":"host.source-records.v1",
-                        "messages":[{"schema_version":"host.source-records.v1"}]
-                    }"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let spans = fixture.spans_after(span_baseline);
-    for span in &spans {
-        assert_ne!(
-            span.name.as_ref(),
-            "baml_rt_api.post_dispatch",
-            "post_dispatch info span must not be emitted for bad identifiers — raw path would poison telemetry cardinality"
-        );
-        if let Some(instance) = attr_value(span, "agent_instance_id") {
-            assert!(
-                AgentInstanceId::parse(&instance).is_some(),
-                "no span may carry raw public input as agent_instance_id: got {instance}"
-            );
-        }
-    }
-}
-
-#[tokio::test]
 async fn post_dispatch_rejects_empty_message_type() {
     let registry: Arc<dyn AgentRegistry> =
         Arc::new(MockRegistry::with_entries(vec![discovery_entry(
@@ -2012,7 +1935,7 @@ async fn post_dispatch_rejects_empty_message_type() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/agents/pkg/default/dispatch")
+                .uri("/agents/pkg/dispatch")
                 .header("Content-Type", "application/json")
                 .body(Body::from(
                     r#"{
@@ -3141,7 +3064,6 @@ async fn post_event_dispatch_validate_rejects_unknown_agent() {
 
     let body = serde_json::json!({
         "agent_package": "missing",
-        "agent_instance_id": "default",
         "routing_key": "clickup:intake",
         "message_type": "host.source-records.v1",
         "messages": [{ "event_id": "e1" }],
@@ -3458,4 +3380,37 @@ async fn get_semiotic_activity_returns_gate_rollups_from_provenance_rows() {
     assert_eq!(incident["severity"], "critical");
     assert_eq!(incident["drill"]["contextId"], "ctx-1");
     assert!(incident["drill"].get("provenanceTab").is_none());
+}
+
+#[tokio::test]
+async fn a2a_artifact_precondition_mismatch_returns_412() {
+    let mut registry =
+        MockRegistry::with_entries(vec![discovery_entry("pkg", "default", "pkg", "1.0.0")]);
+    registry.expected_artifact = Some(ArtifactHash::from_bytes(b"expected artifact"));
+
+    let app = api_router(Arc::new(registry), None, None).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agents/pkg/a2a")
+                .header("content-type", "application/json")
+                .header(
+                    "x-agentium-expected-artifact-hash",
+                    ArtifactHash::from_bytes(b"different artifact").as_str(),
+                )
+                .body(Body::from(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "message.sendStream",
+                        "params": {}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
 }

@@ -26,26 +26,26 @@ use crate::{
     host_ingress_identity::host_ingress_message_id,
     host_ingress_types::{HostDispatchFailureKind, HostIngressKind},
     id_semantics::{
-        AgentBootActivityId, AgentBootActivityInput, AgentRuntimeInstanceId,
-        AgentRuntimeInstanceInput, AgentStopActivityId, AgentStopActivityInput, ArchiveEntityId,
-        ArchiveEntityInput, ArtifactByActivityAnchorEntityId, ArtifactByActivityAnchorEntityInput,
-        DelegationTargetEntityId, DelegationTargetEntityInput, FailureClassificationActivityId,
-        FailureClassificationActivityInput, FailureClassificationEntityId,
-        FailureClassificationEntityInput, IntentEntityId, IntentEntityInput, LlmCallActivityId,
-        LlmCallActivityInput, LlmPromptEntityId, LlmPromptEntityInput, MessageEntityId,
-        MessageEntityInput, MessageProcessingActivityId, MessageProcessingActivityInput,
-        PlanEntityId, PlanEntityInput, PlanStepEntityId, PlanStepEntityInput,
-        PromptRejectedActivityId, PromptRejectedActivityInput, RunnerRuntimeInstanceId,
-        SessionStepEntityId, SessionStepEntityInput, TaskEntityId, TaskEntityInput,
-        TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
+        AgentArtifactEntityId, AgentArtifactEntityInput, AgentBootActivityId,
+        AgentBootActivityInput, AgentNodeId, AgentNodeInput, AgentStopActivityId,
+        AgentStopActivityInput, ArtifactByActivityAnchorEntityId,
+        ArtifactByActivityAnchorEntityInput, DelegationTargetEntityId, DelegationTargetEntityInput,
+        FailureClassificationActivityId, FailureClassificationActivityInput,
+        FailureClassificationEntityId, FailureClassificationEntityInput, IntentEntityId,
+        IntentEntityInput, LlmCallActivityId, LlmCallActivityInput, LlmPromptEntityId,
+        LlmPromptEntityInput, MessageEntityId, MessageEntityInput, MessageProcessingActivityId,
+        MessageProcessingActivityInput, PlanEntityId, PlanEntityInput, PlanStepEntityId,
+        PlanStepEntityInput, PromptRejectedActivityId, PromptRejectedActivityInput,
+        RunnerRuntimeInstanceId, SessionStepEntityId, SessionStepEntityInput, TaskEntityId,
+        TaskEntityInput, TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
         TaskStateEntityInput, ToolArgsEntityId, ToolArgsEntityInput, ToolCallActivityId,
         ToolCallActivityInput,
     },
     metamodel::TaskStatusKind,
     task_agent_binding::is_unassigned_executing_agent,
     types::{
-        Activity, Agent, Entity, ProvActivityId, ProvAgentId, ProvEntityId, ProvNodeRef,
-        QualifiedGeneration, Used, WasAssociatedWith, WasDerivedFrom, WasGeneratedBy,
+        Activity, Agent, Entity, ProvActivityId, ProvAgentId, ProvEntityId, ProvNodeRef, Used,
+        WasAssociatedWith, WasDerivedFrom, WasGeneratedBy,
     },
     vocabulary::{
         a2a, a2a_relation_types, a2a_relations, a2a_roles, agent_types, message_directions, prov,
@@ -170,6 +170,8 @@ pub struct NormalizeContext {
     /// When `PromptRejected` follows `LlmCallCompleted` in a separate `add_event`, the in-session
     /// ordinal map may be empty; the writer resolves scope from the persisted graph.
     pub linked_llm_call_scope_ordinal: Option<(String, u64)>,
+    /// Boot event that owned the executing Agent when this task event was written.
+    pub task_boot_event_id: Option<ActivityAnchorId>,
 }
 
 pub(crate) fn scope_key_from_display_str(raw: &str) -> Option<ScopeKey> {
@@ -309,8 +311,12 @@ pub enum A2aRelationType {
     /// Agent lifecycle: stop activity informed by boot activity (direct link
     /// survives restarts where the agent runtime instance is a bare placeholder).
     LifecycleStopInformedByBoot,
-    /// Host ingress dispatch outcome Message → target AgentRuntimeInstance.
+    /// Host ingress dispatch outcome Message → target stable Agent.
     HostDispatchTarget,
+    /// Exact package blob realizes one stable packaged-agent identity.
+    ArtifactRealizesAgent,
+    /// A task execution ran under this event-owned process lifetime.
+    TaskExecutionExecutedUnderBoot,
 }
 
 impl A2aRelationType {
@@ -345,6 +351,8 @@ impl A2aRelationType {
             A2aRelationType::CallbackDispatchScheduledFrom => semantic_labels::WAS_SCHEDULED_FROM,
             A2aRelationType::LifecycleStopInformedByBoot => semantic_labels::WAS_INFORMED_BY,
             A2aRelationType::HostDispatchTarget => a2a_relations::HOST_DISPATCH_TARGET,
+            A2aRelationType::ArtifactRealizesAgent => "REALIZES",
+            A2aRelationType::TaskExecutionExecutedUnderBoot => "EXECUTED_UNDER_BOOT",
         }
     }
 }
@@ -1390,35 +1398,77 @@ fn normalize_event_with_registry(
             agent_id,
             agent_type,
             agent_version,
-            archive_path,
+            identity_digest,
+            artifact_hash,
+            deployment_content_hash,
+            runner_id,
         } => {
             agent_registry.insert(agent_id.as_str().to_string());
-            // Create AgentArchive entity
-            let archive_entity_id = archive_entity_id(archive_path);
-            let mut archive_attrs = base_attrs(event);
-            archive_attrs.insert(
-                a2a::ARCHIVE_PATH.to_string(),
-                Value::String(archive_path.clone()),
-            );
-            doc.insert_entity(
-                archive_entity_id.clone(),
-                Entity {
-                    prov_type: Some(prov_type::<ArchiveEntityId>()),
-                    attributes: archive_attrs,
-                },
-            );
 
-            // Create AgentBoot activity (agent_id derivable from id: boot:{agent_id})
-            let boot_activity_id = boot_activity_id(agent_id);
-            let mut boot_attrs = base_attrs(event);
-            boot_attrs.insert(
+            // Agent and AgentArtifact are immutable registrations. The
+            // writer verifies existing registrations before this document is
+            // committed, so the event path only ever describes one value.
+            let stable_agent_id = agent_node_id(agent_id);
+            let mut agent_attrs = HashMap::new();
+            agent_attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(agent_id.as_str().to_string()),
+            );
+            agent_attrs.insert(
                 a2a::AGENT_TYPE.to_string(),
                 Value::String(agent_type.as_str().to_string()),
             );
-            boot_attrs.insert(
-                a2a::AGENT_VERSION.to_string(),
+            agent_attrs.insert(
+                "identity_digest".to_string(),
+                Value::String(identity_digest.clone()),
+            );
+            doc.insert_agent(
+                stable_agent_id.clone(),
+                Agent {
+                    prov_type: Some(prov_type::<AgentNodeId>()),
+                    attributes: agent_attrs,
+                },
+            );
+
+            let artifact_entity_id = agent_artifact_entity_id(artifact_hash);
+            let mut artifact_attrs = HashMap::new();
+            artifact_attrs.insert(
+                "artifact_hash".to_string(),
+                Value::String(artifact_hash.clone()),
+            );
+            artifact_attrs.insert(
+                "deployment_content_hash".to_string(),
+                Value::String(deployment_content_hash.clone()),
+            );
+            artifact_attrs.insert(
+                "repository_version".to_string(),
                 Value::String(agent_version.clone()),
             );
+            doc.insert_entity(
+                artifact_entity_id.clone(),
+                Entity {
+                    prov_type: Some(prov_type::<AgentArtifactEntityId>()),
+                    attributes: artifact_attrs,
+                },
+            );
+            derived_relations.push(A2aDerivedRelation {
+                relation: A2aRelationType::ArtifactRealizesAgent,
+                from: ProvNodeRef::Entity(artifact_entity_id.clone()),
+                to: ProvNodeRef::Agent(stable_agent_id.clone()),
+                attributes: HashMap::new(),
+            });
+
+            let boot_activity_id = boot_activity_id(agent_id, event.id());
+            let mut boot_attrs = base_attrs(event);
+            boot_attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(agent_id.as_str().to_string()),
+            );
+            boot_attrs.insert(
+                "artifact_hash".to_string(),
+                Value::String(artifact_hash.clone()),
+            );
+            boot_attrs.insert("runner_id".to_string(), Value::String(runner_id.clone()));
             doc.insert_activity(
                 boot_activity_id.clone(),
                 Activity {
@@ -1428,55 +1478,14 @@ fn normalize_event_with_registry(
                     attributes: boot_attrs,
                 },
             );
-
-            // Link archive --USED--> boot
             insert_used(
                 &mut doc,
                 boot_activity_id.clone(),
-                archive_entity_id,
+                artifact_entity_id,
                 Some(a2a_roles::ARCHIVE.to_string()),
             );
+            insert_was_associated_with(&mut doc, boot_activity_id.clone(), stable_agent_id, None);
 
-            let instance_agent_id = agent_runtime_instance_id(agent_id);
-            let mut instance_attrs = base_attrs(event);
-            instance_attrs.insert(
-                a2a::AGENT_ID.to_string(),
-                Value::String(agent_id.as_str().to_string()),
-            );
-            instance_attrs.insert(
-                a2a::AGENT_TYPE.to_string(),
-                Value::String(agent_type.as_str().to_string()),
-            );
-            instance_attrs.insert(
-                a2a::AGENT_VERSION.to_string(),
-                Value::String(agent_version.clone()),
-            );
-            instance_attrs.insert(
-                a2a::ARCHIVE_PATH.to_string(),
-                Value::String(archive_path.clone()),
-            );
-            doc.insert_agent(
-                instance_agent_id.clone(),
-                Agent {
-                    prov_type: Some(prov_type::<AgentRuntimeInstanceId>()),
-                    attributes: instance_attrs,
-                },
-            );
-
-            insert_was_generated_by(
-                &mut doc,
-                ProvNodeRef::Agent(instance_agent_id.clone()),
-                boot_activity_id.clone(),
-                Some(event.timestamp_ms()),
-            );
-            insert_qualified_generation(
-                &mut doc,
-                ProvNodeRef::Agent(instance_agent_id.clone()),
-                boot_activity_id.clone(),
-                Some(event.timestamp_ms()),
-            );
-
-            // Link boot activity to runner runtime instance via association role.
             let runner_runtime_id = runner_runtime_instance_id();
             ensure_runner_runtime_instance(&mut doc);
             insert_was_associated_with(
@@ -1486,10 +1495,18 @@ fn normalize_event_with_registry(
                 Some(prov_roles::EXECUTING_AGENT.to_string()),
             );
         }
-        ProvEventData::AgentStopped { agent_id, reason } => {
+        ProvEventData::AgentStopped {
+            agent_id,
+            boot_event_id,
+            reason,
+        } => {
             let stop_activity_id = stop_activity_id(agent_id, event.id());
             let mut stop_attrs = base_attrs(event);
             stop_attrs.insert("a2a_stop_reason".to_string(), Value::String(reason.clone()));
+            stop_attrs.insert(
+                "a2a_boot_event_id".to_string(),
+                Value::String(boot_event_id.as_str().to_string()),
+            );
             doc.insert_activity(
                 stop_activity_id.clone(),
                 Activity {
@@ -1499,12 +1516,13 @@ fn normalize_event_with_registry(
                     attributes: stop_attrs,
                 },
             );
-            let instance_agent_id = get_agent_runtime_instance(&doc, agent_id, &mut agent_labels)?;
-            insert_was_associated_with(&mut doc, stop_activity_id.clone(), instance_agent_id, None);
+            let stable_agent_id = get_agent_node(&doc, agent_id, &mut agent_labels)?;
+            insert_was_associated_with(&mut doc, stop_activity_id.clone(), stable_agent_id, None);
 
-            // Direct stop → boot edge so the lifecycle read path survives
-            // restarts where the agent runtime instance is a bare placeholder.
-            let boot_id = boot_activity_id(agent_id);
+            // The stop carries the boot event it closes. A stable Agent can
+            // have many sequential boots, so deriving this from AgentId would
+            // incorrectly join a stop to a later process lifetime.
+            let boot_id = boot_activity_id(agent_id, boot_event_id);
             derived_relations.push(A2aDerivedRelation {
                 relation: A2aRelationType::LifecycleStopInformedByBoot,
                 from: ProvNodeRef::Activity(stop_activity_id),
@@ -1522,6 +1540,7 @@ fn normalize_event_with_registry(
             task_id,
             agent_id,
             context_id,
+            boot_event_id: _,
         } => {
             let task_entity = ensure_task_entity(&mut doc, task_id);
 
@@ -1542,13 +1561,21 @@ fn normalize_event_with_registry(
                 Some(event.timestamp_ms()),
             );
 
-            let agent_instance_id = get_agent_runtime_instance(&doc, agent_id, &mut agent_labels)?;
+            let agent_node_id = get_agent_node(&doc, agent_id, &mut agent_labels)?;
             insert_was_associated_with(
                 &mut doc,
                 task_execution.clone(),
-                agent_instance_id.clone(),
+                agent_node_id.clone(),
                 Some(prov_roles::EXECUTING_AGENT.to_string()),
             );
+            if let Some(boot_event_id) = context.and_then(|ctx| ctx.task_boot_event_id.as_ref()) {
+                derived_relations.push(A2aDerivedRelation {
+                    relation: A2aRelationType::TaskExecutionExecutedUnderBoot,
+                    from: ProvNodeRef::Activity(task_execution.clone()),
+                    to: ProvNodeRef::Activity(boot_activity_id(agent_id, boot_event_id)),
+                    attributes: HashMap::new(),
+                });
+            }
 
             repoint_task_last_executed_by(
                 &mut head_pointer_repoints,
@@ -2148,8 +2175,7 @@ fn normalize_event_with_registry(
             if let Some(agent_id) = agent_id_for_processing.as_ref()
                 && !is_unassigned_message_agent(agent_id)
             {
-                let executing_agent_id =
-                    get_agent_runtime_instance(&doc, agent_id, &mut agent_labels)?;
+                let executing_agent_id = get_agent_node(&doc, agent_id, &mut agent_labels)?;
                 insert_was_associated_with(
                     &mut doc,
                     processing_id.clone(),
@@ -3053,15 +3079,21 @@ fn ensure_task_execution_activity(
         a2a::CONTEXT_ID.to_string(),
         Value::String(context_id.as_str().to_string()),
     );
+    if let Some(boot_event_id) = context.and_then(|c| c.task_boot_event_id.as_ref()) {
+        attrs.insert(
+            "a2a_boot_event_id".to_string(),
+            Value::String(boot_event_id.as_str().to_string()),
+        );
+    }
     let agent_id = agent_id_override
         .or_else(|| context.and_then(|c| c.task_agent_id.as_ref()))
         .cloned();
 
     // Look up agent_type from runtime instance agent for display purposes
     if let Some(ref agent_id) = agent_id {
-        let agent_instance_id = agent_runtime_instance_id(agent_id);
+        let agent_node_id = agent_node_id(agent_id);
         if let Some(agent) = doc
-            .agent(&agent_instance_id)
+            .agent(&agent_node_id)
             .and_then(|agent| agent.attributes.get(a2a::AGENT_TYPE))
             .and_then(|v| v.as_str())
         {
@@ -3115,23 +3147,6 @@ fn insert_was_generated_by(
     doc.insert_was_generated_by(
         id,
         WasGeneratedBy {
-            entity,
-            activity,
-            time_ms,
-        },
-    );
-}
-
-fn insert_qualified_generation(
-    doc: &mut ProvDocument,
-    entity: ProvNodeRef,
-    activity: ProvActivityId,
-    time_ms: Option<u64>,
-) {
-    let id = doc.blank_node_id("gen");
-    doc.insert_qualified_generation(
-        id,
-        QualifiedGeneration {
             entity,
             activity,
             time_ms,
@@ -3334,19 +3349,22 @@ fn task_execution_activity_id(task_id: &TaskId) -> ProvActivityId {
     ProvActivityId::derived::<TaskExecutionActivityId>(TaskExecutionActivityInput { task_id })
 }
 
-/// Agent runtime instance entity id: derived from `AgentId`.
-fn agent_runtime_instance_id(agent_id: &AgentId) -> ProvAgentId {
-    ProvAgentId::derived::<AgentRuntimeInstanceId>(AgentRuntimeInstanceInput { agent_id })
+/// Stable Agent node id, derived only from the packaged AgentId.
+fn agent_node_id(agent_id: &AgentId) -> ProvAgentId {
+    ProvAgentId::derived::<AgentNodeId>(AgentNodeInput { agent_id })
 }
 
-/// Archive entity id: derived from package identity (name@version or hash).
-fn archive_entity_id(archive_path: &str) -> ProvEntityId {
-    ProvEntityId::derived::<ArchiveEntityId>(ArchiveEntityInput { archive_path })
+/// AgentArtifact entity id, keyed by exact stored artifact bytes.
+fn agent_artifact_entity_id(artifact_hash: &str) -> ProvEntityId {
+    ProvEntityId::derived::<AgentArtifactEntityId>(AgentArtifactEntityInput { artifact_hash })
 }
 
-/// Agent boot activity id: derived from `AgentId` (one boot per runtime instance).
-fn boot_activity_id(agent_id: &AgentId) -> ProvActivityId {
-    ProvActivityId::derived::<AgentBootActivityId>(AgentBootActivityInput { agent_id })
+/// Event-owned boot id. Sequential boots of one stable agent never collapse.
+fn boot_activity_id(agent_id: &AgentId, boot_event_id: &ActivityAnchorId) -> ProvActivityId {
+    ProvActivityId::derived::<AgentBootActivityId>(AgentBootActivityInput {
+        agent_id,
+        boot_event_id,
+    })
 }
 
 fn stop_activity_id(agent_id: &AgentId, anchor: &ActivityAnchorId) -> ProvActivityId {
@@ -3358,22 +3376,22 @@ fn runner_runtime_instance_id() -> ProvAgentId {
     ProvAgentId::constant::<RunnerRuntimeInstanceId>()
 }
 
-/// Look up an agent runtime instance in the document.
-/// If the instance is not in the document, add it to agent_labels so the graph build can create it
-/// (either from agent_registry / AgentBooted, or on first reference e.g. task store operations).
-fn get_agent_runtime_instance(
+/// Resolve the stable Agent node. A task event may arrive in a separate
+/// write from its boot, so placeholders are labelled as Agent and are filled
+/// by immutable registration when the boot event is present.
+fn get_agent_node(
     doc: &ProvDocument,
     agent_id: &AgentId,
     agent_labels: &mut HashMap<String, String>,
 ) -> Result<ProvAgentId> {
-    let instance_id = agent_runtime_instance_id(agent_id);
-    if doc.agent(&instance_id).is_some() {
-        Ok(instance_id)
+    let node_id = agent_node_id(agent_id);
+    if doc.agent(&node_id).is_some() {
+        Ok(node_id)
     } else {
         agent_labels
-            .entry(instance_id.as_str().to_string())
-            .or_insert_with(|| "AgentRuntimeInstance".to_string());
-        Ok(instance_id)
+            .entry(node_id.as_str().to_string())
+            .or_insert_with(|| "Agent".to_string());
+        Ok(node_id)
     }
 }
 
@@ -3456,13 +3474,13 @@ fn repoint_task_last_executed_by(
     if is_unassigned_executing_agent(agent_id) {
         return Ok(());
     }
-    let agent_instance_id = get_agent_runtime_instance(doc, agent_id, agent_labels)?;
+    let agent_node_id = get_agent_node(doc, agent_id, agent_labels)?;
     head_pointer_repoints.push(HeadPointerRepoint {
         from_id: task_entity.as_str().to_string(),
         from_label: GraphNodeLabel::Task.as_str().to_string(),
         rel: HeadPointerRel::WasLastExecutedBy,
-        to_id: agent_instance_id.as_str().to_string(),
-        to_label: GraphNodeLabel::AgentRuntimeInstance.as_str().to_string(),
+        to_id: agent_node_id.as_str().to_string(),
+        to_label: GraphNodeLabel::Agent.as_str().to_string(),
     });
     tracing::debug!(
         task_entity = task_entity.as_str(),
@@ -3489,10 +3507,10 @@ fn link_host_dispatch_target(
             ),
         });
     }
-    let instance_id = agent_runtime_instance_id(target_agent_id);
+    let instance_id = agent_node_id(target_agent_id);
     agent_labels
         .entry(instance_id.as_str().to_string())
-        .or_insert_with(|| "AgentRuntimeInstance".to_string());
+        .or_insert_with(|| "Agent".to_string());
     derived_relations.push(A2aDerivedRelation {
         relation: A2aRelationType::HostDispatchTarget,
         from: ProvNodeRef::Entity(message_entity),
@@ -3697,7 +3715,7 @@ fn associate_task_execution_agents(
         return Ok(());
     };
 
-    let executing_agent_id = get_agent_runtime_instance(doc, agent_id, agent_labels)?;
+    let executing_agent_id = get_agent_node(doc, agent_id, agent_labels)?;
     insert_was_associated_with(
         doc,
         task_execution.clone(),
@@ -3725,7 +3743,7 @@ fn associate_call_with_agent(
     // If agent_id is available, associate the call with the agent
     // If not, the association will be added when TaskExecutionStarted is processed
     if let Some(agent_id) = agent_id {
-        let executing_agent_id = get_agent_runtime_instance(doc, agent_id, agent_labels)?;
+        let executing_agent_id = get_agent_node(doc, agent_id, agent_labels)?;
         insert_was_associated_with(
             doc,
             activity_id.clone(),

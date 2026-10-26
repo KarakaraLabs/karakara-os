@@ -177,7 +177,7 @@ async fn setup_clickup_ingress_agent(
 
 fn clickup_ingress_dispatch_url(base_url: &str) -> String {
     format!(
-        "{base}/agents/clickup-agent/default/dispatch",
+        "{base}/agents/clickup-agent/dispatch",
         base = base_url.trim_end_matches('/')
     )
 }

@@ -646,6 +646,43 @@ Fixtures evolve with the runtime; prefer the **principles** in this doc over cop
 
 ---
 
+## 9. Agent identity and artifact identity
+
+Publishing an agent produces three different SHA-256 values. They answer
+different questions, and only one of them is the agent's identity.
+
+| Value | Covers | Changes when |
+| --- | --- | --- |
+| `content_hash` | Versioned manifest + compiled package source projection | Every publish, because the repository writes a new version |
+| `AgentIdentityDigest` → `AgentId` | Behavior-defining packaged content | Authored source changes |
+| `ArtifactHash` | Every byte of the stored `.tar.gz` | The build or packaging output changes |
+
+`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+It is stable across boots, replicas, relocations, and republishes of identical
+content. That stability is what lets history stay attached to one agent.
+
+The identity digest is computed from the packaged artifact, not from your
+working directory. It covers:
+
+- `manifest.json`, projected without `version` and `signature`;
+- authored `src/**/*.ts`, excluding `*.d.ts`;
+- `baml_src/**/*.baml`, including the generated `_baml_runtime.baml` prelude;
+- `baml_src/_baml_tool_schema_catalog.txt`;
+- `session_plan_functions.json`.
+
+It does not cover repository version, `dist/**`, source maps, MCP or external
+tool snapshots, or the gzip framing of the artifact. A toolchain upgrade or a
+republish therefore keeps the same `AgentId`, while editing a prompt or a tool
+list creates a new one.
+
+Use `ArtifactHash` when you need the exact bytes that ran. Two artifacts can
+share an `AgentId` and still contain different compiled output. Provenance
+records both: `Agent` holds the stable identity, and `AgentArtifact` holds the
+artifact hash, deployment content hash, and repository version. Boots reference
+the artifact they executed.
+
+---
+
 ## Further reading
 
 

@@ -503,7 +503,7 @@ globalThis.onChatMessage = async function(message) {
     const userText = message?.parts?.[0]?.text || "ping";
     try {
     const session = await openToolSession("system/internal_a2a", {
-      target: { agent_package: __TARGET_PACKAGE__, agent_instance_id: "default" }
+      target: { agent_package: __TARGET_PACKAGE__ }
     });
     await session.send({ parts: [{ text: userText }] });
     let next = await session.continue();
@@ -663,7 +663,7 @@ globalThis.onChatMessage = async function(message) {
   const results = await Promise.all(work.map(async (text, index) => {
     try {
       const session = await openToolSession("system/internal_a2a", {
-        target: { agent_package: __TARGET_PACKAGE__, agent_instance_id: "default" }
+        target: { agent_package: __TARGET_PACKAGE__ }
       });
       await session.send({ parts: [{ text }] });
       let next = await session.continue();
@@ -1813,7 +1813,6 @@ async fn test_internal_a2a_parallel_same_context_child_tasks_and_provenance() {
         let child_context_id = ContextId::for_a2a_child(
             &context_id,
             "responder-agent",
-            "default",
             &TaskId::from_external(ExternalId::new(child_task_id.clone())),
         );
         let mut found = false;

@@ -11,7 +11,7 @@ Two crates that give Agentium OS a **content-addressable package repository** wi
 
 The repository is the **memory layer** for an agent development and selection (ADAS) loop. Agents are treated as immutable, content-addressed artefacts. Every mutation (manual edit, LLM-driven rewrite, automated fork) produces a new entry linked to its predecessors via typed lineage edges. This enables:
 
-1. **Deterministic identity** — same authored source ⇒ same hash, regardless of build artefacts.
+1. **Deterministic content identity** — same authored source ⇒ same content hash, regardless of build artefacts. The behavior-set digest and artifact hash are separate values; see [Three identities](#three-identities).
 2. **Provenance** — full derivation history via fork/influence DAG.
 3. **Selection pressure** — tags and lineage relationships let meta-agents query "what was derived from this?" or "what influenced that?".
 4. **Distribution** — pull by hash (exact) or `name@version` (human-friendly).
@@ -23,7 +23,7 @@ The repository is the **memory layer** for an agent development and selection (A
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        HTTP API (Axum)                            │
-│  /agents  /entries  /search  /lineage  /blobs  /fork  /publish*  │
+│  /agents  /entries  /search  /lineage  /blobs  /drafts           │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
                     ┌──────────▼───────────┐
@@ -37,7 +37,7 @@ The repository is the **memory layer** for an agent development and selection (A
               └──────────────────────────────────┘
 ```
 
-`*` `/publish` is wired by default but can be omitted from the public router (see [Router composition](#router-composition)).
+Release-producing `/publish` and `/fork` are host routes: this crate cannot build artifacts, so it exposes source-only `/drafts` and `/drafts/fork` instead.
 
 ### Single Backend, Trait-Separated Surface
 
@@ -45,7 +45,7 @@ The repository keeps four storage traits separated at the type level:
 
 | Trait | Concern |
 |---|---|
-| `BlobStore` | Distributable tar.gz packages keyed by content hash |
+| `BlobStore` | Distributable tar.gz packages keyed by artifact hash |
 | `MetadataStore` | Entry/version metadata, tag CRUD, version-ref resolution |
 | `LineageStore` | Edge recording and DAG traversal |
 | `SearchStore` | Structured queries with text, tag, capability, tool, generation, and lineage filters |
@@ -71,6 +71,29 @@ section(tag, data) = tag_len:u32le ‖ tag ‖ data_len:u64le ‖ data
 Only **authored source** is hashed — runtime artefacts (`*.d.ts`, `tsconfig.json`, compiled JS, `baml_client/`) are excluded. Two packages with identical authored source always produce identical hashes.
 
 The hash is a standalone crate so other crates (the builder, the runner, future ADAS tooling) can compute hashes without depending on SurrealDB or Axum.
+
+### Three identities
+
+The same crate owns three distinct values:
+
+| Value | Input | Use |
+| --- | --- | --- |
+| `ContentHash` | Versioned manifest + canonical source bundle | Repository entry and version lineage |
+| `AgentIdentityDigest` | Behavior-defining packaged content | Derives the stable `AgentId` |
+| `ArtifactHash` | Exact stored `.tar.gz` bytes | Blob key and deployment audit |
+
+The behavior set behind `AgentIdentityDigest` is a fixed, path-sorted list of
+`(relative path, SHA-256 of file bytes)` entries: the manifest projection
+without `version` or `signature`; authored `src/**/*.ts` excluding `*.d.ts`;
+authored and generated `baml_src/**/*.baml`; the rendered
+`baml_src/_baml_tool_schema_catalog.txt`; and `session_plan_functions.json`.
+Neither the repository version nor compiled `dist/**` output is included, so
+republishing identical content and toolchain-only rebuilds keep the same
+identity.
+
+`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+`ArtifactHash` covers the stored blob, so two artifacts can share one `AgentId`
+while shipping different executable bytes.
 
 ---
 
@@ -102,6 +125,8 @@ DEFINE FIELD manifest_tools_json        ON entries TYPE string;     -- Vec<Strin
 DEFINE FIELD manifest_capabilities_json ON entries TYPE string;     -- Vec<String>
 DEFINE FIELD manifest_text              ON entries TYPE string;     -- searchable manifest projection
 DEFINE FIELD source_text                ON entries TYPE string;     -- searchable source projection
+DEFINE FIELD artifact_hash              ON entries TYPE option<string>;
+DEFINE FIELD identity_digest            ON entries TYPE option<string>;
 DEFINE INDEX idx_entries_hash         ON entries FIELDS hash UNIQUE;
 DEFINE INDEX idx_entries_name_version ON entries FIELDS agent_name, version UNIQUE;
 
@@ -122,7 +147,7 @@ DEFINE INDEX idx_edge_source ON lineage_edges FIELDS source_hash;
 DEFINE INDEX idx_edge_target ON lineage_edges FIELDS target_hash;
 
 DEFINE TABLE blobs SCHEMAFULL;
-DEFINE FIELD hash     ON blobs TYPE string;
+DEFINE FIELD hash     ON blobs TYPE string;                         -- artifact hash
 DEFINE FIELD data_hex ON blobs TYPE string;                         -- hex-encoded tar.gz
 DEFINE INDEX idx_blob_hash ON blobs FIELDS hash UNIQUE;
 ```
@@ -203,6 +228,8 @@ weather-agent@3  →  ContentHash("789abc…")
 1. Look up the highest existing `version` for `agent_name`; the next version is `prev + 1` (or `1` for a new lineage).
 2. Rewrite `manifest.version` to that next version (`SourceBundle::with_manifest_version`).
 3. Compute the canonical content hash from the versioned source bundle.
+   The behavior-set identity digest and artifact hash are derived separately and
+   written on the same entry; they are not part of the content hash.
 4. Reject the insert with `RepositoryError::DuplicateHash` if another entry already carries this hash.
 5. Persist the row, including the precomputed `manifest_text` / `source_text` search projections.
 
@@ -236,14 +263,16 @@ SearchQuery {
 
 ### Router composition
 
-`baml-rt-repository` exposes four router builders so hosts can choose how `/publish` is wired:
+`baml-rt-repository` exposes router builders for the routes it can serve without a builder:
 
 | Builder | Routes | Intended use |
 |---|---|---|
-| `repository_router(service)` | All routes including `POST /publish` | Standalone repository deployments |
-| `repository_router_without_publish(service)` | All routes except `POST /publish` | Hosts that orchestrate publish externally (e.g. the runner, which builds before storing) |
+| `repository_router(service)` | Read + draft routes, no release publish/fork | Standalone or embedded repository use |
+| `repository_router_without_publish(service)` | Compatibility alias with the same release-free surface | Hosts that wire publish/fork themselves |
 | `repository_read_router(service)` | Read-only routes (agents, versions, entries, lineage, blobs, search) | Mount unauthenticated for public discovery and pull |
-| `repository_mutation_router(service)` | `POST /fork`, tag CRUD | Mount behind operator authentication |
+| `repository_mutation_router(service)` | `POST /drafts`, `POST /drafts/fork`, tag CRUD | Mount behind operator authentication |
+
+The host application mounts `/repository/publish` and `/repository/fork` to `repository_publish::publish_with_build` / `fork_with_build`. Both build a package, compute `artifact_hash` and `identity_digest`, and only then insert the entry.
 
 The split read/mutation routers reflect how `baml-agent-runner` exposes the repository in cluster mode: the read router is reachable without credentials, and the mutation router (plus the runner's own `/deploy`) sits behind the runner token.
 
@@ -256,11 +285,13 @@ The split read/mutation routers reflect how `baml-agent-runner` exposes the repo
 | `GET` | `/entries` | List or filter entries by `name`/`name+version` query parameters |
 | `GET` | `/entries/{hash}` | Retrieve an entry by content hash |
 | `GET` | `/entries/{name}/{version}` | Retrieve an entry by `name@version` |
-| `POST` | `/publish` | Publish a new entry (Original / Iteration / Influenced) |
-| `POST` | `/fork` | Fork an existing entry into a new agent lineage |
+| `POST` | `/drafts` | Create a source-only draft (not deployable) |
+| `POST` | `/drafts/fork` | Create a source-only fork draft (not deployable) |
+
+Host-only release routes: `POST /repository/publish` and `POST /repository/fork` build before storing and always return an artifact hash plus identity digest.
 | `POST` | `/search` | Run a structured search query |
 | `GET` | `/lineage/{hash}?depth={n}` | Get a lineage subgraph (ancestors + direct descendants) |
-| `GET` | `/blobs/{hash}` | Download the tar.gz blob for an entry |
+| `GET` | `/blobs/{hash}` | Download the tar.gz blob by artifact hash |
 | `POST` | `/entries/{hash}/tags` | Add a tag |
 | `DELETE` | `/entries/{hash}/tags` | Remove a tag |
 
@@ -271,7 +302,7 @@ All errors use RFC 7807 Problem Details via `http-api-problem`.
 ```
 Client                    RepositoryService              SurrealStore
   │                              │                              │
-  │  POST /publish               │                              │
+  │  POST /publish (host-built)  │                              │
   │  { name, source, origin,     │                              │
   │    rationale }               │                              │
   │ ────────────────────────────▶│                              │

@@ -630,7 +630,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "ExecuteStep" | "ExecuteStep__active__support_crm" | "ExecuteStep__active__support_email" | "ExecuteStep__entry";
+export type StepExecutorFunctionName = "ExecuteStep" | "ExecuteStep__active__support_crm" | "ExecuteStep__active__support_email" | "ExecuteStep__consume__support_crm" | "ExecuteStep__consume__support_email" | "ExecuteStep__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -692,6 +692,8 @@ export interface StepExecutorFunctionMap {
   ExecuteStep: { args: Parameters<typeof ExecuteStep>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep>>; };
   ExecuteStep__active__support_crm: { args: Parameters<typeof ExecuteStep__active__support_crm>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep__active__support_crm>>; };
   ExecuteStep__active__support_email: { args: Parameters<typeof ExecuteStep__active__support_email>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep__active__support_email>>; };
+  ExecuteStep__consume__support_crm: { args: Parameters<typeof ExecuteStep__consume__support_crm>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep__consume__support_crm>>; };
+  ExecuteStep__consume__support_email: { args: Parameters<typeof ExecuteStep__consume__support_email>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep__consume__support_email>>; };
   ExecuteStep__entry: { args: Parameters<typeof ExecuteStep__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ExecuteStep__entry>>; };
 }
 

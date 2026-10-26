@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use baml_rt_hash::AgentIdentityDigest;
 pub use baml_rt_id::{
     ConstantConstructible, ConstantId, DerivedConstructible, DerivedId, ExternalConstructible,
     ExternalId, MonotonicConstructible, MonotonicId, ProvActivitySemantics, ProvAgentSemantics,
@@ -18,6 +19,15 @@ pub use baml_rt_id::{
     ProvKind, ProvVocabularyType, TemporalConstructible, TemporalId, UuidConstructible, UuidId,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// RFC 4122 URL namespace. Used only to derive [`AGENTIUM_AGENT_NAMESPACE`].
+#[cfg(test)]
+const NAMESPACE_URL: Uuid = uuid::uuid!("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+
+/// Fixed domain separator for every Agentium agent identity.
+/// UUIDv5(`NAMESPACE_URL`, `"urn:agentium:agent-id"`).
+pub const AGENTIUM_AGENT_NAMESPACE: Uuid = uuid::uuid!("901413be-e052-5702-98d9-9e382499c0b0");
 
 macro_rules! define_id_type {
     ($(#[$doc:meta])* $name:ident) => {
@@ -165,14 +175,12 @@ impl ContextId {
     pub fn for_a2a_child(
         caller_context_id: &ContextId,
         target_package: &str,
-        target_instance_id: &str,
         child_task_id: &TaskId,
     ) -> Self {
         Self(format!(
-            "a2a:{caller}:{pkg}/{inst}:{child}",
+            "a2a:{caller}:{pkg}:{child}",
             caller = caller_context_id.as_str(),
             pkg = target_package,
-            inst = target_instance_id,
             child = child_task_id.as_str(),
         ))
     }
@@ -264,6 +272,17 @@ impl From<&str> for MessageId {
 impl AgentId {
     pub fn from_uuid(id: UuidId) -> Self {
         Self(id.to_string())
+    }
+
+    /// Derive the stable identity of a packaged agent from its behavior digest.
+    pub fn from_identity_digest(digest: &AgentIdentityDigest) -> Self {
+        Self(
+            Uuid::new_v5(
+                &AGENTIUM_AGENT_NAMESPACE,
+                format!("urn:agentium:agent-id:{}", digest.as_str()).as_bytes(),
+            )
+            .to_string(),
+        )
     }
 }
 
@@ -433,6 +452,14 @@ mod tests {
     }
 
     #[test]
+    fn namespace_matches_documented_derivation() {
+        assert_eq!(
+            AGENTIUM_AGENT_NAMESPACE,
+            Uuid::new_v5(&NAMESPACE_URL, b"urn:agentium:agent-id"),
+        );
+    }
+
+    #[test]
     fn task_id_live_stream_constructor_is_deterministic() {
         let context_id = ContextId::new(730, 2);
         let message_id = MessageId::from("dispatch-echo-resume-msg");
@@ -467,11 +494,10 @@ mod tests {
     fn context_id_a2a_child_constructor_is_stable_per_child_task() {
         let caller = ContextId::new(88, 1);
         let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let context_id =
-            ContextId::for_a2a_child(&caller, "responder-agent", "default", &child_task_id);
+        let context_id = ContextId::for_a2a_child(&caller, "responder-agent", &child_task_id);
         assert_eq!(
             context_id.as_str(),
-            "a2a:ctx-88-1:responder-agent/default:a2a-child-fixed"
+            "a2a:ctx-88-1:responder-agent:a2a-child-fixed"
         );
     }
 

@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use baml_rt_conversation::view::UserSpeakerKind;
 use baml_rt_core::{
-    AgentDispatchRoutingKey, AgentInstanceId, AgentPackageName, AgentRouteKey, DispatchTarget,
-    DispatchWorkUnit, EventSchemaVersion, EventSourceKind, HostIngressRecorder, ProducedEvent,
-    RuntimeScope,
+    AgentDispatchRoutingKey, AgentPackageName, AgentRouteKey, DispatchTarget, DispatchWorkUnit,
+    EventSchemaVersion, EventSourceKind, HostIngressRecorder, ProducedEvent, RuntimeScope,
     dispatch_ingress::dispatch_unit_task_id,
     event_subscription::EventSourceKey,
     host_source_records_body::format_source_records_unit_body,
@@ -33,10 +32,7 @@ use test_support::testing::provenance_fixtures::build_isolated_store;
 use uuid::Uuid;
 
 fn test_route(package: &str) -> AgentRouteKey {
-    AgentRouteKey::new(
-        AgentPackageName::parse(package).expect("package"),
-        AgentInstanceId::default(),
-    )
+    AgentRouteKey::new(AgentPackageName::parse(package).expect("package"))
 }
 
 fn dispatch_target(package: &str, agent_id: AgentId) -> DispatchTarget {
@@ -369,10 +365,7 @@ async fn host_dispatch_accepted_links_booted_runtime_instance() {
     let mermaid = baml_rt_provenance::graph_export::sequence::render_sequence_diagram(&exported);
     let clickup_lifelines = mermaid
         .lines()
-        .filter(|line| {
-            line.trim_start()
-                .starts_with("participant clickup_agent_1_0_0 ")
-        })
+        .filter(|line| line.trim_start().starts_with("participant clickup_agent "))
         .count();
     assert_eq!(
         clickup_lifelines, 1,

@@ -4,9 +4,8 @@
 
 //! HTTP API surface for BAML agent routing and discovery.
 //!
-//! Exposes strict routes `/agents` (discovery) and `/agents/{agent_package}/{agent_instance_id}/a2a`
-//! (SSE streaming JSON-RPC responses).
-//! (A2A JSON-RPC forward). Delegates to an internal [`AgentRegistry`](baml_rt_a2a::AgentRegistry) implementation.
+//! Exposes strict routes `/agents` (discovery) and `/agents/{agent_package}/a2a`
+//! (SSE streaming JSON-RPC responses). Delegates to an internal [`AgentRegistry`](baml_rt_a2a::AgentRegistry) implementation.
 
 pub mod cluster_agents;
 pub mod cluster_deploy;

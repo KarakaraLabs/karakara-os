@@ -21,6 +21,7 @@ use baml_rt_semiotic::CitationIntegrityAssessment;
 use baml_rt_tools::prompt_message_char_count;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Value as JsonValue};
+use sha2::{Digest, Sha256};
 
 use crate::{
     host_ingress_identity::{
@@ -44,6 +45,10 @@ static EVENT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn now_millis() -> u64 {
     baml_rt_core::now_unix_ms(clock_events::PROVENANCE_EVENT)
+}
+
+fn sha256_hex(input: String) -> String {
+    format!("{:x}", Sha256::digest(input.as_bytes()))
 }
 
 fn seed_event_counter() -> u64 {
@@ -390,12 +395,23 @@ pub enum ProvEventData {
     },
     AgentBooted {
         agent_id: AgentId,
+        /// Package name, retained as AgentType for the existing public event API.
         agent_type: AgentType,
+        /// Repository-assigned package version.
         agent_version: String,
-        archive_path: String,
+        /// SHA-256 identity digest over behavior-defining package content.
+        identity_digest: String,
+        /// SHA-256 over the stored package bytes.
+        artifact_hash: String,
+        /// Canonical repository content hash for this published entry.
+        deployment_content_hash: String,
+        /// Runner that owns this process lifetime.
+        runner_id: String,
     },
     AgentStopped {
         agent_id: AgentId,
+        /// Anchor of the AgentBooted event this stop closes.
+        boot_event_id: ActivityAnchorId,
         reason: String,
     },
     /// Existential only: task entity exists. Idempotent. No agent, no execution.
@@ -408,6 +424,11 @@ pub enum ProvEventData {
         task_id: TaskId,
         agent_id: AgentId,
         context_id: ContextId,
+        /// Event-owned boot that executes this task. Carried explicitly so a
+        /// rolling deployment with several live boots of one stable `AgentId`
+        /// cannot attribute the execution to another runner's process lifetime.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boot_event_id: Option<ActivityAnchorId>,
     },
     /// Agent finishes (or abandons). May not occur.
     TaskExecutionEnded {
@@ -1283,11 +1304,39 @@ impl ProvEvent {
         })
     }
 
+    /// Legacy convenience constructor for tests and ephemeral agents.
+    ///
+    /// Production callers must use [`Self::agent_booted_with_identity`]. The
+    /// derived values keep old test fixtures valid while still registering a
+    /// complete immutable Agent and AgentArtifact pair.
     pub fn agent_booted(
         agent_id: AgentId,
         agent_type: AgentType,
         agent_version: String,
         archive_path: String,
+    ) -> Self {
+        let digest = sha256_hex(format!("{}:{archive_path}", agent_id.as_str()));
+        Self::agent_booted_with_identity(
+            agent_id,
+            agent_type,
+            agent_version,
+            digest.clone(),
+            digest,
+            archive_path,
+            "ephemeral".to_string(),
+        )
+    }
+
+    /// Records a boot with the exact immutable deployment metadata.
+    #[allow(clippy::too_many_arguments)]
+    pub fn agent_booted_with_identity(
+        agent_id: AgentId,
+        agent_type: AgentType,
+        agent_version: String,
+        identity_digest: String,
+        artifact_hash: String,
+        deployment_content_hash: String,
+        runner_id: String,
     ) -> Self {
         ProvEvent::AgentBooted(AgentBootedEvent {
             id: next_activity_anchor_id(),
@@ -1296,16 +1345,27 @@ impl ProvEvent {
                 agent_id,
                 agent_type,
                 agent_version,
-                archive_path,
+                identity_digest,
+                artifact_hash,
+                deployment_content_hash,
+                runner_id,
             },
         })
     }
 
-    pub fn agent_stopped(agent_id: AgentId, reason: String) -> Self {
+    pub fn agent_stopped(
+        agent_id: AgentId,
+        boot_event_id: ActivityAnchorId,
+        reason: String,
+    ) -> Self {
         ProvEvent::AgentStopped(AgentStoppedEvent {
             id: next_activity_anchor_id(),
             timestamp_ms: now_millis(),
-            data: ProvEventData::AgentStopped { agent_id, reason },
+            data: ProvEventData::AgentStopped {
+                agent_id,
+                boot_event_id,
+                reason,
+            },
         })
     }
 
@@ -1329,6 +1389,16 @@ impl ProvEvent {
         task_id: TaskId,
         agent_id: AgentId,
     ) -> Self {
+        Self::task_execution_started_under_boot(context_id, task_id, agent_id, None)
+    }
+
+    /// Agent begins executing under a specific event-owned boot.
+    pub fn task_execution_started_under_boot(
+        context_id: ContextId,
+        task_id: TaskId,
+        agent_id: AgentId,
+        boot_event_id: Option<ActivityAnchorId>,
+    ) -> Self {
         ProvEvent::Task(TaskScopedEvent {
             id: next_activity_anchor_id(),
             context_id: context_id.clone(),
@@ -1338,6 +1408,7 @@ impl ProvEvent {
                 task_id,
                 agent_id,
                 context_id,
+                boot_event_id,
             },
         })
     }
@@ -1737,7 +1808,7 @@ impl ProvEvent {
             HostIngressKind::DispatchAccepted,
             &routing_key,
             target.package(),
-            target.instance(),
+            "default",
             HostIngressSourceRef::from_fields(&source_kind, &source_key),
         );
         ProvEvent::Global(GlobalEvent {
@@ -1748,7 +1819,7 @@ impl ProvEvent {
                 routing_key,
                 schema_version,
                 target_package: target.package().to_string(),
-                target_instance: target.instance().to_string(),
+                target_instance: "default".to_string(),
                 source_kind,
                 source_key,
                 producer_key,
@@ -1773,7 +1844,7 @@ impl ProvEvent {
             HostIngressKind::from_dispatch_failure(failure_kind),
             routing_key,
             target.package(),
-            target.instance(),
+            "default",
             source,
         );
         let (source_kind, source_key) = match &outcome.source {

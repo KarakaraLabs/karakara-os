@@ -23,7 +23,7 @@ use axum::{
 use http_api_problem::HttpApiProblem;
 
 use crate::{
-    commands::{ForkCommand, PublishCommand, PublishResult},
+    commands::{DraftResult, ForkCommand, PublishCommand},
     entry::{RepositoryEntry, RepositoryEntryHeader, Tag},
     http::{
         AddTagRequest, BlobPath, EntriesQuery, EntriesQueryMode, EntriesResponse,
@@ -127,20 +127,20 @@ pub async fn list_versions(
     Ok(Json(ListVersionsResponse { name, versions }))
 }
 
-pub async fn publish(
+pub async fn publish_draft(
     State(svc): State<RepoState>,
     Json(cmd): Json<PublishCommand>,
-) -> HttpResult<PublishResult> {
-    let result = svc.publish(cmd).await.map_err(HttpApiProblem::from)?;
+) -> HttpResult<DraftResult> {
+    let result = svc.publish_draft(cmd).await.map_err(HttpApiProblem::from)?;
     Ok(Json(result))
 }
 
-/// Fork an existing entry to create a new lineage branch (POST /repository/fork, operator-authenticated).
-pub async fn fork(
+/// Fork an existing entry into a source-only draft lineage (POST /repository/drafts/fork).
+pub async fn fork_draft(
     State(svc): State<RepoState>,
     Json(cmd): Json<ForkCommand>,
-) -> HttpResult<PublishResult> {
-    let result = svc.fork(cmd).await.map_err(HttpApiProblem::from)?;
+) -> HttpResult<DraftResult> {
+    let result = svc.fork_draft(cmd).await.map_err(HttpApiProblem::from)?;
     Ok(Json(result))
 }
 

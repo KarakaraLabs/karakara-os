@@ -2,6 +2,53 @@
 
 This document anchors the contracts referenced from [`agent-conversation-crate.md`](../reference/agent-conversation-crate.md) and [`crates/baml-rt-conversation/src/lib.rs`](../crates/baml-rt-conversation/src/lib.rs). The crate is **pure** (no Surreal / graph I/O); producers live in `baml-rt-provenance` and consumers include BAML prompts (**`ctx.tags['conversation_transcript']`** — formatted from projected rows) and the HTTP API (JSON snapshots of those rows).
 
+## Agent identity and conversation continuity
+
+Conversation history, task binding, and prompt projection are keyed by the
+stable `AgentId`, not by a process or boot. `AgentId` is derived from the agent's
+behavior-defining source content:
+
+```text
+AgentId = UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + AgentIdentityDigest)
+```
+
+The identity digest covers the packaged `manifest.json` projection (without
+`version` or `signature`), authored `src/**/*.ts`, authored and generated
+`baml_src/**/*.baml`, `baml_src/_baml_tool_schema_catalog.txt`, and
+`session_plan_functions.json`. It excludes repository version, `dist/**`,
+`**/*.d.ts`, source maps, MCP/external-tool snapshots, and package bytes that
+have no runtime effect.
+
+What that means in practice:
+
+- **Stable across boots and replicas.** Restarting, relocating, or redeploying
+  the same packaged content keeps the same `AgentId`, so history remains attached
+  to the same agent.
+- **New on behavior-defining source change.** Editing a prompt, tool list, or
+  authored TypeScript produces a new identity. A repository version bump, a
+  recompile, or a different gzip level does not.
+- **Exact bytes use `ArtifactHash`.** The artifact hash covers the stored
+  `.tar.gz` blob. Two artifacts can share one `AgentId` and still contain
+  different compiled output; use the artifact hash in provenance when the
+  executed bytes matter.
+
+Provenance records a stable `Agent` node (`agent_id`, identity digest, package
+name) and a separate `AgentArtifact` node per stored blob (`artifact_hash`,
+deployment content hash, repository version). Every boot and stop is its own
+event-owned activity, and history reads use `agent_id` only. The stable agent
+registry does not carry repository version; version belongs to the artifact and
+the boot that executed the task. `TaskExecutionStarted` carries the boot event
+ID explicitly, so a rolling deployment with several live boots of one `AgentId`
+cannot attribute work to another runner's process lifetime. The digest and
+behavior-set filter live in [`agent_identity.rs`](../../crates/baml-rt-hash/src/agent_identity.rs)
+and [`identity.rs`](../../crates/baml-rt-repository/src/identity.rs);
+`AgentId` derivation lives in [`ids.rs`](../../crates/baml-rt-core/src/ids.rs).
+
+**Continuity across turns is not part of this change.** This document still
+specifies how a single conversation's history is written, ordered, and
+projected. It does not define execution-context continuity across turns,
+delegation lineage, participant-scoped prompt reads, or compaction keys.
+
 ## Three boundaries (normative)
 
 These separate **what happened** in the graph from **how the model is guided** in a given phase, and from **ephemeral ref labels** in the prompt.

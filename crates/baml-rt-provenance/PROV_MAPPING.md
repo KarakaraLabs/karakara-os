@@ -17,10 +17,17 @@ Identifiers are constructed to match the semantics of the thing they model:
 
 - **Derived IDs**: deterministic from domain identifiers (e.g. `task:<task_id>`,
   `message_processing:<message_id>`, `llm_call:<activity_anchor>`).
-- **Runtime IDs**: agent runtime identity is `AgentId` (UUID) and anchors
-  `agent:<agent_id>`, `agent_instance:<agent_id>`, `agent_boot:<agent_id>`.
-- **Archive IDs**: `archive:<package_identity>` derives from package identity
-  (manifest `name@version` or a package hash), never from temp extraction paths.
+- **Agent IDs**: `agent:<agent_id>` is the stable packaged-agent identity.
+  `AgentId` is a UUIDv5 derived from the behavior-set identity digest, so it is
+  stable across boots, replicas, relocations, and republishes of identical
+  content, and changes when behavior-defining source changes.
+- **Boot and stop IDs**: `agent_boot:<agent_id>:<boot_event_id>` and
+  `agent_stop:<agent_id>:<stop_anchor>` are event-owned activities. Sequential
+  boots of one stable agent stay distinct.
+- **Artifact IDs**: `agent_artifact:<artifact_hash>` is the exact stored
+  `.tar.gz` blob. It is independent of the agent identity: two artifacts can
+  share one `AgentId` and ship different executable bytes. Repository version
+  lives on the artifact and boot activity, not on the stable agent registry.
 - **Runner ID**: `agent:runner` is a constant control-plane identity.
 
 ### Planning aliases (intent / plan / step)
@@ -80,12 +87,15 @@ These are labels applied **on top of** the PROV edges without changing direction
   - `LlmCall` -> `LlmPrompt` (role `a2a:prompt`) = `WAS_USED_BY`
   - `ToolCall` -> `ToolArgs` (role `a2a:args`) = `WAS_USED_BY`
   - `ToolCall` -> `DelegationTarget` (role `a2a:delegation_target`) = `WAS_DELEGATED_TO`
-  - `AgentBoot` -> `AgentArchive` (role `a2a:archive`) = `WAS_BOOTSTRAPPED_BY`
+  - `AgentBoot` -> `AgentArtifact` (role `a2a:archive`) = `USED`
 - `WAS_GENERATED_BY` (entity -> activity):
   - `Message` -> `A2AMessageProcessing` = `WAS_EMITTED_BY`
   - `Artifact` -> `A2ATaskExecution` = `WAS_GENERATED_BY`
   - `A2ATask` -> `A2ATaskExecution` = `WAS_CREATED_BY`
-  - `AgentRuntimeInstance` -> `AgentBoot` = `WAS_SPAWNED_BY`
+  - `Agent` is a stable registration; boot and stop activities are associated
+    with it and never regenerate it
+  - `AgentArtifact` -> `Agent` = `REALIZES`
+  - `AgentStop` -> `AgentBoot` = `WAS_INFORMED_BY` (the stop names the boot it closes)
 - `WAS_ASSOCIATED_WITH` (activity -> agent runtime instance):
   - `prov:role = executing_agent` = `WAS_EXECUTED_BY`
   - `prov:role = invoking_agent` = `WAS_INVOKED_BY`
@@ -119,7 +129,9 @@ semantics intact.
 | `ToolCallStarted` | `ToolCall` activity, `ToolArgs` entity, optional `Message` entity | `ToolCall` -> `ToolArgs` (`WAS_USED_BY`), optional `ToolCall` -> `Message` (`WAS_CONSUMED_BY`) | `A2ATaskExecution` -> `ToolCall` (`WAS_EXECUTED_BY`) or `A2AMessageProcessing` -> `ToolCall` (`WAS_EXECUTED_BY`) |
 | `ToolCallCompleted` | `ToolCall` activity, `ToolArgs` entity, optional `Message` entity | `ToolCall` -> `ToolArgs` (`WAS_USED_BY`), optional `ToolCall` -> `Message` (`WAS_CONSUMED_BY`) | `A2ATaskExecution` -> `ToolCall` (`WAS_EXECUTED_BY`) or `A2AMessageProcessing` -> `ToolCall` (`WAS_EXECUTED_BY`) |
 | `TaskExists` | `A2ATask` entity | Idempotent upsert | — |
-| `TaskExecutionStarted` | `A2ATaskExecution` activity | `A2ATask` -> `A2ATaskExecution` (`WAS_CREATED_BY`), `A2ATaskExecution` -> `AgentRuntimeInstance` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | — |
+| `AgentBooted` | `Agent` entity, `AgentArtifact` entity, `AgentBoot` activity | `AgentBoot` -> `AgentArtifact` (`USED`, role `a2a:archive`), `AgentBoot` -> `Agent` (`WAS_ASSOCIATED_WITH`) | `AgentArtifact` -> `Agent` (`REALIZES`) |
+| `AgentStopped` | `AgentStop` activity | `AgentStop` -> `Agent` (`WAS_ASSOCIATED_WITH`) | `AgentStop` -> `AgentBoot` (`WAS_INFORMED_BY`) |
+| `TaskExecutionStarted` | `A2ATaskExecution` activity | `A2ATask` -> `A2ATaskExecution` (`WAS_CREATED_BY`), `A2ATaskExecution` -> `Agent` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | `A2ATaskExecution` -> `AgentBoot` (`EXECUTED_UNDER_BOOT`) from the explicit boot event ID on the event |
 | `TaskExecutionEnded` | `A2ATaskExecution` end_time | Updates existing activity | — |
 | `TaskStatusChanged` | `A2ATaskExecution` activity, `A2ATaskState` entities | `A2ATaskExecution` -> `A2ATaskState` (`WAS_UPDATED_BY`), `A2ATaskState(new)` -> `A2ATaskState(old)` (`WAS_DERIVED_FROM` / STATUS_TRANSITION). One node per (task_id, status); idempotent MERGE. | — |
 | `TaskArtifactGenerated` | `A2ATaskExecution` activity, `Artifact` entity, `A2ATask` entity | `Artifact` -> `A2ATaskExecution` (`WAS_GENERATED_BY`) | `A2ATask` -> `Artifact` (`WAS_GENERATED_BY`) |

@@ -21,7 +21,7 @@ use axum::{
 };
 use baml_rt_a2a::RegistryDispatchPort;
 use baml_rt_core::{
-    A2aWireRequest, AgentDispatchRequest, AgentInstanceId, AgentPackageName, AgentRouteKey,
+    A2aWireRequest, AgentDispatchRequest, AgentPackageName, AgentRouteKey, ArtifactHash,
     BamlRtError, DeploymentContentHash, DeploymentStatus, ProducedEvent,
     ids::{AgentId, ContextId, TaskId},
     join_error_message,
@@ -606,7 +606,7 @@ pub async fn post_migrate(
     result
 }
 
-/// Forward A2A JSON-RPC request (POST /agents/{agent_package}/{agent_instance_id}/a2a).
+/// Forward A2A JSON-RPC request (POST /agents/{agent_package}/a2a).
 ///
 /// Streams **SSE** (`text/event-stream`): each event `data:` line is one JSON-RPC 2.0 response object (same objects as the historical buffered JSON array).
 ///
@@ -615,11 +615,10 @@ pub async fn post_migrate(
 /// belongs at the ingress. Control-plane endpoints are protected by `ClusterAuthLayer`.
 #[utoipa::path(
     post,
-    path = "/agents/{agent_package}/{agent_instance_id}/a2a",
+    path = "/agents/{agent_package}/a2a",
     tag = "agents",
     params(
-        ("agent_package" = String, Path, description = "Agent package identifier (e.g. manifest name)"),
-        ("agent_instance_id" = String, Path, description = "Agent instance identifier")
+        ("agent_package" = String, Path, description = "Agent package identifier (e.g. manifest name)")
     ),
     request_body = Value,
     responses(
@@ -633,7 +632,7 @@ pub async fn post_a2a(
     State(state): State<Arc<ApiState>>,
     ingress_ext: Option<Extension<IngressServiceInstanceId>>,
     headers: HeaderMap,
-    axum::extract::Path((agent_package, agent_instance_id)): axum::extract::Path<(String, String)>,
+    axum::extract::Path(agent_package): axum::extract::Path<String>,
     Json(body): Json<Value>,
 ) -> HttpResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
     let start = Instant::now();
@@ -646,15 +645,8 @@ pub async fn post_a2a(
         metrics::record_request("post_a2a", "bad_request", start.elapsed());
         problem(400, "Bad Request", "agent_package must match [A-Za-z0-9_-]")
     })?;
-    let instance_id = AgentInstanceId::parse(&agent_instance_id).ok_or_else(|| {
-        metrics::record_request("post_a2a", "bad_request", start.elapsed());
-        problem(
-            400,
-            "Bad Request",
-            "agent_instance_id must match [A-Za-z0-9_-]",
-        )
-    })?;
-    let key = AgentRouteKey::new(package_name, instance_id);
+    let key = AgentRouteKey::new(package_name);
+    let telemetry_instance = "default";
 
     let local_service_instance_id = baml_rt_observability::service_instance_id();
     // `forwarded` is advisory — see `otel_middleware` module doc for the
@@ -669,7 +661,7 @@ pub async fn post_a2a(
 
     let span = spans::post_a2a(
         &key.agent_package,
-        &key.agent_instance_id,
+        telemetry_instance,
         forwarded,
         ingress_service_instance_id,
         serving_service_instance_id,
@@ -680,7 +672,7 @@ pub async fn post_a2a(
         metrics::record_agent_http_request(
             "post_a2a",
             &key.agent_package,
-            &key.agent_instance_id,
+            telemetry_instance,
             forwarded,
             ingress_service_instance_id,
             result,
@@ -703,8 +695,28 @@ pub async fn post_a2a(
         .and_then(|id| lookup_eval_session(state.as_ref(), id))
         .and_then(|spec| spec.model);
 
+    let expected_artifact_hash = match headers
+        .get("x-agentium-expected-artifact-hash")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(raw) => Some(raw.parse::<ArtifactHash>().map_err(|e| {
+            record_metric("bad_request");
+            problem(
+                400,
+                "Bad Request",
+                format!("invalid expected artifact hash: {e}"),
+            )
+        })?),
+        None => None,
+    };
+
     let wire = A2aWireRequest::from(body);
-    let run = async { state.registry.handle_a2a_stream(&key, wire).await };
+    let run = async {
+        state
+            .registry
+            .handle_a2a_stream_with_precondition(&key, wire, expected_artifact_hash.as_ref())
+            .await
+    };
     let stream_result = match eval_model {
         Some(model) => baml_rt_llm_config::with_eval_model_override(Some(model), run).await,
         None => run.await,
@@ -723,7 +735,7 @@ pub async fn post_a2a(
                 metrics::record_agent_http_request(
                     "post_a2a",
                     &key_metrics.agent_package,
-                    &key_metrics.agent_instance_id,
+                    telemetry_instance,
                     forwarded,
                     ingress_metrics_id.as_str(),
                     "success",
@@ -733,8 +745,14 @@ pub async fn post_a2a(
             Ok(Sse::new(sse_stream).keep_alive(KeepAlive::default()))
         }
         Err(e) => {
+            if expected_artifact_hash.is_some()
+                && e.to_string().contains("artifact precondition failed")
+            {
+                record_metric("precondition_failed");
+                return Err(problem(412, "Precondition Failed", e.to_string()));
+            }
             record_metric(result_label_for_domain_error(&e));
-            Err(domain_to_problem(&e, &agent_package, &agent_instance_id))
+            Err(domain_to_problem(&e, &agent_package))
         }
     }
 }
@@ -1459,20 +1477,17 @@ pub async fn get_provenance_lifecycle_events(
     .await
 }
 
-fn domain_to_problem(
-    e: &BamlRtError,
-    agent_package: &str,
-    agent_instance_id: &str,
-) -> HttpApiProblem {
+fn domain_to_problem(e: &BamlRtError, agent_package: &str) -> HttpApiProblem {
     let (status, title, detail) = match e {
         BamlRtError::AgentNotFound(_) => (
             404u16,
             "Not Found",
-            format!("Agent {agent_package}/{agent_instance_id} not found"),
+            format!("Agent {agent_package} not found"),
         ),
         BamlRtError::AgentDraining(msg) => (503u16, "Service Unavailable", msg.clone()),
         BamlRtError::Conflict(msg) => (409u16, "Conflict", msg.clone()),
         BamlRtError::InvalidArgument(msg) => (400u16, "Bad Request", msg.clone()),
+        BamlRtError::UnsupportedAgentInstance(msg) => (400u16, "Bad Request", msg.clone()),
         BamlRtError::SessionLifecycle(
             baml_rt_core::SessionLifecycleError::ToolSessionNotFound { session_id },
         ) => (
@@ -1493,7 +1508,6 @@ fn domain_to_problem(
             tracing::warn!(
                 error = ?e,
                 agent_package = %agent_package,
-                agent_instance_id = %agent_instance_id,
                 "Unmapped BamlRtError converted to 500"
             );
             (500u16, "Internal Server Error", e.to_string())
@@ -1502,14 +1516,13 @@ fn domain_to_problem(
     problem(status, title, detail)
 }
 
-/// Deterministic host-to-agent delivery: POST /agents/{agent_package}/{agent_instance_id}/dispatch
+/// Deterministic host-to-agent delivery: POST /agents/{agent_package}/dispatch
 #[utoipa::path(
     post,
-    path = "/agents/{agent_package}/{agent_instance_id}/dispatch",
+    path = "/agents/{agent_package}/dispatch",
     tag = "agents",
     params(
-        ("agent_package" = String, Path, description = "Agent package name"),
-        ("agent_instance_id" = String, Path, description = "Agent instance ID"),
+        ("agent_package" = String, Path, description = "Agent package name")
     ),
     request_body = crate::openapi::AgentDispatchRequestDto,
     responses(
@@ -1521,7 +1534,7 @@ fn domain_to_problem(
 pub async fn post_dispatch(
     State(state): State<Arc<crate::router::ApiState>>,
     ingress_ext: Option<Extension<IngressServiceInstanceId>>,
-    axum::extract::Path((agent_package, agent_instance_id)): axum::extract::Path<(String, String)>,
+    axum::extract::Path(agent_package): axum::extract::Path<String>,
     Json(body): Json<crate::openapi::AgentDispatchRequestDto>,
 ) -> impl IntoResponse {
     let start = Instant::now();
@@ -1539,18 +1552,8 @@ pub async fn post_dispatch(
                 .into_response();
         }
     };
-    let instance_id = match AgentInstanceId::parse(&agent_instance_id) {
-        Some(i) => i,
-        None => {
-            metrics::record_request("post_dispatch", "bad_request", start.elapsed());
-            return (
-                AxumStatus::BAD_REQUEST,
-                "agent_instance_id must match [A-Za-z0-9_-]",
-            )
-                .into_response();
-        }
-    };
-    let key = AgentRouteKey::new(package_name, instance_id);
+    let key = AgentRouteKey::new(package_name);
+    let telemetry_instance = "default";
 
     let local_service_instance_id = baml_rt_observability::service_instance_id();
     // `forwarded` is advisory — see `otel_middleware` module doc.
@@ -1563,7 +1566,7 @@ pub async fn post_dispatch(
 
     let span = spans::post_dispatch(
         &key.agent_package,
-        &key.agent_instance_id,
+        telemetry_instance,
         forwarded,
         ingress_service_instance_id,
         serving_service_instance_id,
@@ -1574,7 +1577,7 @@ pub async fn post_dispatch(
         metrics::record_agent_http_request(
             "post_dispatch",
             &key.agent_package,
-            &key.agent_instance_id,
+            telemetry_instance,
             forwarded,
             ingress_service_instance_id,
             result,
@@ -1598,7 +1601,7 @@ pub async fn post_dispatch(
         }
         Err(e) => {
             record_metric(result_label_for_domain_error(&e));
-            domain_to_problem(&e, &agent_package, &agent_instance_id).into_response()
+            domain_to_problem(&e, &agent_package).into_response()
         }
     }
 }

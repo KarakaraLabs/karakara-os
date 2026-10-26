@@ -13,6 +13,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_tools::{
     external_tools::ExternalToolSnapshot,
     mcp_snapshot::{Digest, McpApprovalState, McpServerSnapshot},
@@ -26,11 +27,11 @@ use surrealdb::{
 use crate::{
     entry::{
         ChangeRationale, NewEntry, RepositoryEntry, RepositoryEntryHeader, SourceBundle, Tag,
-        Timestamp,
+        Timestamp, VersionReservation,
     },
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Generation, LineageEdgeId, Version, VersionRef},
+    ids::{AgentName, ArtifactHash, ContentHash, Generation, LineageEdgeId, Version, VersionRef},
     lineage::{
         AncestryNode, EdgeDescription, LineageEdge, LineageKind, LineageSubgraph, Parentage,
     },
@@ -51,6 +52,7 @@ const NS: &str = "baml";
 const DB_NAME: &str = "repository";
 
 const TBL_ENTRIES: &str = "entries";
+const TBL_VERSION_RESERVATIONS: &str = "entry_version_reservations";
 const TBL_TAGS: &str = "tags";
 const TBL_EDGES: &str = "lineage_edges";
 const TBL_BLOBS: &str = "blobs";
@@ -65,6 +67,8 @@ const TBL_EXT_SNAPSHOT_BLOBS: &str = "external_tool_snapshot_blobs";
 const SCHEMA_QUERIES: &[&str] = &[
     "DEFINE TABLE IF NOT EXISTS entries SCHEMAFULL",
     "DEFINE FIELD IF NOT EXISTS hash ON entries TYPE string",
+    "DEFINE FIELD IF NOT EXISTS artifact_hash ON entries TYPE option<string>",
+    "DEFINE FIELD IF NOT EXISTS identity_digest ON entries TYPE option<string>",
     "DEFINE FIELD IF NOT EXISTS agent_name ON entries TYPE string",
     "DEFINE FIELD IF NOT EXISTS version ON entries TYPE int",
     "DEFINE FIELD IF NOT EXISTS generation ON entries TYPE int",
@@ -79,6 +83,12 @@ const SCHEMA_QUERIES: &[&str] = &[
     "DEFINE FIELD IF NOT EXISTS source_text ON entries TYPE string",
     "DEFINE INDEX IF NOT EXISTS idx_entries_hash ON entries FIELDS hash UNIQUE",
     "DEFINE INDEX IF NOT EXISTS idx_entries_name_version ON entries FIELDS agent_name, version UNIQUE",
+    "DEFINE TABLE IF NOT EXISTS entry_version_reservations SCHEMAFULL",
+    "DEFINE FIELD IF NOT EXISTS agent_name ON entry_version_reservations TYPE string",
+    "DEFINE FIELD IF NOT EXISTS version ON entry_version_reservations TYPE int",
+    "DEFINE FIELD IF NOT EXISTS holder ON entry_version_reservations TYPE string",
+    "DEFINE FIELD IF NOT EXISTS expires_at_ms ON entry_version_reservations TYPE int",
+    "DEFINE INDEX IF NOT EXISTS idx_version_reservation_unique ON entry_version_reservations FIELDS agent_name, version UNIQUE",
     "DEFINE TABLE IF NOT EXISTS tags SCHEMAFULL",
     "DEFINE FIELD IF NOT EXISTS entry_hash ON tags TYPE string",
     "DEFINE FIELD IF NOT EXISTS tag ON tags TYPE string",
@@ -177,6 +187,9 @@ fn map_surreal_write(e: surrealdb::Error) -> RepositoryError {
         source: Box::new(e),
     }
 }
+
+/// How many times a publisher retries a reservation it lost to a concurrent publisher.
+const VERSION_RESERVATION_ATTEMPTS: u32 = 8;
 
 fn map_surreal_read(e: surrealdb::Error) -> RepositoryError {
     RepositoryError::StorageRead {
@@ -406,8 +419,337 @@ impl SurrealStore {
         Ok(())
     }
 
+    /// Insert an entry at an already-decided version.
+    ///
+    /// Every publish path decides the version before writing: either from a reservation or
+    /// from [`next_version`](MetadataStore::next_version). The manifest is rewritten with that
+    /// version before the content hash is computed, so the artifact and the entry agree.
+    async fn insert_entry_at(&self, entry: &NewEntry, version: Version) -> Result<RepositoryEntry> {
+        let name = entry.name.as_str().to_string();
+        let next_version = version.as_u32();
+
+        // Repository publish path always assigns the version in the manifest
+        // and computes the content hash from that canonical source bundle.
+        let source_for_storage = entry.source.with_manifest_version(next_version);
+        let hash = source_for_storage.compute_hash();
+        let hash_str = hash.as_str().to_string();
+
+        let mut dup_resp = self
+            .db
+            .query(format!(
+                "SELECT agent_name, version FROM {TBL_ENTRIES} WHERE hash = $hash LIMIT 1"
+            ))
+            .bind(("hash", hash_str.clone()))
+            .await
+            .map_err(map_surreal_read)?;
+        let dup_rows: Vec<Value> = dup_resp.take(0).map_err(map_surreal_read)?;
+        if let Some(row) = dup_rows.first() {
+            let existing_name = row
+                .get("agent_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .parse()
+                .map_err(|e| decode_err(format!("invalid existing agent_name: {e}")))?;
+            let existing_version =
+                Version::new(row.get("version").and_then(Value::as_u64).unwrap_or(1) as u32)
+                    .map_err(|e| decode_err(format!("invalid existing version: {e}")))?;
+            return Err(RepositoryError::DuplicateHash {
+                hash,
+                existing_name,
+                existing_version,
+            });
+        }
+
+        let parentage_json = serde_json::to_string(&entry.parentage)
+            .map_err(|e| decode_err(format!("parentage serialization failed: {e}")))?;
+        let source_json = serde_json::to_string(&source_for_storage)
+            .map_err(|e| decode_err(format!("source serialization failed: {e}")))?;
+        let created_at = crate::service::chrono_now();
+        let description = source_for_storage
+            .manifest
+            .description()
+            .map(str::to_string);
+        let tools_json = serde_json::to_string(
+            &source_for_storage
+                .manifest
+                .tools()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string());
+        let capabilities_json = serde_json::to_string(
+            &source_for_storage
+                .manifest
+                .capabilities()
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string());
+        let manifest_text = build_manifest_text(&source_for_storage);
+        let source_text = build_source_text(&source_for_storage);
+
+        let created = match self
+            .db
+            .query(format!(
+                "CREATE {TBL_ENTRIES} SET \
+                    hash = $hash, \
+                    artifact_hash = $artifact_hash, \
+                    identity_digest = $identity_digest, \
+                    agent_name = $name, \
+                    version = $version, \
+                    generation = $generation, \
+                    parentage_json = $parentage_json, \
+                    source_json = $source_json, \
+                    change_rationale = $change_rationale, \
+                    created_at = $created_at, \
+                    manifest_description = $manifest_description, \
+                    manifest_tools_json = $manifest_tools_json, \
+                    manifest_capabilities_json = $manifest_capabilities_json, \
+                    manifest_text = $manifest_text, \
+                    source_text = $source_text"
+            ))
+            .bind(("hash", hash_str))
+            .bind((
+                "artifact_hash",
+                entry.artifact_hash.as_ref().map(ToString::to_string),
+            ))
+            .bind((
+                "identity_digest",
+                entry.identity_digest.as_ref().map(ToString::to_string),
+            ))
+            .bind(("name", name))
+            .bind(("version", next_version as i64))
+            .bind(("generation", entry.generation.as_u32() as i64))
+            .bind(("parentage_json", parentage_json))
+            .bind(("source_json", source_json))
+            .bind((
+                "change_rationale",
+                entry.change_rationale.as_str().to_string(),
+            ))
+            .bind(("created_at", created_at.as_str().to_string()))
+            .bind(("manifest_description", description))
+            .bind(("manifest_tools_json", tools_json))
+            .bind(("manifest_capabilities_json", capabilities_json))
+            .bind(("manifest_text", manifest_text))
+            .bind(("source_text", source_text))
+            .await
+        {
+            Ok(mut response) => response.take::<Vec<Value>>(0).map(|_| ()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = created {
+            if self
+                .entry_version_exists(&entry.name, version)
+                .await
+                .unwrap_or(false)
+            {
+                return Err(RepositoryError::VersionConflict {
+                    name: entry.name.clone(),
+                    version,
+                });
+            }
+            return Err(map_surreal_write(error));
+        }
+
+        for tag in &entry.tags {
+            let _ = self
+                .db
+                .query(format!(
+                    "CREATE {TBL_TAGS} SET entry_hash = $hash, tag = $tag"
+                ))
+                .bind(("hash", hash.as_str().to_string()))
+                .bind(("tag", tag.as_str().to_string()))
+                .await;
+        }
+
+        Ok(RepositoryEntry {
+            hash: hash.clone(),
+            version_ref: VersionRef {
+                name: entry.name.clone(),
+                version,
+            },
+            artifact_hash: entry.artifact_hash.clone(),
+            identity_digest: entry.identity_digest.clone(),
+            source: source_for_storage,
+            parentage: entry.parentage.clone(),
+            generation: entry.generation,
+            change_rationale: entry.change_rationale.clone(),
+            created_at,
+            tags: entry.tags.clone(),
+        })
+    }
+
     async fn entry_exists(&self, hash: &ContentHash) -> Result<bool> {
         Ok(self.get_by_hash(hash).await?.is_some())
+    }
+
+    /// Highest version present for `name` in `table`, or zero when the lineage has none.
+    async fn latest_version_in(&self, table: &str, name: &AgentName) -> Result<u32> {
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT version FROM {table} WHERE agent_name = $name ORDER BY version DESC LIMIT 1"
+            ))
+            .bind(("name", name.as_str().to_string()))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        Ok(rows
+            .first()
+            .and_then(|row| row.get("version"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32)
+    }
+
+    async fn purge_expired_reservations(&self) -> Result<()> {
+        self.db
+            .query(format!(
+                "DELETE {TBL_VERSION_RESERVATIONS} WHERE expires_at_ms <= time::millis(time::now())"
+            ))
+            .await
+            .map_err(map_surreal_write)?
+            .take::<Vec<Value>>(0)
+            .map_err(map_surreal_write)?;
+        Ok(())
+    }
+
+    /// Create a reservation row. Returns `false` when another publisher holds this version.
+    async fn create_reservation(
+        &self,
+        name: &AgentName,
+        version: Version,
+        holder: &str,
+        ttl_ms: u64,
+    ) -> Result<bool> {
+        let created = match self
+            .db
+            .query(format!(
+                "CREATE {TBL_VERSION_RESERVATIONS} SET agent_name = $name, version = $version, \
+                 holder = $holder, expires_at_ms = time::millis(time::now()) + $ttl_ms"
+            ))
+            .bind(("name", name.as_str().to_string()))
+            .bind(("version", version.as_u32() as i64))
+            .bind(("holder", holder.to_string()))
+            .bind(("ttl_ms", ttl_ms as i64))
+            .await
+        {
+            // Statement errors surface when the response is consumed, not at `.await`.
+            Ok(mut response) => response.take::<Vec<Value>>(0).map(|_| ()),
+            Err(error) => Err(error),
+        };
+        let Err(error) = created else {
+            return Ok(true);
+        };
+        // A concurrent publisher won the unique index for this version. Anything else is a
+        // real storage failure.
+        if self
+            .reservation_exists_for_version(name, version)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(false);
+        }
+        Err(map_surreal_write(error))
+    }
+
+    async fn reservation_exists_for_version(
+        &self,
+        name: &AgentName,
+        version: Version,
+    ) -> Result<bool> {
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT version FROM {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name AND version = $version LIMIT 1"
+            ))
+            .bind(("name", name.as_str().to_string()))
+            .bind(("version", version.as_u32() as i64))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        Ok(!rows.is_empty())
+    }
+
+    /// Mark a live reservation as consumed while keeping its version row in place.
+    ///
+    /// Keeping the row until after the entry insert closes the version gap: a second
+    /// publisher cannot reserve the same version between the ownership check and the
+    /// entry write. An expired publisher also cannot consume, because the update
+    /// carries the expiry predicate.
+    async fn consume_reservation(
+        &self,
+        reservation: &VersionReservation,
+    ) -> Result<Option<String>> {
+        let consumed_holder = format!("consumed:{}", reservation.holder);
+        self.db
+            .query(format!(
+                "UPDATE {TBL_VERSION_RESERVATIONS} SET holder = $consumed_holder \
+                 WHERE agent_name = $name AND version = $version AND holder = $holder \
+                 AND expires_at_ms > time::millis(time::now())"
+            ))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("holder", reservation.holder.clone()))
+            .bind(("consumed_holder", consumed_holder.clone()))
+            .await
+            .map_err(map_surreal_write)?
+            .take::<Vec<Value>>(0)
+            .map_err(map_surreal_write)?;
+
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT version FROM {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
+                 AND version = $version AND holder = $consumed_holder LIMIT 1"
+            ))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("consumed_holder", consumed_holder.clone()))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        Ok((!rows.is_empty()).then_some(consumed_holder))
+    }
+
+    async fn release_consumed_reservation(
+        &self,
+        reservation: &VersionReservation,
+        consumed_holder: &str,
+    ) {
+        let result = self
+            .db
+            .query(format!(
+                "DELETE {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
+                 AND version = $version AND holder = $holder"
+            ))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("holder", consumed_holder.to_string()))
+            .await;
+        if let Err(e) = result {
+            tracing::warn!(
+                agent = %reservation.name,
+                version = reservation.version.as_u32(),
+                error = %e,
+                "failed to delete consumed version reservation; it will expire"
+            );
+        }
+    }
+
+    async fn entry_version_exists(&self, name: &AgentName, version: Version) -> Result<bool> {
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT version FROM {TBL_ENTRIES} WHERE agent_name = $name AND version = $version LIMIT 1"
+            ))
+            .bind(("name", name.as_str().to_string()))
+            .bind(("version", version.as_u32() as i64))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        Ok(!rows.is_empty())
     }
 
     async fn row_by_hash(&self, hash: &ContentHash) -> Result<Option<Value>> {
@@ -502,9 +844,27 @@ impl SurrealStore {
         let source_json = get_required_str(row, "source_json")?;
         let source: SourceBundle = serde_json::from_str(source_json)
             .map_err(|e| decode_err(format!("invalid source_json: {e}")))?;
+        let artifact_hash = match get_optional_str(row, "artifact_hash") {
+            Some(value) => Some(
+                value
+                    .parse::<ArtifactHash>()
+                    .map_err(|e| decode_err(format!("invalid artifact_hash: {e}")))?,
+            ),
+            None => None,
+        };
+        let identity_digest = match get_optional_str(row, "identity_digest") {
+            Some(value) => Some(
+                value
+                    .parse::<AgentIdentityDigest>()
+                    .map_err(|e| decode_err(format!("invalid identity_digest: {e}")))?,
+            ),
+            None => None,
+        };
         Ok(RepositoryEntry {
             hash: header.hash,
             version_ref: header.version_ref,
+            artifact_hash,
+            identity_digest,
             source,
             parentage: header.parentage,
             generation: header.generation,
@@ -714,151 +1074,122 @@ impl BlobStore for SurrealStore {
             .map_err(map_surreal_write)?;
         Ok(())
     }
+
+    async fn put_artifact(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()> {
+        self.db
+            .query(format!(
+                "UPSERT {TBL_BLOBS} SET hash = $hash, data_hex = $data_hex WHERE hash = $hash"
+            ))
+            .bind(("hash", hash.as_str().to_string()))
+            .bind(("data_hex", encode_hex(data)))
+            .await
+            .map_err(map_surreal_write)?;
+        Ok(())
+    }
+
+    async fn get_artifact(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>> {
+        let mut resp = self
+            .db
+            .query(format!(
+                "SELECT data_hex FROM {TBL_BLOBS} WHERE hash = $hash LIMIT 1"
+            ))
+            .bind(("hash", hash.as_str().to_string()))
+            .await
+            .map_err(map_surreal_read)?;
+        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
+        let Some(hex) = rows
+            .first()
+            .and_then(|row| row.get("data_hex"))
+            .and_then(Value::as_str)
+        else {
+            return Ok(None);
+        };
+        Ok(decode_hex(hex))
+    }
 }
 
 #[async_trait]
 impl MetadataStore for SurrealStore {
     async fn insert_entry(&self, entry: &NewEntry) -> Result<RepositoryEntry> {
-        let name = entry.name.as_str().to_string();
-        let mut resp = self
-            .db
-            .query(format!(
-                "SELECT version FROM {TBL_ENTRIES} WHERE agent_name = $name ORDER BY version DESC LIMIT 1"
-            ))
-            .bind(("name", name.clone()))
-            .await
-            .map_err(map_surreal_read)?;
-        let rows: Vec<Value> = resp.take(0).map_err(map_surreal_read)?;
-        let next_version = rows
-            .first()
-            .and_then(|r| r.get("version").and_then(Value::as_u64))
-            .map(|v| v as u32 + 1)
-            .unwrap_or(1);
+        let version = self.next_version(&entry.name).await?;
+        self.insert_entry_at(entry, version).await
+    }
 
-        // Repository publish path always assigns the next version in manifest
-        // and computes the content hash from that canonical source bundle.
-        let source_for_storage = entry.source.with_manifest_version(next_version);
-        let hash = source_for_storage.compute_hash();
-        let hash_str = hash.as_str().to_string();
+    async fn next_version(&self, name: &AgentName) -> Result<Version> {
+        self.purge_expired_reservations().await?;
+        let latest_entry = self.latest_version_in(TBL_ENTRIES, name).await?;
+        let latest_reserved = self
+            .latest_version_in(TBL_VERSION_RESERVATIONS, name)
+            .await?;
+        Version::new(latest_entry.max(latest_reserved).saturating_add(1))
+            .map_err(|e| decode_err(format!("invalid next version: {e}")))
+    }
 
-        let mut dup_resp = self
-            .db
+    async fn reserve_version(&self, name: &AgentName, ttl_ms: u64) -> Result<VersionReservation> {
+        let holder = uuid::Uuid::new_v4().to_string();
+        for _ in 0..VERSION_RESERVATION_ATTEMPTS {
+            let version = self.next_version(name).await?;
+            if self
+                .create_reservation(name, version, &holder, ttl_ms)
+                .await?
+            {
+                return Ok(VersionReservation {
+                    name: name.clone(),
+                    version,
+                    holder,
+                });
+            }
+        }
+        Err(RepositoryError::VersionReservationExhausted {
+            name: name.clone(),
+            attempts: VERSION_RESERVATION_ATTEMPTS,
+        })
+    }
+
+    async fn release_version(&self, reservation: &VersionReservation) -> Result<()> {
+        self.db
             .query(format!(
-                "SELECT agent_name, version FROM {TBL_ENTRIES} WHERE hash = $hash LIMIT 1"
+                "DELETE {TBL_VERSION_RESERVATIONS} WHERE agent_name = $name \
+                 AND version = $version AND holder = $holder"
             ))
-            .bind(("hash", hash_str.clone()))
+            .bind(("name", reservation.name.as_str().to_string()))
+            .bind(("version", reservation.version.as_u32() as i64))
+            .bind(("holder", reservation.holder.clone()))
             .await
-            .map_err(map_surreal_read)?;
-        let dup_rows: Vec<Value> = dup_resp.take(0).map_err(map_surreal_read)?;
-        if let Some(row) = dup_rows.first() {
-            let existing_name = row
-                .get("agent_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .parse()
-                .map_err(|e| decode_err(format!("invalid existing agent_name: {e}")))?;
-            let existing_version =
-                Version::new(row.get("version").and_then(Value::as_u64).unwrap_or(1) as u32)
-                    .map_err(|e| decode_err(format!("invalid existing version: {e}")))?;
-            return Err(RepositoryError::DuplicateHash {
-                hash,
-                existing_name,
-                existing_version,
+            .map_err(map_surreal_write)?
+            .take::<Vec<Value>>(0)
+            .map_err(map_surreal_write)?;
+        Ok(())
+    }
+
+    async fn insert_reserved_entry(
+        &self,
+        entry: &NewEntry,
+        reservation: &VersionReservation,
+    ) -> Result<RepositoryEntry> {
+        if reservation.name != entry.name {
+            return Err(RepositoryError::VersionConflict {
+                name: entry.name.clone(),
+                version: reservation.version,
             });
         }
-
-        let version = Version::new(next_version).map_err(|e| decode_err(format!("{e}")))?;
-        let parentage_json = serde_json::to_string(&entry.parentage)
-            .map_err(|e| decode_err(format!("parentage serialization failed: {e}")))?;
-        let source_json = serde_json::to_string(&source_for_storage)
-            .map_err(|e| decode_err(format!("source serialization failed: {e}")))?;
-        let created_at = crate::service::chrono_now();
-        let description = source_for_storage
-            .manifest
-            .description()
-            .map(str::to_string);
-        let tools_json = serde_json::to_string(
-            &source_for_storage
-                .manifest
-                .tools()
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_else(|_| "[]".to_string());
-        let capabilities_json = serde_json::to_string(
-            &source_for_storage
-                .manifest
-                .capabilities()
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_else(|_| "[]".to_string());
-        let manifest_text = build_manifest_text(&source_for_storage);
-        let source_text = build_source_text(&source_for_storage);
-
-        let _ = self
-            .db
-            .query(format!(
-                "CREATE {TBL_ENTRIES} SET \
-                    hash = $hash, \
-                    agent_name = $name, \
-                    version = $version, \
-                    generation = $generation, \
-                    parentage_json = $parentage_json, \
-                    source_json = $source_json, \
-                    change_rationale = $change_rationale, \
-                    created_at = $created_at, \
-                    manifest_description = $manifest_description, \
-                    manifest_tools_json = $manifest_tools_json, \
-                    manifest_capabilities_json = $manifest_capabilities_json, \
-                    manifest_text = $manifest_text, \
-                    source_text = $source_text"
-            ))
-            .bind(("hash", hash_str))
-            .bind(("name", name))
-            .bind(("version", next_version as i64))
-            .bind(("generation", entry.generation.as_u32() as i64))
-            .bind(("parentage_json", parentage_json))
-            .bind(("source_json", source_json))
-            .bind((
-                "change_rationale",
-                entry.change_rationale.as_str().to_string(),
-            ))
-            .bind(("created_at", created_at.as_str().to_string()))
-            .bind(("manifest_description", description))
-            .bind(("manifest_tools_json", tools_json))
-            .bind(("manifest_capabilities_json", capabilities_json))
-            .bind(("manifest_text", manifest_text))
-            .bind(("source_text", source_text))
-            .await
-            .map_err(map_surreal_write)?;
-
-        for tag in &entry.tags {
-            let _ = self
-                .db
-                .query(format!(
-                    "CREATE {TBL_TAGS} SET entry_hash = $hash, tag = $tag"
-                ))
-                .bind(("hash", hash.as_str().to_string()))
-                .bind(("tag", tag.as_str().to_string()))
-                .await;
-        }
-
-        Ok(RepositoryEntry {
-            hash: hash.clone(),
-            version_ref: VersionRef {
+        let Some(consumed_holder) = self.consume_reservation(reservation).await? else {
+            return Err(RepositoryError::VersionConflict {
                 name: entry.name.clone(),
-                version,
-            },
-            source: source_for_storage,
-            parentage: entry.parentage.clone(),
-            generation: entry.generation,
-            change_rationale: entry.change_rationale.clone(),
-            created_at,
-            tags: entry.tags.clone(),
-        })
+                version: reservation.version,
+            });
+        };
+        let stored = match self.insert_entry_at(entry, reservation.version).await {
+            Ok(stored) => stored,
+            Err(error) => {
+                self.release_consumed_reservation(reservation, &consumed_holder)
+                    .await;
+                return Err(error);
+            }
+        };
+        self.release_consumed_reservation(reservation, &consumed_holder)
+            .await;
+        Ok(stored)
     }
 
     async fn get_by_hash(&self, hash: &ContentHash) -> Result<Option<RepositoryEntry>> {

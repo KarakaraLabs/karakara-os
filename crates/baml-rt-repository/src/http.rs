@@ -75,6 +75,13 @@ impl From<RepositoryError> for HttpApiProblem {
                     .detail(e.to_string())
             }
 
+            RepositoryError::VersionReservationExhausted { .. } => {
+                HttpApiProblem::new(ProblemStatusCode::CONFLICT)
+                    .title("Version reservation failed")
+                    .type_url(VERSION_CONFLICT)
+                    .detail(e.to_string())
+            }
+
             RepositoryError::InvalidSourceBundle { .. } => {
                 HttpApiProblem::new(ProblemStatusCode::BAD_REQUEST)
                     .title("Invalid source bundle")
@@ -92,6 +99,13 @@ impl From<RepositoryError> for HttpApiProblem {
             RepositoryError::HashMismatch { .. } => {
                 HttpApiProblem::new(ProblemStatusCode::BAD_REQUEST)
                     .title("Hash mismatch")
+                    .type_url(HASH_MISMATCH)
+                    .detail(e.to_string())
+            }
+
+            RepositoryError::ArtifactHashMismatch { .. } => {
+                HttpApiProblem::new(ProblemStatusCode::INTERNAL_SERVER_ERROR)
+                    .title("Artifact integrity failure")
                     .type_url(HASH_MISMATCH)
                     .detail(e.to_string())
             }

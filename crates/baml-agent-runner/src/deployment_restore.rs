@@ -82,6 +82,7 @@ mod tests {
         let hash_str = format!("{pad}{hash_suffix}");
         DeploymentRecord {
             content_hash: DeploymentContentHash::from_str(&hash_str).expect("test hash"),
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(hash_str.as_bytes()),
             agent_name: name.to_string(),
             deployed_at: deployed_at.to_string(),
             status,

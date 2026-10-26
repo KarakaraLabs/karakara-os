@@ -436,7 +436,7 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
     for mut deployment in existing_deployments {
         match builder
             .runner
-            .deploy_by_hash(&deployment.content_hash)
+            .deploy_by_hash_expected(&deployment.content_hash, Some(&deployment.artifact_hash))
             .await
         {
             Ok(result) => {
@@ -1176,6 +1176,7 @@ globalThis.onChatMessage = async function(_message) {
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Ephemeral,
             lifecycle: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            boot_event_id: baml_rt_core::ids::ActivityAnchorId::from("test-boot"),
         }
     }
 
@@ -1264,8 +1265,7 @@ globalThis.onChatMessage = async function(_message) {
             "params": {
                 "metadata": {
                     "target": {
-                        "agent_package": "coordinator-agent",
-                        "agent_instance_id": "default"
+                        "agent_package": "coordinator-agent"
                     }
                 }
             }
@@ -1294,20 +1294,20 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_internal_a2a_router_self_routing_rejected() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
         let router = runner.internal_a2a_router().clone();
         let pkg = AgentPackageName::parse("my-agent").unwrap();
-        let key = AgentRouteKey::new(pkg, AgentInstanceId::default());
+        let key = AgentRouteKey::new(pkg);
         let request_val = json!({
             "jsonrpc": "2.0",
             "method": "message.sendStream",
             "id": "corr-1-1",
             "params": {
                 "metadata": {
-                    "target": {"agent_package": "my-agent", "agent_instance_id": "default"}
+                    "target": {"agent_package": "my-agent"}
                 },
                 "message": {
                     "messageId": "msg-1",
@@ -1328,9 +1328,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_scoped_internal_router_routes_to_agent() {
-        use baml_rt_core::{
-            AgentInstanceId, AgentPackageName, AgentRouteKey, collect_a2a_stream_one_shot,
-        };
+        use baml_rt_core::{AgentPackageName, AgentRouteKey, collect_a2a_stream_one_shot};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1338,7 +1336,7 @@ globalThis.onChatMessage = async function(_message) {
         let agent = build_test_agent().await;
         let booted = make_booted(agent.clone(), "target-agent");
         let pkg = AgentPackageName::parse("target-agent").unwrap();
-        let route_key = AgentRouteKey::new(pkg, AgentInstanceId::default());
+        let route_key = AgentRouteKey::new(pkg);
         {
             let mut routed = runner.routed_agents.write().expect("RwLock poison");
             routed.insert(route_key.clone(), agent);
@@ -1347,7 +1345,7 @@ globalThis.onChatMessage = async function(_message) {
         }
 
         let caller_pkg = AgentPackageName::parse("caller-agent").unwrap();
-        let caller_key = AgentRouteKey::new(caller_pkg, AgentInstanceId::default());
+        let caller_key = AgentRouteKey::new(caller_pkg);
         let scoped = ScopedInternalA2aRouter::new(caller_key, runner.internal_a2a_router().clone());
         use baml_rt_a2a::A2aRequestHandler as _;
         let request_val = json!({
@@ -1355,7 +1353,7 @@ globalThis.onChatMessage = async function(_message) {
             "id": "corr-42-1",
             "params": {
                 "metadata": {
-                    "target": {"agent_package": "target-agent", "agent_instance_id": "default"}
+                    "target": {"agent_package": "target-agent"}
                 },
                 "message": {
                     "messageId": "msg-1", "role": "user", "parts": [{"text": "hello"}]
@@ -1372,7 +1370,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_draining_agent_rejects_a2a_request() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey, BamlRtError};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey, BamlRtError};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1380,7 +1378,7 @@ globalThis.onChatMessage = async function(_message) {
         let agent = build_test_agent().await;
         let booted = make_booted(agent.clone(), "drain-test");
         let pkg = AgentPackageName::parse("drain-test").unwrap();
-        let route_key = AgentRouteKey::new(pkg, AgentInstanceId::default());
+        let route_key = AgentRouteKey::new(pkg);
         {
             let mut routed = runner.routed_agents.write().expect("RwLock poison");
             routed.insert(route_key.clone(), agent);
@@ -1438,7 +1436,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_route_cluster_resolver_none_returns_not_found() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1449,7 +1447,7 @@ globalThis.onChatMessage = async function(_message) {
         runner.internal_a2a_router().set_cluster(resolver);
 
         let caller_pkg = AgentPackageName::parse("caller-agent").unwrap();
-        let caller_key = AgentRouteKey::new(caller_pkg, AgentInstanceId::default());
+        let caller_key = AgentRouteKey::new(caller_pkg);
 
         let request_val = json!({
             "jsonrpc": "2.0",
@@ -1457,7 +1455,7 @@ globalThis.onChatMessage = async function(_message) {
             "id": "corr-cluster-1",
             "params": {
                 "metadata": {
-                    "target": {"agent_package": "remote-agent", "agent_instance_id": "default"}
+                    "target": {"agent_package": "remote-agent"}
                 },
                 "message": {
                     "messageId": "msg-1",
@@ -1481,7 +1479,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_route_cluster_resolver_error_propagates() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1494,7 +1492,7 @@ globalThis.onChatMessage = async function(_message) {
         runner.internal_a2a_router().set_cluster(resolver);
 
         let caller_pkg = AgentPackageName::parse("caller-agent").unwrap();
-        let caller_key = AgentRouteKey::new(caller_pkg, AgentInstanceId::default());
+        let caller_key = AgentRouteKey::new(caller_pkg);
 
         let request_val = json!({
             "jsonrpc": "2.0",
@@ -1502,7 +1500,7 @@ globalThis.onChatMessage = async function(_message) {
             "id": "corr-cluster-2",
             "params": {
                 "metadata": {
-                    "target": {"agent_package": "unreachable-agent", "agent_instance_id": "default"}
+                    "target": {"agent_package": "unreachable-agent"}
                 },
                 "message": {
                     "messageId": "msg-1",
@@ -1526,9 +1524,23 @@ globalThis.onChatMessage = async function(_message) {
 
     // ── deploy idempotency guard ────────────────────────────────────────────
 
+    #[test]
+    fn boot_rejects_bytes_that_do_not_match_the_artifact_hash() {
+        let artifact_hash = baml_rt_core::ArtifactHash::from_bytes(b"published package");
+        let content_hash: baml_rt_core::DeploymentContentHash = "a".repeat(64).parse().unwrap();
+        let error = AgentRunner::verify_artifact_integrity(
+            &content_hash,
+            &artifact_hash,
+            b"tampered package",
+            1,
+        )
+        .expect_err("boot must reject bytes that differ from their published artifact hash");
+        assert!(error.to_string().contains("Artifact integrity failure"));
+    }
+
     #[tokio::test]
     async fn test_deploy_by_hash_returns_already_deployed_for_existing() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey, DeploymentManager};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey, DeploymentManager};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1552,12 +1564,14 @@ globalThis.onChatMessage = async function(_message) {
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Repository {
                 content_hash: hash.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"idempotent artifact"),
                 version: 1,
             },
             lifecycle: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            boot_event_id: baml_rt_core::ids::ActivityAnchorId::from("idempotent-boot"),
         };
         let pkg = AgentPackageName::parse("idempotent-agent").unwrap();
-        let rk = AgentRouteKey::new(pkg, AgentInstanceId::default());
+        let rk = AgentRouteKey::new(pkg);
         {
             let mut agents = runner.agents.write().expect("RwLock poison");
             let mut routed = runner.routed_agents.write().expect("RwLock poison");
@@ -1584,6 +1598,7 @@ globalThis.onChatMessage = async function(_message) {
         store
             .save_deployment(&DeploymentRecord {
                 content_hash: h_old.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"old artifact"),
                 agent_name: "dup-agent".into(),
                 deployed_at: "100".into(),
                 status: DeploymentStatus::Active,
@@ -1596,6 +1611,7 @@ globalThis.onChatMessage = async function(_message) {
         store
             .save_deployment(&DeploymentRecord {
                 content_hash: h_new.clone(),
+                artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"new artifact"),
                 agent_name: "dup-agent".into(),
                 deployed_at: "200".into(),
                 status: DeploymentStatus::Active,
@@ -1693,7 +1709,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[tokio::test]
     async fn test_run_a2a_loop_handles_valid_request() {
-        use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+        use baml_rt_core::{AgentPackageName, AgentRouteKey};
         let prov = test_provenance_config().await;
         let state = test_deployment_state().await;
         let runner = make_runner(prov, state);
@@ -1701,7 +1717,7 @@ globalThis.onChatMessage = async function(_message) {
         let agent = build_test_agent().await;
         let booted = make_booted(agent.clone(), "my-agent");
         let pkg = AgentPackageName::parse("my-agent").unwrap();
-        let route_key = AgentRouteKey::new(pkg, AgentInstanceId::default());
+        let route_key = AgentRouteKey::new(pkg);
         {
             let mut routed = runner.routed_agents.write().expect("RwLock poison");
             routed.insert(route_key.clone(), agent);
@@ -1748,9 +1764,9 @@ globalThis.onChatMessage = async function(_message) {
         {
             let mut agents = runner.agents.write().expect("RwLock poison");
             agents.insert("my-agent".to_string(), booted);
-            use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+            use baml_rt_core::{AgentPackageName, AgentRouteKey};
             let pkg = AgentPackageName::parse("my-agent").unwrap();
-            let key = AgentRouteKey::new(pkg, AgentInstanceId::default());
+            let key = AgentRouteKey::new(pkg);
             let mut routed = runner.routed_agents.write().expect("RwLock poison");
             routed.insert(key, agent);
         }
@@ -1787,6 +1803,7 @@ globalThis.onChatMessage = async function(_message) {
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Ephemeral,
             lifecycle: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            boot_event_id: baml_rt_core::ids::ActivityAnchorId::from("test-boot"),
         };
         let mut agents = std::collections::HashMap::new();
         agents.insert("other-agent".to_string(), make(agent1, "other-agent"));

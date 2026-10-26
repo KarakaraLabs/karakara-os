@@ -24,7 +24,7 @@
 //! 8. Async tail writes the rendered stable catalog sidecar when present.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -425,8 +425,8 @@ impl RuntimeFinalized {
     pub(super) fn emit_runtime_manifests(&self) -> Result<()> {
         if !self.session_plan_map.is_empty() {
             let manifest_path = self.paths.build_dir.join("session_plan_functions.json");
-            let json = serde_json::to_string_pretty(&self.session_plan_map)
-                .map_err(BamlBuilderError::Json)?;
+            let sorted: BTreeMap<_, _> = self.session_plan_map.clone().into_iter().collect();
+            let json = serde_json::to_string_pretty(&sorted).map_err(BamlBuilderError::Json)?;
             atomic_write(&manifest_path, json.as_bytes())?;
         }
         if !self.unified_roots.is_empty() {
@@ -434,8 +434,8 @@ impl RuntimeFinalized {
                 .paths
                 .build_dir
                 .join("unified_step_executor_functions.json");
-            let json = serde_json::to_string_pretty(&self.unified_roots)
-                .map_err(BamlBuilderError::Json)?;
+            let sorted: BTreeMap<_, _> = self.unified_roots.clone().into_iter().collect();
+            let json = serde_json::to_string_pretty(&sorted).map_err(BamlBuilderError::Json)?;
             atomic_write(&unified_path, json.as_bytes())?;
         }
 
@@ -443,8 +443,8 @@ impl RuntimeFinalized {
             build_tool_step_executors_map(&self.session_plan_map, &self.tool_metadata);
         if !tool_step_executors.is_empty() {
             let executors_path = self.paths.build_dir.join("tool_step_executors.json");
-            let json = serde_json::to_string_pretty(&tool_step_executors)
-                .map_err(BamlBuilderError::Json)?;
+            let sorted: BTreeMap<_, _> = tool_step_executors.into_iter().collect();
+            let json = serde_json::to_string_pretty(&sorted).map_err(BamlBuilderError::Json)?;
             atomic_write(&executors_path, json.as_bytes())?;
         }
 
@@ -513,8 +513,9 @@ fn load_unified_step_executors_authoring(
     baml_rt_tools::parse_unified_step_executors_authoring_json(&text)
 }
 
-/// After per-phase step executors are emitted, register their `__entry` / `__active__*` names
-/// in the session-plan map so the runtime can resolve a tool from the invoking function name.
+/// After per-phase step executors are emitted, register their `__entry` / `__active__*` /
+/// `__consume__*` names in the session-plan map so the runtime can resolve a tool from the
+/// invoking function name on every phase.
 fn register_phase_function_session_plans(
     session_plan_map: &mut SessionPlanFunctionsMap,
     tool_metadata: &[ToolFunctionMetadata],
@@ -542,6 +543,10 @@ fn register_phase_function_session_plans(
             if !tool_plan.is_empty() {
                 session_plan_map.insert(
                     baml_rt_tools::SessionTypeNames::active(func_name, &slug),
+                    tool_plan.clone(),
+                );
+                session_plan_map.insert(
+                    baml_rt_tools::SessionTypeNames::consume(func_name, &slug),
                     tool_plan,
                 );
             }
@@ -559,12 +564,18 @@ fn build_tool_step_executors_map(
         .iter()
         .map(|m| (m.class_name.as_str(), m.name.to_string()))
         .collect();
+    let mut function_plans: Vec<_> = session_plan_map.iter().collect();
+    function_plans.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
     let mut map = HashMap::new();
-    for (func_name, plan_types) in session_plan_map {
+    for (func_name, plan_types) in function_plans {
         if plan_types.len() == 1 {
             let class_name = plan_types[0].class_name();
             if let Some(tool_name) = class_to_tool.get(class_name) {
-                map.insert(tool_name.clone(), func_name.clone());
+                // Several generated phases can share a tool. The root function sorts before its
+                // generated variants and is the stable executor this reverse lookup exposes.
+                map.entry(tool_name.clone())
+                    .or_insert_with(|| func_name.clone());
             }
         }
     }

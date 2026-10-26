@@ -12,7 +12,6 @@ export interface AgentCardDto {
   contentHash?: string | null;
   repositoryVersion?: number | null;
   agentPackage: string;
-  agentInstanceId: string;
   tools: string[];
   description?: string | null;
   capabilities: string[];
@@ -730,7 +729,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "BuildExtrospectionPlan" | "BuildExtrospectionPlan__active__system_extrospection" | "BuildExtrospectionPlan__entry" | "GetDiscoverAgentsPlan" | "GetDiscoverAgentsPlan__active__system_discover_agents" | "GetDiscoverAgentsPlan__entry";
+export type StepExecutorFunctionName = "BuildExtrospectionPlan" | "BuildExtrospectionPlan__active__system_extrospection" | "BuildExtrospectionPlan__consume__system_extrospection" | "BuildExtrospectionPlan__entry" | "GetDiscoverAgentsPlan" | "GetDiscoverAgentsPlan__active__system_discover_agents" | "GetDiscoverAgentsPlan__consume__system_discover_agents" | "GetDiscoverAgentsPlan__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -791,9 +790,11 @@ export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
 export interface StepExecutorFunctionMap {
   BuildExtrospectionPlan: { args: Parameters<typeof BuildExtrospectionPlan>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof BuildExtrospectionPlan>>; };
   BuildExtrospectionPlan__active__system_extrospection: { args: Parameters<typeof BuildExtrospectionPlan__active__system_extrospection>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof BuildExtrospectionPlan__active__system_extrospection>>; };
+  BuildExtrospectionPlan__consume__system_extrospection: { args: Parameters<typeof BuildExtrospectionPlan__consume__system_extrospection>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof BuildExtrospectionPlan__consume__system_extrospection>>; };
   BuildExtrospectionPlan__entry: { args: Parameters<typeof BuildExtrospectionPlan__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof BuildExtrospectionPlan__entry>>; };
   GetDiscoverAgentsPlan: { args: Parameters<typeof GetDiscoverAgentsPlan>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan>>; };
   GetDiscoverAgentsPlan__active__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__active__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__active__system_discover_agents>>; };
+  GetDiscoverAgentsPlan__consume__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>>; };
   GetDiscoverAgentsPlan__entry: { args: Parameters<typeof GetDiscoverAgentsPlan__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__entry>>; };
 }
 

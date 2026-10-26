@@ -13,6 +13,7 @@ proptest = { workspace = true }
 baml-derive-core = { path = "../baml-derive-core" }
 baml-rt-citation = { path = "../baml-rt-citation" }
 baml-rt-id = { path = "../baml-rt-id" }
+baml-rt-hash = { path = "../baml-rt-hash" }
 # baml-runtime = { workspace = true }
 # baml-types = { workspace = true }
 # internal-baml-core = { workspace = true }
@@ -30,3 +31,4 @@ async-stream = { workspace = true }
 futures-util = { workspace = true }
 opentelemetry = { workspace = true }
 tempfile = { workspace = true }
+uuid = { workspace = true }

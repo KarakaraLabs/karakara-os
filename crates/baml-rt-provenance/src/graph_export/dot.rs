@@ -137,7 +137,9 @@ fn dot_node_attrs(label: &str) -> (&'static str, &'static str) {
             | GraphNodeLabel::AgentBoot
             | GraphNodeLabel::AgentStop,
         ) => ("ellipse", "#dbeafe"),
-        Some(GraphNodeLabel::AgentRuntimeInstance) => ("hexagon", "#e2e8f0"),
+        Some(GraphNodeLabel::Agent | GraphNodeLabel::AgentRuntimeInstance) => {
+            ("hexagon", "#e2e8f0")
+        }
         Some(
             GraphNodeLabel::Intent
             | GraphNodeLabel::Plan
@@ -148,6 +150,7 @@ fn dot_node_attrs(label: &str) -> (&'static str, &'static str) {
             | GraphNodeLabel::Task
             | GraphNodeLabel::TaskState
             | GraphNodeLabel::Artifact
+            | GraphNodeLabel::AgentArtifact
             | GraphNodeLabel::AgentArchive
             | GraphNodeLabel::PromptRejected
             | GraphNodeLabel::FailureClassificationActivity

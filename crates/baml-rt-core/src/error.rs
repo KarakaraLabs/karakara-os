@@ -136,6 +136,10 @@ pub enum BamlRtError {
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// A request carried the removed `agent_instance_id` routing dimension.
+    #[error("Unsupported agent_instance_id: {0}")]
+    UnsupportedAgentInstance(String),
+
     /// Tool session plan step violated a correctable contract (structured for `StepExecutorOutcome`).
     #[error(transparent)]
     StepPlanCorrectable(#[from] StepPlanRecovery),
@@ -323,6 +327,7 @@ fn code_for_classified(err: &BamlRtError, disposition: ErrorDisposition) -> Stri
         | BamlRtError::JsonWithRaw { .. }
         | BamlRtError::FunctionNotFound(_)
         | BamlRtError::TypeConversion(_) => "invalid_argument".to_string(),
+        BamlRtError::UnsupportedAgentInstance(_) => "unsupported_agent_instance".to_string(),
         BamlRtError::StepPlanCorrectable(r) => r.code.as_str().to_string(),
         BamlRtError::ToolExecution(_) => match disposition {
             ErrorDisposition::HostRetriable => "transient_tool_execution".to_string(),
@@ -356,6 +361,7 @@ pub fn baml_error_disposition(err: &BamlRtError) -> ErrorDisposition {
         | BamlRtError::JsonWithRaw { .. }
         | BamlRtError::FunctionNotFound(_)
         | BamlRtError::TypeConversion(_) => ErrorDisposition::LlmCorrectable,
+        BamlRtError::UnsupportedAgentInstance(_) => ErrorDisposition::InformAndContinue,
         BamlRtError::StepPlanCorrectable(r) => r.disposition,
         BamlRtError::AgentNotFound(_) => ErrorDisposition::InformAndContinue,
         BamlRtError::AgentDraining(_) => ErrorDisposition::HostRetriable,

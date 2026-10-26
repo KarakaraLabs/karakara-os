@@ -174,10 +174,7 @@ fn raw_slack_source_event(source_label: &str, records: Vec<Value>) -> Value {
 }
 
 fn slack_source_ingress_dispatch_url(base_url: &str) -> String {
-    format!(
-        "{base}/agents/slack-agent/default/dispatch",
-        base = base_url
-    )
+    format!("{base}/agents/slack-agent/dispatch", base = base_url)
 }
 
 fn mock_api_base_url(base_url: &str) -> String {

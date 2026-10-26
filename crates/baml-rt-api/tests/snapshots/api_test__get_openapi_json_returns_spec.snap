@@ -1,5 +1,6 @@
 ---
 source: crates/baml-rt-api/tests/api_test.rs
+assertion_line: 1527
 expression: snapshot
 ---
 {
@@ -43,12 +44,12 @@ expression: snapshot
           }
         }
       },
-      "/agents/{agent_package}/{agent_instance_id}/a2a": {
+      "/agents/{agent_package}/a2a": {
         "post": {
           "tags": [
             "agents"
           ],
-          "summary": "Forward A2A JSON-RPC request (POST /agents/{agent_package}/{agent_instance_id}/a2a).",
+          "summary": "Forward A2A JSON-RPC request (POST /agents/{agent_package}/a2a).",
           "description": "Streams **SSE** (`text/event-stream`): each event `data:` line is one JSON-RPC 2.0 response object (same objects as the historical buffered JSON array).\n\nUnauthenticated at the application layer. Cluster isolation relies on\nnetwork policy (K8s NetworkPolicy / service mesh); external client auth\nbelongs at the ingress. Control-plane endpoints are protected by `ClusterAuthLayer`.",
           "operationId": "post_a2a",
           "parameters": [
@@ -56,15 +57,6 @@ expression: snapshot
               "name": "agent_package",
               "in": "path",
               "description": "Agent package identifier (e.g. manifest name)",
-              "required": true,
-              "schema": {
-                "type": "string"
-              }
-            },
-            {
-              "name": "agent_instance_id",
-              "in": "path",
-              "description": "Agent instance identifier",
               "required": true,
               "schema": {
                 "type": "string"
@@ -98,27 +90,18 @@ expression: snapshot
           }
         }
       },
-      "/agents/{agent_package}/{agent_instance_id}/dispatch": {
+      "/agents/{agent_package}/dispatch": {
         "post": {
           "tags": [
             "agents"
           ],
-          "summary": "Deterministic host-to-agent delivery: POST /agents/{agent_package}/{agent_instance_id}/dispatch",
+          "summary": "Deterministic host-to-agent delivery: POST /agents/{agent_package}/dispatch",
           "operationId": "post_dispatch",
           "parameters": [
             {
               "name": "agent_package",
               "in": "path",
               "description": "Agent package name",
-              "required": true,
-              "schema": {
-                "type": "string"
-              }
-            },
-            {
-              "name": "agent_instance_id",
-              "in": "path",
-              "description": "Agent instance ID",
               "required": true,
               "schema": {
                 "type": "string"
@@ -2087,15 +2070,11 @@ expression: snapshot
             "name",
             "version",
             "agent_package",
-            "agent_instance_id",
             "tools",
             "baml_functions",
             "capabilities"
           ],
           "properties": {
-            "agent_instance_id": {
-              "type": "string"
-            },
             "agent_package": {
               "type": "string"
             },
@@ -2225,7 +2204,6 @@ expression: snapshot
           "description": "Discovery entry for one running agent (GET /agents response item).",
           "required": [
             "agent_package",
-            "agent_instance_id",
             "name",
             "version",
             "agent_card"
@@ -2234,9 +2212,6 @@ expression: snapshot
             "agent_card": {
               "$ref": "#/components/schemas/AgentCardDto",
               "description": "Agent card (cut-down shape) for discovery."
-            },
-            "agent_instance_id": {
-              "type": "string"
             },
             "agent_package": {
               "type": "string"
@@ -2453,17 +2428,13 @@ expression: snapshot
         },
         "ClusterAgentRowDto": {
           "type": "object",
-          "description": "One row in the cluster-wide agent view, aggregated by package+instance.",
+          "description": "One row in the cluster-wide agent view, aggregated by package.",
           "required": [
             "agent_package",
-            "agent_instance_id",
             "version_skew",
             "placements"
           ],
           "properties": {
-            "agent_instance_id": {
-              "type": "string"
-            },
             "agent_package": {
               "type": "string"
             },
@@ -2492,7 +2463,7 @@ expression: snapshot
               "items": {
                 "$ref": "#/components/schemas/ClusterAgentRowDto"
               },
-              "description": "One entry per `(agent_package, agent_instance_id)` observed in the\ncluster, with the per-runner placements that back it."
+              "description": "One entry per `agent_package` observed in the cluster, with the\nper-runner placements that back it."
             },
             "runners": {
               "type": "array",
@@ -2898,12 +2869,6 @@ expression: snapshot
                 "type"
               ],
               "properties": {
-                "agent_instance_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
                 "agent_package": {
                   "type": [
                     "string",
@@ -3404,12 +3369,6 @@ expression: snapshot
                 "type"
               ],
               "properties": {
-                "agent_instance_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
                 "agent_package": {
                   "type": [
                     "string",
@@ -3829,13 +3788,9 @@ expression: snapshot
           "type": "object",
           "required": [
             "agent_package",
-            "agent_instance_id",
             "detail"
           ],
           "properties": {
-            "agent_instance_id": {
-              "type": "string"
-            },
             "agent_package": {
               "type": "string"
             },
@@ -3906,16 +3861,12 @@ expression: snapshot
           "type": "object",
           "required": [
             "agent_package",
-            "agent_instance_id",
             "routing_key",
             "message_type",
             "messages",
             "scope"
           ],
           "properties": {
-            "agent_instance_id": {
-              "type": "string"
-            },
             "agent_package": {
               "type": "string"
             },
@@ -3958,13 +3909,9 @@ expression: snapshot
           "type": "object",
           "required": [
             "agent_package",
-            "agent_instance_id",
             "detail"
           ],
           "properties": {
-            "agent_instance_id": {
-              "type": "string"
-            },
             "agent_package": {
               "type": "string"
             },

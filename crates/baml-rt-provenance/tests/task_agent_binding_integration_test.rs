@@ -7,12 +7,12 @@
 use std::sync::Arc;
 
 use baml_rt_core::{
-    HostIngressRecorder, RuntimeScope,
+    HostIngressRecorder, Outcome, RuntimeScope,
     dispatch_ingress::{DispatchWorkUnit, dispatch_unit_task_id},
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_provenance::{
-    AgentType, EpisodeReader, HostIngressRecorderImpl, ProvEvent, ProvenanceError,
+    AgentType, EpisodeReader, HostIngressRecorderImpl, LlmUsage, ProvEvent, ProvenanceError,
     ProvenanceWriter,
     metamodel::{EdgeProjection, SemanticEdge},
     store::{
@@ -224,5 +224,186 @@ async fn episode_unbound_task_returns_error() {
     assert!(
         matches!(err, ProvenanceError::EpisodeUnbound { .. }),
         "expected EpisodeUnbound, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn execution_binds_to_the_supplied_boot_not_the_newest_agent_boot() {
+    let store = Arc::new(build_isolated_store().await);
+    let agent_id = test_agent_id();
+    let package = AgentType::new("rolling-agent").expect("type");
+
+    let first_boot = ProvEvent::agent_booted_with_identity(
+        agent_id.clone(),
+        package.clone(),
+        "1".to_string(),
+        "identity".to_string(),
+        "artifact-first".to_string(),
+        "content-first".to_string(),
+        "runner-a".to_string(),
+    );
+    let first_boot_anchor = first_boot.id().as_str().to_string();
+    store.add_event(first_boot).await.expect("first boot");
+
+    let second_boot = ProvEvent::agent_booted_with_identity(
+        agent_id.clone(),
+        package,
+        "2".to_string(),
+        "identity".to_string(),
+        "artifact-second".to_string(),
+        "content-second".to_string(),
+        "runner-b".to_string(),
+    );
+    let second_boot_anchor = second_boot.id().as_str().to_string();
+    store.add_event(second_boot).await.expect("second boot");
+
+    let ctx = ContextId::new(42, 1);
+    let task_id = TaskId::from_external(ExternalId::new("rolling-task".to_string()));
+    store
+        .bind_task_executing_agent_for(
+            ctx,
+            task_id,
+            agent_id,
+            baml_rt_provenance::TaskAgentBindingSource::A2aStreamBootstrap,
+            Some(baml_rt_core::ids::ActivityAnchorId::from(
+                first_boot_anchor.clone(),
+            )),
+        )
+        .await
+        .expect("bind to first boot");
+
+    let mut response = store
+        .db()
+        .query("SELECT to_id FROM prov_edge WHERE rel_type = 'EXECUTED_UNDER_BOOT'")
+        .await
+        .expect("edge query");
+    let rows: Vec<serde_json::Value> = response.take(0).expect("rows");
+    assert_eq!(
+        rows.len(),
+        1,
+        "expected one execution-to-boot edge: {rows:?}"
+    );
+
+    let mut boot_response = store
+        .db()
+        .query(
+            "SELECT node_id FROM prov_node WHERE label = 'AgentBoot' \
+             AND props.a2a_activity_anchor = $anchor",
+        )
+        .bind(("anchor", first_boot_anchor.clone()))
+        .await
+        .expect("boot node query");
+    let boot_rows: Vec<serde_json::Value> = boot_response.take(0).expect("boot rows");
+    let first_boot_node = boot_rows[0]
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .expect("first boot node id");
+    assert_eq!(
+        rows[0].get("to_id").and_then(|v| v.as_str()),
+        Some(first_boot_node),
+        "task execution must reference the supplied boot, not the newest boot ({second_boot_anchor})"
+    );
+}
+
+#[tokio::test]
+async fn ops_version_comes_from_each_tasks_own_boot() {
+    let store = Arc::new(build_isolated_store().await);
+    let agent_id = test_agent_id();
+    let package = AgentType::new("versioned-agent").expect("type");
+    let ctx = ContextId::new(900, 1);
+
+    let mut boots = Vec::new();
+    for (version, artifact) in [("3", "artifact-v3"), ("4", "artifact-v4")] {
+        let boot = ProvEvent::agent_booted_with_identity(
+            agent_id.clone(),
+            package.clone(),
+            version.to_string(),
+            "identity".to_string(),
+            artifact.to_string(),
+            format!("content-{version}"),
+            format!("runner-{version}"),
+        );
+        let boot_event_id = baml_rt_core::ids::ActivityAnchorId::from(boot.id().as_str());
+        store.add_event(boot).await.expect("boot");
+        boots.push((boot_event_id, version));
+    }
+
+    for (index, (boot_event_id, version)) in boots.iter().enumerate() {
+        let task_id = TaskId::from_external(ExternalId::new(format!("versioned-task-{version}")));
+        store
+            .bind_task_executing_agent_for(
+                ctx.clone(),
+                task_id.clone(),
+                agent_id.clone(),
+                baml_rt_provenance::TaskAgentBindingSource::A2aStreamBootstrap,
+                Some(boot_event_id.clone()),
+            )
+            .await
+            .expect("bind task");
+        store
+            .add_event(ProvEvent::llm_call_completed_task(
+                ctx.clone(),
+                task_id.clone(),
+                "DefaultClient".to_string(),
+                "openai-generic".to_string(),
+                "Chat".to_string(),
+                json!({"messages": [{"role": "user", "content": version}]}),
+                json!({
+                    "agent_id": agent_id.as_str(),
+                    "task_id": task_id.as_str(),
+                    "message_id": format!("message-{index}"),
+                }),
+                LlmUsage::Known {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cached_input_tokens: None,
+                },
+                10,
+                Outcome::Success,
+            ))
+            .await
+            .expect("llm call");
+    }
+
+    let response = store
+        .query_ops(ProvenanceOpsQueryRequest {
+            resource: ProvenanceOpsResource::LlmCalls,
+            filters: ProvenanceOpsFilters {
+                context_id: Some(ctx),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .await
+        .expect("ops query");
+
+    let mut by_task = std::collections::HashMap::new();
+    for row in response.rows {
+        let row = row.into_map();
+        let task_id = row
+            .get("task_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("task id");
+        let version = row
+            .get("agent_version")
+            .and_then(serde_json::Value::as_str)
+            .expect("exact boot version");
+        let display = row
+            .get("agent_display")
+            .and_then(serde_json::Value::as_str)
+            .expect("agent display");
+        by_task.insert(
+            task_id.to_string(),
+            (version.to_string(), display.to_string()),
+        );
+    }
+    assert_eq!(
+        by_task.get("versioned-task-3"),
+        Some(&("3".to_string(), "versioned-agent/3".to_string()))
+    );
+    assert_eq!(
+        by_task.get("versioned-task-4"),
+        Some(&("4".to_string(), "versioned-agent/4".to_string()))
     );
 }

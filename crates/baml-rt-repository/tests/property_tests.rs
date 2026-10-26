@@ -55,7 +55,7 @@ proptest! {
                     PublishOrigin::Iteration
                 };
 
-                let result = svc.publish(PublishCommand {
+                let result = svc.publish_draft(PublishCommand {
                     name: "monotonic-agent".parse().unwrap(),
                     source: make_source(&format!("version {i} code with unique content {i}")),
                     rationale: ChangeRationale::new(format!("publish #{i}")).unwrap(),
@@ -103,7 +103,7 @@ proptest! {
         rt.block_on(async {
             let svc = setup_service().await;
             // Publish original
-            let mut prev = svc.publish(PublishCommand {
+            let mut prev = svc.publish_draft(PublishCommand {
                 name: "chain-root".parse().unwrap(),
                 source: make_source("root code for chain test"),
                 rationale: ChangeRationale::new("root").unwrap(),
@@ -115,7 +115,7 @@ proptest! {
             // Fork chain
             for i in 1..chain_len {
                 let fork_name = format!("chain-fork-{i}");
-                let result = svc.fork(baml_rt_repository::commands::ForkCommand {
+                let result = svc.fork_draft(baml_rt_repository::commands::ForkCommand {
                     source_hash: prev.hash.clone(),
                     new_name: fork_name.parse().unwrap(),
                     source: make_source(&format!("fork {i} unique content")),
@@ -168,7 +168,7 @@ proptest! {
                     PublishOrigin::Iteration
                 };
 
-                let result = svc.publish(PublishCommand {
+                let result = svc.publish_draft(PublishCommand {
                     name: "unique-ver-agent".parse().unwrap(),
                     source: make_source(&format!("unique version content #{i}")),
                     rationale: ChangeRationale::new(format!("publish #{i}")).unwrap(),
@@ -215,7 +215,7 @@ async fn lineage_traversal_terminates_on_deep_chain() {
         };
 
         let result = svc
-            .publish(PublishCommand {
+            .publish_draft(PublishCommand {
                 name: "deep-chain".parse().unwrap(),
                 source: make_source(&format!("deep chain step {i}")),
                 rationale: ChangeRationale::new(format!("step {i}")).unwrap(),
@@ -247,7 +247,7 @@ proptest! {
         // consistent results by publishing to two different names.
         rt.block_on(async {
             let svc = setup_service().await;
-            let r1 = svc.publish(PublishCommand {
+            let r1 = svc.publish_draft(PublishCommand {
                 name: "hash-test-a".parse().unwrap(),
                 source: make_source(&content),
                 rationale: ChangeRationale::new("test a").unwrap(),
@@ -255,7 +255,7 @@ proptest! {
 
             }).await;
 
-            let r2 = svc.publish(PublishCommand {
+            let r2 = svc.publish_draft(PublishCommand {
                 name: "hash-test-b".parse().unwrap(),
                 source: make_source(&content),
                 rationale: ChangeRationale::new("test b").unwrap(),

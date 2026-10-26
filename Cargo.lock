@@ -1408,6 +1408,7 @@ dependencies = [
  "baml-rt-config",
  "baml-rt-conversation",
  "baml-rt-core",
+ "baml-rt-hash",
  "baml-rt-llm-config",
  "baml-rt-mcp",
  "baml-rt-observability",
@@ -1792,6 +1793,7 @@ dependencies = [
  "async-trait",
  "baml-derive-core",
  "baml-rt-citation",
+ "baml-rt-hash",
  "baml-rt-id",
  "futures-util",
  "insta",
@@ -1804,6 +1806,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

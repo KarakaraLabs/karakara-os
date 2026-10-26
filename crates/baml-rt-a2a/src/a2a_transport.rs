@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use baml_rt_conversation::view::{ProvenanceContextMessage, ProvenanceConversationContextItem};
 use baml_rt_core::{
     A2aJsChatHost, A2aRequestHandler, A2aStreamChunk, A2aWireRequest, AgentDispatchAck,
-    AgentDispatchRequest, AgentInstanceId, AgentPackageName, BamlRtError, Result,
+    AgentDispatchRequest, AgentPackageName, BamlRtError, Result,
     bus::{BusStream, EffectEmitter},
     context::{self, InvocationScope, OutcomeInvocationContext, RequestScope},
     correlation,
@@ -75,6 +75,7 @@ struct SurrealRuntimeStore {
     task_store: Arc<crate::task_subgraph_store::TaskSubgraphStore>,
     provenance: Arc<baml_rt_provenance::SurrealProvenanceStore>,
     agent_id: baml_rt_core::ids::AgentId,
+    boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
 }
 
 impl SurrealRuntimeStore {
@@ -84,6 +85,7 @@ impl SurrealRuntimeStore {
     fn new(
         provenance: Arc<baml_rt_provenance::SurrealProvenanceStore>,
         agent_id: baml_rt_core::ids::AgentId,
+        boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     ) -> Arc<Self> {
         // Graph-only: the store reads through `TaskGraphReader`
         // (implemented by `SurrealProvenanceStore`) and writes via
@@ -97,6 +99,7 @@ impl SurrealRuntimeStore {
             )),
             provenance,
             agent_id,
+            boot_event_id,
         })
     }
 
@@ -153,6 +156,7 @@ impl SurrealRuntimeStore {
                     tid.clone(),
                     self.agent_id.clone(),
                     TaskAgentBindingSource::A2aStreamBootstrap,
+                    self.boot_event_id.clone(),
                 )
                 .await
                 .map_err(|source| BamlRtError::InvalidArgumentWithSource {
@@ -193,6 +197,7 @@ impl TaskRepository for SurrealRuntimeStore {
                     task_id,
                     self.agent_id.clone(),
                     TaskAgentBindingSource::A2aStreamBootstrap,
+                    self.boot_event_id.clone(),
                 )
                 .await
                 .map_err(|source| BamlRtError::InvalidArgumentWithSource {
@@ -309,6 +314,7 @@ impl TaskChunkApplier for SurrealRuntimeStore {
                     task_id,
                     self.agent_id.clone(),
                     TaskAgentBindingSource::A2aStreamBootstrap,
+                    self.boot_event_id.clone(),
                 )
                 .await
                 .map_err(|source| BamlRtError::InvalidArgumentWithSource {
@@ -546,9 +552,9 @@ pub struct A2aAgent {
     /// `agent_package` attribute on A2A spans and metrics on the serving side so
     /// operators can slice telemetry by deployed package.
     agent_package: AgentPackageName,
-    /// Instance id of the agent hosted by this `A2aAgent`. Emitted as the
-    /// `agent_instance_id` attribute alongside `agent_package`.
-    agent_instance_id: AgentInstanceId,
+    /// Event-owned boot that owns this process lifetime. Execution bindings
+    /// carry this explicitly so task attribution cannot drift to a newer boot.
+    boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     runtime: Arc<RwLock<BamlRuntimeManager>>,
     bridge_handle: Arc<BridgeHandle>,
     task_store: Arc<dyn TaskStoreBackend>,
@@ -811,6 +817,7 @@ impl A2aAgent {
                     task_id.clone(),
                     self.agent_id().clone(),
                     TaskAgentBindingSource::HostDispatchInvocation,
+                    self.boot_event_id.clone(),
                 )
                 .await
                 .map_err(|source| BamlRtError::InvalidArgumentWithSource {
@@ -868,6 +875,7 @@ pub struct A2aAgentBuilder {
     provenance_writer: ProvenanceWriterConfig,
     agent_id: AgentIdConfig,
     agent_identity: AgentIdentityConfig,
+    boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     register_a2a_session_tool: RegistrationMode,
     a2a_session_route_mode: A2aSessionRouteMode,
     /// When set, provenance commits notify this channel so transcript consumers refresh after graph writes.
@@ -886,6 +894,7 @@ pub struct A2aAgentBuilderWithEffectEmitter {
     provenance_writer: ProvenanceWriterConfig,
     agent_id: AgentIdConfig,
     agent_identity: AgentIdentityConfig,
+    boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     register_a2a_session_tool: RegistrationMode,
     a2a_session_route_mode: A2aSessionRouteMode,
     effect_emitter: Arc<dyn EffectEmitter>, // REQUIRED - enforced by typestate
@@ -922,7 +931,7 @@ enum ProvenanceWriterConfig {
     Default,
 }
 
-/// Agent ID configuration: either provided or auto-generated.
+/// Agent ID configuration: provided for hosted agents or generated for ephemeral ones.
 enum AgentIdConfig {
     Provided(baml_rt_core::ids::AgentId),
     AutoGenerate,
@@ -933,10 +942,7 @@ enum AgentIdConfig {
 /// [`A2aAgentBuilder::with_agent_identity`] so A2A spans/metrics carry the deployed
 /// agent's package and instance.
 enum AgentIdentityConfig {
-    Provided {
-        agent_package: AgentPackageName,
-        agent_instance_id: AgentInstanceId,
-    },
+    Provided { agent_package: AgentPackageName },
     Default,
 }
 
@@ -980,7 +986,8 @@ impl A2aAgentBuilder {
     /// - `register_baml_functions`: `true`
     /// - `init_js`: Empty vec
     /// - `task_store` / `provenance_writer`: default pair mounts an **in-memory Surreal** graph
-    /// - `agent_id`: Auto-generated UUID
+    /// - `agent_id`: Auto-generated UUID for ephemeral agents. Hosts that provide a package
+    ///   identity must also provide a stable agent ID.
     ///
     /// **REQUIRED**: Call `with_effect_emitter()` before `build()`.
     pub fn new() -> Self {
@@ -994,6 +1001,7 @@ impl A2aAgentBuilder {
             provenance_writer: ProvenanceWriterConfig::Default,
             agent_id: AgentIdConfig::AutoGenerate,
             agent_identity: AgentIdentityConfig::Default,
+            boot_event_id: None,
             register_a2a_session_tool: RegistrationMode::Skip,
             a2a_session_route_mode: A2aSessionRouteMode::SelfAgent,
             observation_notify: None,
@@ -1105,21 +1113,21 @@ impl A2aAgentBuilder {
         self
     }
 
-    /// Provide the agent's package/instance identity for telemetry.
+    /// Provide the agent's package identity for telemetry.
     ///
-    /// These values are emitted as `agent_package` and `agent_instance_id` on A2A spans
-    /// and metrics on the serving side. Production hosts resolve them from the deployed
-    /// agent's route key; tests that do not care about dashboard identity can skip this
-    /// call and pick up the placeholder defaults applied during `build()`.
-    pub fn with_agent_identity(
+    /// The instance dimension is gone; A2A spans/metrics still emit the historical
+    /// `agent_instance_id` label with the constant `default` for dashboard compatibility.
+    pub fn with_agent_identity(mut self, agent_package: AgentPackageName) -> Self {
+        self.agent_identity = AgentIdentityConfig::Provided { agent_package };
+        self
+    }
+
+    /// Bind this runtime to the event-owned `AgentBooted` activity that created it.
+    pub fn with_boot_event_id(
         mut self,
-        agent_package: AgentPackageName,
-        agent_instance_id: AgentInstanceId,
+        boot_event_id: baml_rt_core::ids::ActivityAnchorId,
     ) -> Self {
-        self.agent_identity = AgentIdentityConfig::Provided {
-            agent_package,
-            agent_instance_id,
-        };
+        self.boot_event_id = Some(boot_event_id);
         self
     }
 
@@ -1141,6 +1149,7 @@ impl A2aAgentBuilder {
             provenance_writer: self.provenance_writer,
             agent_id: self.agent_id,
             agent_identity: self.agent_identity,
+            boot_event_id: self.boot_event_id,
             register_a2a_session_tool: self.register_a2a_session_tool,
             a2a_session_route_mode: self.a2a_session_route_mode,
             effect_emitter: emitter,
@@ -1249,17 +1258,10 @@ impl A2aAgentBuilderWithEffectEmitter {
         self
     }
 
-    /// Provide the agent's package/instance identity for telemetry. See
+    /// Provide the agent's package identity for telemetry. See
     /// [`A2aAgentBuilder::with_agent_identity`] for semantics.
-    pub fn with_agent_identity(
-        mut self,
-        agent_package: AgentPackageName,
-        agent_instance_id: AgentInstanceId,
-    ) -> Self {
-        self.agent_identity = AgentIdentityConfig::Provided {
-            agent_package,
-            agent_instance_id,
-        };
+    pub fn with_agent_identity(mut self, agent_package: AgentPackageName) -> Self {
+        self.agent_identity = AgentIdentityConfig::Provided { agent_package };
         self
     }
 
@@ -1293,26 +1295,25 @@ impl A2aAgentBuilderWithEffectEmitter {
                 id
             }
             AgentIdConfig::AutoGenerate => {
-                tracing::debug!("A2aAgentBuilder::build: Auto-generating agent_id");
+                if matches!(&self.agent_identity, AgentIdentityConfig::Provided { .. }) {
+                    return Err(BamlRtError::InvalidArgument(
+                        "hosted A2A agents must provide a stable agent ID; auto-generation is reserved for ephemeral agents"
+                            .to_string(),
+                    ));
+                }
+                tracing::debug!("A2aAgentBuilder::build: Auto-generating ephemeral agent_id");
                 baml_rt_core::ids::AgentId::from_uuid(
                     baml_rt_core::ids::UuidId::new(Uuid::new_v4()),
                 )
             }
         };
 
-        // Resolve agent_package / agent_instance_id for telemetry. Production hosts call
-        // `with_agent_identity` explicitly; tests fall back to placeholder labels so they
-        // still exercise the same emission path.
-        let (agent_package, agent_instance_id) = match self.agent_identity {
-            AgentIdentityConfig::Provided {
-                agent_package,
-                agent_instance_id,
-            } => (agent_package, agent_instance_id),
-            AgentIdentityConfig::Default => (
-                AgentPackageName::parse("unknown")
-                    .expect("literal 'unknown' is a valid package identifier"),
-                AgentInstanceId::default_id(),
-            ),
+        // Resolve agent_package for telemetry. Production hosts call `with_agent_identity`
+        // explicitly; tests fall back to a placeholder package label.
+        let agent_package = match self.agent_identity {
+            AgentIdentityConfig::Provided { agent_package } => agent_package,
+            AgentIdentityConfig::Default => AgentPackageName::parse("unknown")
+                .expect("literal 'unknown' is a valid package identifier"),
         };
 
         // Resolve bridge: provided or auto-created
@@ -1446,13 +1447,15 @@ impl A2aAgentBuilderWithEffectEmitter {
                             ))
                         })?;
                 let archive_src = Arc::clone(&prov);
-                let runtime_store = SurrealRuntimeStore::new(prov, agent_id.clone());
+                let runtime_store =
+                    SurrealRuntimeStore::new(prov, agent_id.clone(), self.boot_event_id.clone());
                 let w: Arc<dyn ProvenanceWriter> = runtime_store.clone();
                 (runtime_store, Some(w), Some(archive_src))
             }
             (TaskStoreConfig::Default, ProvenanceWriterConfig::Surreal(store)) => {
                 let archive_src = Arc::clone(&store);
-                let runtime_store = SurrealRuntimeStore::new(store, agent_id.clone());
+                let runtime_store =
+                    SurrealRuntimeStore::new(store, agent_id.clone(), self.boot_event_id.clone());
                 let provenance_writer: Arc<dyn ProvenanceWriter> = runtime_store.clone();
                 (runtime_store, Some(provenance_writer), Some(archive_src))
             }
@@ -1535,7 +1538,7 @@ impl A2aAgentBuilderWithEffectEmitter {
         let agent = A2aAgent {
             agent_id,
             agent_package,
-            agent_instance_id,
+            boot_event_id: self.boot_event_id.clone(),
             runtime,
             bridge_handle,
             task_store,
@@ -2548,7 +2551,7 @@ impl A2aAgent {
             context::RuntimeScope::from_request_scope(&resolved_scope, self.agent_id.clone());
 
         let agent_package_str = self.agent_package.as_str();
-        let agent_instance_id_str = self.agent_instance_id.as_str();
+        let agent_instance_id_str = "default";
         let span = if parsed_request.is_stream() {
             spans::a2a_stream(
                 Some(&scope),
@@ -2776,7 +2779,7 @@ mod tests {
     use std::sync::Arc;
 
     use baml_rt_core::{
-        BamlRtError,
+        AgentPackageName, BamlRtError,
         context::InvocationScope,
         ids::{ContextId, ExternalId, MessageId, TaskId},
         stream_completion::StreamCompletion,
@@ -2790,6 +2793,21 @@ mod tests {
         synthetic_input_required_chunk,
     };
     use crate::a2a_types::{A2aMessageId, Message, MessageRole, Part};
+
+    #[tokio::test]
+    async fn hosted_agent_rejects_auto_generated_identity() {
+        let package = AgentPackageName::parse("hosted-agent").expect("valid package name");
+        let result = A2aAgent::builder()
+            .with_agent_identity(package)
+            .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
+            .build()
+            .await;
+
+        assert!(
+            matches!(result, Err(BamlRtError::InvalidArgument(message)) if message.contains("must provide a stable agent ID")),
+            "hosted agents must not silently receive a random identity"
+        );
+    }
 
     #[test]
     fn synthetic_input_required_chunk_wire_shape_and_not_wire_final() {
@@ -2956,7 +2974,7 @@ mod tests {
         let agent_id = baml_rt_core::ids::AgentId::from_uuid(
             baml_rt_core::ids::UuidId::parse_str("00000000-0000-0000-0000-000000000099").unwrap(),
         );
-        let runtime_store = SurrealRuntimeStore::new(provenance.clone(), agent_id);
+        let runtime_store = SurrealRuntimeStore::new(provenance.clone(), agent_id, None);
         let context_id = ContextId::new(99, 1);
         let task_id = TaskId::from_external(ExternalId::new("task-ctx-99-1"));
         runtime_store

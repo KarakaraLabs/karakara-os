@@ -836,7 +836,7 @@ When the pilot topology has more than one runner, public A2A requests can land o
 
 ### The forwarded classification
 
-On public `/agents/{package}/{instance}/...` routes, the HTTP middleware inspects W3C baggage for the key `ingress_service_instance_id`. When that baggage is present, the A2A ingress spans (`baml_rt_api.post_a2a`, `baml_rt_api.post_dispatch`) and the agent-route ingress HTTP metric (`baml_rt_api.http.request_total` / `_duration_ms` with `agent_package` / `agent_instance_id` labels) are labelled `forwarded=true`; otherwise `forwarded=false`. The outer `baml_rt_api.http.request` span adopts the inbound W3C trace context but does not itself carry `forwarded` — the classification is emitted one layer in, on the A2A ingress handler span.
+On public `/agents/{package}/...` routes, the HTTP middleware inspects W3C baggage for the key `ingress_service_instance_id`. When that baggage is present, the A2A ingress spans (`baml_rt_api.post_a2a`, `baml_rt_api.post_dispatch`) and the agent-route ingress HTTP metric (`baml_rt_api.http.request_total` / `_duration_ms` with `agent_package` / `agent_instance_id` labels) are labelled `forwarded=true`; otherwise `forwarded=false`. The outer `baml_rt_api.http.request` span adopts the inbound W3C trace context but does not itself carry `forwarded` — the classification is emitted one layer in, on the A2A ingress handler span.
 
 **This classification is advisory. It is not an authorization boundary.** The baggage value is set by the cluster forward router when a peer runner forwards to this runner, but any HTTP client can set the same header on the public route. Use `forwarded` for telemetry slicing; do not use it for trust or access decisions.
 

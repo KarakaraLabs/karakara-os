@@ -7,7 +7,7 @@
 use std::{net::SocketAddr, time::Instant};
 
 use baml_rt_core::{
-    A2aSseDecoder, A2aStreamChunk, AgentInstanceId, AgentPackageName, BamlRtError,
+    A2aSseDecoder, A2aStreamChunk, AgentPackageName, BamlRtError,
     bus::{BusStream, bus_stream_channel},
     parse_a2a_sse_json_rpc_chunks,
 };
@@ -25,7 +25,7 @@ const MAX_RESPONSE_BYTES: usize = 50 * 1024 * 1024;
 /// Validated and DNS-pinned forwarding target.
 #[derive(Debug, Clone)]
 pub struct ForwardTarget {
-    /// Full URL for the A2A endpoint (e.g. `http://runner-0:18080/agents/pkg/inst/a2a`).
+    /// Full URL for the A2A endpoint (e.g. `http://runner-0:18080/agents/pkg/a2a`).
     /// IPv6 literals are correctly bracketed (`http://[fd12::1]:18080/...`)
     /// because this is rendered from [`url::Url`] rather than manual formatting.
     pub url: String,
@@ -47,7 +47,6 @@ pub struct ForwardTarget {
 pub async fn resolve_forward_target(
     endpoint: &str,
     agent_package: &str,
-    agent_instance_id: &str,
 ) -> Result<ForwardTarget, BamlRtError> {
     let (validated, resolved_addrs) = ssrf::resolve_and_validate_cluster_endpoint(endpoint)
         .await
@@ -56,7 +55,7 @@ pub async fn resolve_forward_target(
     // Build the forward URL from the validated `url::Url` rather than via
     // string formatting. This strips attacker-controlled path/query/fragment
     // and automatically brackets IPv6 literals on render.
-    let forward_url = build_a2a_forward_url(&validated, agent_package, agent_instance_id)?;
+    let forward_url = build_a2a_forward_url(&validated, agent_package)?;
     // `url::Url::host_str` includes the square brackets for IPv6 literals;
     // hyper's DNS override map is keyed on the bare address, so match on
     // `Host` to get the unbracketed form.
@@ -77,13 +76,12 @@ pub async fn resolve_forward_target(
 /// Construct the forwarded A2A URL from a validated cluster endpoint URL.
 ///
 /// - Strips userinfo, path, query, and fragment from the origin.
-/// - Appends `/agents/{agent_package}/{agent_instance_id}/a2a` via
+/// - Appends `/agents/{agent_package}/a2a` via
 ///   [`url::Url::path_segments_mut`] so segments are percent-encoded.
 /// - IPv6 literals are bracketed automatically by the [`url::Url`] renderer.
 fn build_a2a_forward_url(
     validated: &url::Url,
     agent_package: &str,
-    agent_instance_id: &str,
 ) -> Result<url::Url, BamlRtError> {
     let mut url = validated.clone();
     url.set_username("").map_err(|()| {
@@ -101,7 +99,6 @@ fn build_a2a_forward_url(
         .clear()
         .push("agents")
         .push(agent_package)
-        .push(agent_instance_id)
         .push("a2a");
     Ok(url)
 }
@@ -124,7 +121,7 @@ pub async fn forward_request(
     target: &ForwardTarget,
     body: &serde_json::Value,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
 ) -> Result<Vec<serde_json::Value>, BamlRtError> {
@@ -167,9 +164,10 @@ pub async fn forward_stream_request(
     target: &ForwardTarget,
     body: &serde_json::Value,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
+    expected_artifact_hash: &str,
 ) -> Result<BusStream<A2aStreamChunk>, BamlRtError> {
     let span = spans::cluster_a2a_forward(
         agent_package,
@@ -183,9 +181,10 @@ pub async fn forward_stream_request(
     let target = target.clone();
     let body = body.clone();
     let agent_package = agent_package.clone();
-    let agent_instance_id = agent_instance_id.clone();
+    let agent_instance_id = agent_instance_id.to_string();
     let ingress_service_instance_id = ingress_service_instance_id.to_string();
     let target_service_instance_id = target_service_instance_id.map(str::to_string);
+    let expected_artifact_hash = expected_artifact_hash.to_string();
 
     async move {
         let start = Instant::now();
@@ -239,6 +238,12 @@ pub async fn forward_stream_request(
             let mut injector = opentelemetry_http::HeaderInjector(request.headers_mut());
             propagator.inject_context(&ctx, &mut injector);
         });
+        request.headers_mut().insert(
+            "x-agentium-expected-artifact-hash",
+            reqwest::header::HeaderValue::from_str(&expected_artifact_hash).map_err(|e| {
+                BamlRtError::InvalidArgument(format!("invalid expected artifact hash header: {e}"))
+            })?,
+        );
 
         let resp = client.execute(request).await.map_err(|e| {
             let err = BamlRtError::Io(std::io::Error::other(format!(
@@ -266,7 +271,7 @@ pub async fn forward_stream_request(
         tokio::spawn(
             {
                 let agent_package = agent_package.clone();
-                let agent_instance_id = agent_instance_id.clone();
+                let agent_instance_id = agent_instance_id.to_string();
                 async move {
                     let task_start = Instant::now();
                     let mut decoder = A2aSseDecoder::new();
@@ -509,8 +514,8 @@ mod tests {
         AgentPackageName::parse("pkg").expect("valid package name")
     }
 
-    fn test_inst() -> AgentInstanceId {
-        AgentInstanceId::parse("inst").expect("valid instance id")
+    fn test_inst() -> String {
+        "inst".to_string()
     }
 
     fn install_propagator_once() {
@@ -525,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_forward_target_rejects_ssrf() {
-        let result = resolve_forward_target("http://169.254.169.254", "pkg", "default").await;
+        let result = resolve_forward_target("http://169.254.169.254", "pkg").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -536,13 +541,10 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_forward_target_builds_url() {
-        let result = resolve_forward_target("http://10.0.0.1:18080", "my-agent", "default").await;
+        let result = resolve_forward_target("http://10.0.0.1:18080", "my-agent").await;
         assert!(result.is_ok());
         let target = result.unwrap();
-        assert_eq!(
-            target.url,
-            "http://10.0.0.1:18080/agents/my-agent/default/a2a"
-        );
+        assert_eq!(target.url, "http://10.0.0.1:18080/agents/my-agent/a2a");
         assert!(!target.resolved_addrs.is_empty());
     }
 
@@ -551,12 +553,12 @@ mod tests {
     /// `http://fd12::1:18080/...` that are not parseable.
     #[tokio::test]
     async fn resolve_forward_target_brackets_ipv6_literal() {
-        let result = resolve_forward_target("http://[fd12::1]:18080", "my-agent", "default").await;
+        let result = resolve_forward_target("http://[fd12::1]:18080", "my-agent").await;
         assert!(result.is_ok(), "expected Ok, got {result:?}");
         let target = result.unwrap();
 
         assert_eq!(
-            target.url, "http://[fd12::1]:18080/agents/my-agent/default/a2a",
+            target.url, "http://[fd12::1]:18080/agents/my-agent/a2a",
             "IPv6 host must stay bracketed in the forwarded URL"
         );
 
@@ -569,7 +571,7 @@ mod tests {
         assert_eq!(reparsed.port(), Some(18080));
         assert_eq!(
             reparsed.path(),
-            "/agents/my-agent/default/a2a",
+            "/agents/my-agent/a2a",
             "forwarded path must be preserved"
         );
 
@@ -587,12 +589,11 @@ mod tests {
     /// dropped — only the canonical `/agents/.../a2a` path must remain.
     #[tokio::test]
     async fn resolve_forward_target_strips_attacker_controlled_components() {
-        let target =
-            resolve_forward_target("http://10.0.0.1:18080/../../admin?x=1#frag", "pkg", "inst")
-                .await
-                .expect("endpoint should validate");
+        let target = resolve_forward_target("http://10.0.0.1:18080/../../admin?x=1#frag", "pkg")
+            .await
+            .expect("endpoint should validate");
 
-        assert_eq!(target.url, "http://10.0.0.1:18080/agents/pkg/inst/a2a");
+        assert_eq!(target.url, "http://10.0.0.1:18080/agents/pkg/a2a");
     }
 
     /// Regression: `build_a2a_forward_url` cloned the validated `url::Url`
@@ -600,13 +601,12 @@ mod tests {
     /// credentials into the forwarded URL (and into debug logs).
     #[tokio::test]
     async fn resolve_forward_target_strips_ipv4_userinfo() {
-        let target =
-            resolve_forward_target("http://user:pass@10.0.0.1:18080", "my-agent", "default")
-                .await
-                .expect("endpoint with userinfo should validate after stripping");
+        let target = resolve_forward_target("http://user:pass@10.0.0.1:18080", "my-agent")
+            .await
+            .expect("endpoint with userinfo should validate after stripping");
 
         assert_eq!(
-            target.url, "http://10.0.0.1:18080/agents/my-agent/default/a2a",
+            target.url, "http://10.0.0.1:18080/agents/my-agent/a2a",
             "forwarded URL must not contain userinfo"
         );
         assert!(
@@ -628,13 +628,12 @@ mod tests {
     /// handling and userinfo stripping compose correctly.
     #[tokio::test]
     async fn resolve_forward_target_strips_ipv6_userinfo() {
-        let target =
-            resolve_forward_target("http://user:pass@[fd12::1]:18080", "my-agent", "default")
-                .await
-                .expect("IPv6 endpoint with userinfo should validate after stripping");
+        let target = resolve_forward_target("http://user:pass@[fd12::1]:18080", "my-agent")
+            .await
+            .expect("IPv6 endpoint with userinfo should validate after stripping");
 
         assert_eq!(
-            target.url, "http://[fd12::1]:18080/agents/my-agent/default/a2a",
+            target.url, "http://[fd12::1]:18080/agents/my-agent/a2a",
             "forwarded URL must strip userinfo and preserve IPv6 brackets"
         );
         assert!(
@@ -689,7 +688,7 @@ mod tests {
         });
 
         let target = ForwardTarget {
-            url: format!("http://127.0.0.1:{port}/agents/pkg/inst/a2a"),
+            url: format!("http://127.0.0.1:{port}/agents/pkg/a2a"),
             host: "127.0.0.1".to_string(),
             resolved_addrs: vec![SocketAddr::from(([127, 0, 0, 1], port))],
         };
@@ -750,7 +749,7 @@ mod tests {
         });
 
         let target = ForwardTarget {
-            url: format!("http://127.0.0.1:{port}/agents/pkg/inst/a2a"),
+            url: format!("http://127.0.0.1:{port}/agents/pkg/a2a"),
             host: "127.0.0.1".to_string(),
             resolved_addrs: vec![SocketAddr::from(([127, 0, 0, 1], port))],
         };
@@ -810,7 +809,7 @@ mod tests {
         });
 
         let target = ForwardTarget {
-            url: format!("http://127.0.0.1:{port}/agents/pkg/inst/a2a"),
+            url: format!("http://127.0.0.1:{port}/agents/pkg/a2a"),
             host: "127.0.0.1".to_string(),
             resolved_addrs: vec![SocketAddr::from(([127, 0, 0, 1], port))],
         };

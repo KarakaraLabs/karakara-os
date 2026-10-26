@@ -28,7 +28,6 @@ pub struct AgentCardDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_version: Option<u32>,
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub tools: Vec<String>,
     /// BAML function names registered in the agent's runtime.
     pub baml_functions: Vec<String>,
@@ -45,7 +44,6 @@ pub struct AgentCardDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentDiscoveryEntryDto {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub name: String,
     pub version: String,
     /// Agent card (cut-down shape) for discovery.
@@ -156,7 +154,6 @@ impl From<baml_rt_core::AgentCard> for AgentCardDto {
             content_hash: c.content_hash,
             repository_version: c.repository_version,
             agent_package: c.agent_package,
-            agent_instance_id: c.agent_instance_id,
             tools: c.tools,
             baml_functions: c.baml_functions,
             description: c.description,
@@ -196,7 +193,6 @@ impl From<baml_rt_core::AgentDiscoveryEntry> for AgentDiscoveryEntryDto {
     fn from(e: baml_rt_core::AgentDiscoveryEntry) -> Self {
         Self {
             agent_package: e.agent_package,
-            agent_instance_id: e.agent_instance_id,
             name: e.name,
             version: e.version,
             agent_card: AgentCardDto::from(e.agent_card),
@@ -335,14 +331,12 @@ impl TryFrom<ProducedEventDto> for baml_rt_core::ProducedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EventDeliveryFailureDto {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EventPublishAcceptanceDto {
     pub agent_package: String,
-    pub agent_instance_id: String,
     pub detail: String,
 }
 
@@ -370,7 +364,6 @@ impl EventPublishResponseDto {
                 .into_iter()
                 .map(|a| EventPublishAcceptanceDto {
                     agent_package: a.agent_package,
-                    agent_instance_id: a.agent_instance_id,
                     detail: a.detail,
                 })
                 .collect(),
@@ -379,7 +372,6 @@ impl EventPublishResponseDto {
                 .into_iter()
                 .map(|(route, failure)| EventDeliveryFailureDto {
                     agent_package: route.agent_package.to_string(),
-                    agent_instance_id: route.agent_instance_id.to_string(),
                     detail: failure.detail(),
                 })
                 .collect(),

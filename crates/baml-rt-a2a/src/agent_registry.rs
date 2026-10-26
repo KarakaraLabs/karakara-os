@@ -23,6 +23,19 @@ pub trait AgentRegistry: AgentLister + Send + Sync {
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>>;
 
+    /// Handle A2A with an optional exact-artifact precondition.
+    ///
+    /// Implementations that can resolve the routed booted agent must reject a mismatch
+    /// before creating a task or emitting execution provenance.
+    async fn handle_a2a_stream_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        _expected_artifact_hash: Option<&baml_rt_core::ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
+        self.handle_a2a_stream(key, request).await
+    }
+
     /// Resolve an agent by route key and deliver a deterministic non-conversational dispatch.
     async fn handle_dispatch(
         &self,

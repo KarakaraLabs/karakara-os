@@ -250,7 +250,6 @@ fn run_case(
             &SendStreamParams {
                 base_url,
                 agent,
-                instance: "default",
                 context_id: &context_id,
                 task_id: task_id.as_deref(),
                 text: send,

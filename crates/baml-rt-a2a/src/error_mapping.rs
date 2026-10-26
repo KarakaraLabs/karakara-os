@@ -93,6 +93,14 @@ pub fn map_error(error: &BamlRtError) -> A2aErrorMapping {
             "invalid_argument",
             Retryability::Permanent,
         ),
+        BamlRtError::UnsupportedAgentInstance(message) => mapping(
+            error,
+            -32600,
+            "Unsupported request",
+            Some(serde_json::json!({ "details": message })),
+            "unsupported_agent_instance",
+            Retryability::Permanent,
+        ),
         BamlRtError::Conflict(message) => mapping(
             error,
             -32009,

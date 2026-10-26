@@ -8,11 +8,12 @@
 //! Commands are distinct types (not a god-enum with optional fields) so that
 //! invalid operations are unrepresentable.
 
+use baml_rt_hash::AgentIdentityDigest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entry::{ChangeRationale, SourceBundle, Tag},
-    ids::{AgentName, ContentHash},
+    ids::{AgentName, ArtifactHash, ContentHash},
     lineage::{EdgeDescription, InfluenceRef},
 };
 
@@ -73,9 +74,25 @@ pub struct ForkCommand {
 // PublishResult — the outcome of a successful publish or fork
 // ---------------------------------------------------------------------------
 
-/// Returned after a successful publish or fork.
+/// Returned after a successful release-producing publish or fork.
+///
+/// Every successful result is deployable: the artifact blob and behavior-set identity
+/// were produced by the build path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishResult {
+    pub hash: ContentHash,
+    pub artifact_hash: ArtifactHash,
+    pub identity_digest: AgentIdentityDigest,
+    pub version_ref: crate::ids::VersionRef,
+    pub generation: crate::ids::Generation,
+}
+
+/// Returned after a source-only draft operation.
+///
+/// Drafts allocate a repository version for lineage and review, but they are not
+/// deployment candidates. Release endpoints never return this type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftResult {
     pub hash: ContentHash,
     pub version_ref: crate::ids::VersionRef,
     pub generation: crate::ids::Generation,

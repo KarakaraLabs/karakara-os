@@ -468,12 +468,8 @@ async fn delegated_context_send_done_replay_seeds_later_archive_read() {
     let child_task_id = TaskId::for_delegated_child(
         UuidId::parse_str("00000000-0000-0000-0000-0000000000a2").unwrap(),
     );
-    let context_id = ContextId::for_a2a_child(
-        &caller_context_id,
-        "argument-cleese",
-        "default",
-        &child_task_id,
-    );
+    let context_id =
+        ContextId::for_a2a_child(&caller_context_id, "argument-cleese", &child_task_id);
     let ctx_key = context_id.as_str().to_string();
     let msg_id = MessageId::from_external(ExternalId::new("delegated-msg-1"));
     let agent_id =

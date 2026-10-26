@@ -66,7 +66,6 @@ struct Part<'a> {
 pub struct SendStreamParams<'a> {
     pub base_url: &'a str,
     pub agent: &'a str,
-    pub instance: &'a str,
     pub context_id: &'a str,
     pub task_id: Option<&'a str>,
     pub text: &'a str,
@@ -82,15 +81,12 @@ pub struct StreamTurnOutcome {
     pub task_id: Option<String>,
 }
 
-/// POST `/agents/{agent}/{instance}/a2a` and parse SSE JSON-RPC chunks.
+/// POST `/agents/{agent}/a2a` and parse SSE JSON-RPC chunks.
 pub async fn send_message_stream(
     http: &AuthenticatedHttp<'_>,
     params: &SendStreamParams<'_>,
 ) -> Result<StreamTurnOutcome> {
-    let url = join_url(
-        params.base_url,
-        &format!("/agents/{}/{}/a2a", params.agent, params.instance),
-    );
+    let url = join_url(params.base_url, &format!("/agents/{}/a2a", params.agent));
     let message_id = params
         .message_id
         .map(str::to_owned)

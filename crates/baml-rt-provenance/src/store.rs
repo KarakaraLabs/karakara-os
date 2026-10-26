@@ -145,13 +145,12 @@ pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
         task_id: TaskId,
         executing_agent_id: AgentId,
         source: TaskAgentBindingSource,
+        boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     ) -> Result<()> {
-        self.bind_task_executing_agent(TaskAgentBinding::new(
-            context_id,
-            task_id,
-            executing_agent_id,
-            source,
-        )?)
+        self.bind_task_executing_agent(
+            TaskAgentBinding::new(context_id, task_id, executing_agent_id, source)?
+                .with_boot_event_id(boot_event_id),
+        )
         .await
     }
 }

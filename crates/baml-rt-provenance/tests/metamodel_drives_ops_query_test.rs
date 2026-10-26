@@ -110,11 +110,11 @@ fn messages_query_with_full_filter_set_emits_typed_traversals() {
     );
     assert!(
         sql.contains("WAS_EXECUTED_BY"),
-        "Message agent traversal reaches AgentRuntimeInstance via WAS_EXECUTED_BY: {sql}"
+        "Message agent traversal reaches the stable Agent via WAS_EXECUTED_BY: {sql}"
     );
     assert!(
-        sql.contains("WAS_BOOTSTRAPPED_BY"),
-        "agent_package traversal must reach AgentArchive via WAS_BOOTSTRAPPED_BY: {sql}"
+        sql.contains("label = 'Agent'") && sql.contains("props.a2a_agent_type"),
+        "agent_package traversal must resolve directly against the Agent registry: {sql}"
     );
     assert!(
         sql.contains("A2A_TASK_MESSAGE"),
@@ -128,7 +128,7 @@ fn messages_query_with_full_filter_set_emits_typed_traversals() {
     // distinct key.
     let obj = binds.as_object().expect("binds object");
     assert!(obj.values().any(|v| v == "context:ctx-test"));
-    let expected_agent_node = format!("agent_instance:{AGENT_UUID}");
+    let expected_agent_node = format!("agent:{AGENT_UUID}");
     assert!(obj.values().any(|v| v == expected_agent_node.as_str()));
     assert!(obj.values().any(|v| v == "task-lifecycle-demo"));
     assert!(obj.values().any(|v| v == "task:task-test"));

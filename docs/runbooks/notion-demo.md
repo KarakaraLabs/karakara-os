@@ -24,7 +24,7 @@ This command:
 1. Packages `agents/notion-agent`
 2. Starts `baml-agent-runner` in HTTP mode
 3. Enables file-backed provenance (default: `provenance.db`)
-4. Sends one `message.sendStream` request to `/agents/notion-agent/default/a2a`
+4. Sends one `message.sendStream` request to `/agents/notion-agent/a2a`
 5. Captures SSE output and attempts to print `contextId`/`taskId`
 
 Stop the background runner:

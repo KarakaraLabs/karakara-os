@@ -14,7 +14,7 @@
 //! - **I-EPISODE-GATE:** `EpisodeReader` returns `EpisodeUnbound` when the head pointer is absent — never a partial episode.
 //! - **I-HOST-POLL-EXCEPTION:** Poll ingress with nil agent never creates executing-agent binding.
 
-use baml_rt_core::ids::{AgentId, ContextId, TaskId, UuidId};
+use baml_rt_core::ids::{ActivityAnchorId, AgentId, ContextId, TaskId, UuidId};
 use uuid::Uuid;
 
 use crate::{
@@ -40,6 +40,8 @@ pub struct TaskAgentBinding {
     pub task_id: TaskId,
     pub executing_agent_id: AgentId,
     pub source: TaskAgentBindingSource,
+    /// Event-owned boot that is executing this task.
+    pub boot_event_id: Option<ActivityAnchorId>,
 }
 
 /// Returns true when `agent_id` is the nil host sentinel (poll ingress speaker).
@@ -65,16 +67,23 @@ impl TaskAgentBinding {
             task_id,
             executing_agent_id,
             source,
+            boot_event_id: None,
         })
+    }
+
+    pub fn with_boot_event_id(mut self, boot_event_id: Option<ActivityAnchorId>) -> Self {
+        self.boot_event_id = boot_event_id;
+        self
     }
 
     pub fn into_events(self) -> [ProvEvent; 2] {
         [
             ProvEvent::task_exists(self.context_id.clone(), self.task_id.clone()),
-            ProvEvent::task_execution_started(
+            ProvEvent::task_execution_started_under_boot(
                 self.context_id,
                 self.task_id,
                 self.executing_agent_id,
+                self.boot_event_id,
             ),
         ]
     }

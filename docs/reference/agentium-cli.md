@@ -104,7 +104,7 @@ agentium eval report                # prints eval/out/last-run.json
 Eval talks to a **running** runner over HTTP:
 
 1. **`POST /eval/sessions`** (operator auth) — optional ephemeral model override scope; eval run sends `X-Agentium-Eval-Session` on A2A turns.
-2. **`POST /agents/{agent}/{instance}/a2a`** — chat turns via `message.sendStream` (JSON-RPC `id` must use `corr-<millis>-<counter>` format).
+2. **`POST /agents/{agent}/a2a`** — chat turns via `message.sendStream` (JSON-RPC `id` must use `corr-<millis>-<counter>` format).
 3. **`POST /events/publish`** — ingress turns (fixture JSON on disk).
 
 Manifest syntax: `crates/agentium/eval/cases.toml.example`. Turn modes:

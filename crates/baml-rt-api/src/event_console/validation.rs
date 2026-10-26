@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use baml_rt_a2a::AgentRegistry;
 use baml_rt_core::{
-    AgentDispatchRequest, AgentDispatchRoutingKey, AgentInstanceId, AgentPackageName,
-    AgentRouteKey, ContextId, EventSchemaVersion, EventSourceKind, TaskId,
+    AgentDispatchRequest, AgentDispatchRoutingKey, AgentPackageName, AgentRouteKey, ContextId,
+    EventSchemaVersion, EventSourceKind, TaskId,
     context::generate_context_id,
     event_subscription::{
         EventSourceKey, EventSubscription, PublishedEvent, subscriptions_match_published_event,
@@ -45,18 +45,6 @@ pub fn validate_draft(
             return report(false, false, errors, warnings, None);
         }
     };
-    let instance = match AgentInstanceId::parse(&body.agent_instance_id) {
-        Some(i) => i,
-        None => {
-            errors.push(issue(
-                "invalid_agent_instance",
-                "agent_instance_id must match [A-Za-z0-9_-]",
-                None,
-            ));
-            return report(false, false, errors, warnings, None);
-        }
-    };
-
     let routing_key = match AgentDispatchRoutingKey::parse(&body.routing_key) {
         Some(k) => k,
         None => {
@@ -136,16 +124,13 @@ pub fn validate_draft(
     }
 
     let published = build_published_event(body);
-    let route_key = AgentRouteKey::new(package.clone(), instance.clone());
+    let route_key = AgentRouteKey::new(package.clone());
     let fleet_matches = count_matching_subscribers(registry, &published);
     let matched_subscription = fleet_matches > 0;
     let selected_matches = registry
         .list_agents()
         .into_iter()
-        .find(|e| {
-            e.agent_package == route_key.agent_package.as_str()
-                && e.agent_instance_id == route_key.agent_instance_id.as_str()
-        })
+        .find(|e| e.agent_package == route_key.agent_package.as_str())
         .is_some_and(|entry| {
             entry
                 .agent_card
@@ -172,9 +157,8 @@ pub fn validate_draft(
         warnings.push(issue(
             "selected_agent_not_matched",
             format!(
-                "selected agent {}/{} does not subscribe to {label}; publish will fan out to {fleet_matches} subscriber(s)",
+                "selected agent {} does not subscribe to {label}; publish will fan out to {fleet_matches} subscriber(s)",
                 route_key.agent_package.as_str(),
-                route_key.agent_instance_id.as_str(),
                 fleet_matches = fleet_matches
             ),
             None,
@@ -456,7 +440,6 @@ mod tests {
         fn list_agents(&self) -> Vec<AgentDiscoveryEntry> {
             vec![AgentDiscoveryEntry {
                 agent_package: "dispatch-echo".into(),
-                agent_instance_id: "default".into(),
                 name: "dispatch-echo".into(),
                 version: "1.0.0".into(),
                 agent_card: AgentCard {
@@ -465,7 +448,6 @@ mod tests {
                     content_hash: None,
                     repository_version: None,
                     agent_package: "dispatch-echo".into(),
-                    agent_instance_id: "default".into(),
                     tools: vec![],
                     baml_functions: vec![],
                     description: None,
@@ -510,7 +492,6 @@ mod tests {
     fn validate_matching_subscription_for_dispatch_echo() {
         let body = EventDispatchValidateRequestDto {
             agent_package: "dispatch-echo".into(),
-            agent_instance_id: "default".into(),
             routing_key: "event:intake".into(),
             message_type: "host.source-records.v1".into(),
             source_kind: Some("clickup".into()),

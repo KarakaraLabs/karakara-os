@@ -358,7 +358,7 @@ export function useA2aClient() {
 
   function selectAgent(agent: AgentDiscoveryEntry): void {
     traceTranscript("selectAgent.clear", {
-      agent: `${agent.agent_package}/${agent.agent_instance_id}`,
+      agent: agent.agent_package,
       priorMessages: messages.value.length,
       priorContextId: _contextId.value ?? null,
     });
@@ -454,7 +454,7 @@ export function useA2aClient() {
     }
 
     const agent = selectedAgent.value;
-    const url = `/agents/${agent.agent_package}/${agent.agent_instance_id}/a2a`;
+    const url = `/agents/${agent.agent_package}/a2a`;
 
     // Add user message
     messages.value.push({
@@ -1047,7 +1047,7 @@ export function useA2aClient() {
       contextId,
       priorMessages: messages.value.length,
       selectedAgent: selectedAgent.value
-        ? `${selectedAgent.value.agent_package}/${selectedAgent.value.agent_instance_id}`
+        ? selectedAgent.value.agent_package
         : null,
     });
     messages.value = [];

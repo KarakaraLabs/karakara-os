@@ -431,10 +431,7 @@ async fn test_e2e_clickup_real_model_with_plan_discovery() {
     };
 
     let http_client = reqwest::Client::new();
-    let a2a_url = format!(
-        "{}/agents/clickup-agent/default/a2a/sse",
-        runner_api.base_url
-    );
+    let a2a_url = format!("{}/agents/clickup-agent/a2a/sse", runner_api.base_url);
     let context_id = ContextId::new(77, 7);
     let planning_task_id = TaskId::from_external(ExternalId::new("clickup-e2e-plan-obs"));
     let mut matched_tool_result: Option<Value> = None;

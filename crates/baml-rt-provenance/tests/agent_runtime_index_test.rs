@@ -5,7 +5,7 @@
 //! Agent runtime index registry behavior.
 
 use baml_rt_core::{
-    AgentInstanceId, AgentPackageName, AgentRouteKey, DispatchTarget, Outcome,
+    AgentPackageName, AgentRouteKey, DispatchTarget, Outcome,
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_provenance::{
@@ -18,7 +18,7 @@ use test_support::testing::provenance_fixtures::build_isolated_store;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn agent_booted_upserts_package_instance_registry() {
+async fn agent_booted_registers_stable_agent() {
     let store = build_isolated_store().await;
     let agent_id = AgentId::from_uuid(UuidId::new(Uuid::new_v4()));
     store
@@ -33,7 +33,7 @@ async fn agent_booted_upserts_package_instance_registry() {
 
     let rows = store
         .db()
-        .query("SELECT instance_node_id, agent_package, agent_id FROM agent_package_instance")
+        .query("SELECT instance_node_id, agent_package, agent_id FROM agent_identity_registry")
         .await
         .expect("query")
         .take::<Vec<serde_json::Value>>(0)
@@ -59,10 +59,7 @@ async fn dispatch_without_boot_does_not_index_route_stub() {
             "event:intake".to_string(),
             "host.source-records.v1".to_string(),
             DispatchTarget::with_optional_agent(
-                AgentRouteKey::new(
-                    AgentPackageName::parse("orphan-agent").expect("package"),
-                    AgentInstanceId::default(),
-                ),
+                AgentRouteKey::new(AgentPackageName::parse("orphan-agent").expect("package")),
                 None,
             ),
             "clickup".to_string(),
@@ -74,7 +71,7 @@ async fn dispatch_without_boot_does_not_index_route_stub() {
 
     let rows = store
         .db()
-        .query("SELECT instance_node_id, agent_package, agent_id FROM agent_package_instance")
+        .query("SELECT instance_node_id, agent_package, agent_id FROM agent_identity_registry")
         .await
         .expect("query")
         .take::<Vec<serde_json::Value>>(0)

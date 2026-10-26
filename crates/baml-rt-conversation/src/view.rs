@@ -393,7 +393,7 @@ mod tests {
 
         let caller = ContextId::new(1, 2);
         let child_task = TaskId::for_delegated_child(UuidId::new(Uuid::nil()));
-        let child_ctx = ContextId::for_a2a_child(&caller, "pkg", "default", &child_task);
+        let child_ctx = ContextId::for_a2a_child(&caller, "pkg", &child_task);
         assert_eq!(
             classify_user_speaker_kind(
                 &child_ctx,

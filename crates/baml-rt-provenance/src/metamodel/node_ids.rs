@@ -96,11 +96,11 @@ impl AgentRuntimeInstanceNodeId {
         Self(raw.into())
     }
 
-    /// Canonical constructor from a wire `AgentId`. Mirrors the
-    /// `from_parts("agent_instance", [agent_id])` encoding used by
-    /// [`crate::id_semantics::AgentRuntimeInstanceId`].
+    /// Canonical constructor from a wire `AgentId`. Mirrors the stable
+    /// `from_parts("agent", [agent_id])` encoding used by
+    /// [`crate::id_semantics::AgentNodeId`].
     pub fn for_agent_id(agent: &AgentId) -> Self {
-        Self(format!("agent_instance:{}", agent.as_str()))
+        Self(format!("agent:{}", agent.as_str()))
     }
 
     pub fn as_str(&self) -> &str {

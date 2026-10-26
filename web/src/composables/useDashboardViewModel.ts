@@ -98,7 +98,7 @@ export interface DashboardViewModel {
 
 function laneFromSnapshot(s: DashboardLaneSnapshot): RuntimeLane {
   const agentLabel = s.agent
-    ? `${s.agent.agent_package}/${s.agent.agent_instance_id}`
+    ? s.agent.agent_package
     : "No agent bound";
   let status: RuntimeLane["status"] = "idle";
   if (s.isActive && s.isStreaming) status = "streaming";

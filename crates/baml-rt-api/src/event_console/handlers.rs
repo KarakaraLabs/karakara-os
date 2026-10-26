@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
-use baml_rt_core::{AgentInstanceId, AgentPackageName, AgentRouteKey};
+use baml_rt_core::{AgentPackageName, AgentRouteKey};
 
 use crate::{
     event_console::{
@@ -48,17 +48,10 @@ pub async fn post_event_dispatch_validate(
     Json(validate_draft(state.registry.as_ref(), &body))
 }
 
-pub fn parse_route_key(
-    agent_package: &str,
-    agent_instance_id: &str,
-) -> Result<AgentRouteKey, (StatusCode, String)> {
+pub fn parse_route_key(agent_package: &str) -> Result<AgentRouteKey, (StatusCode, String)> {
     let package = AgentPackageName::parse(agent_package).ok_or((
         StatusCode::BAD_REQUEST,
         "agent_package must match [A-Za-z0-9_-]".to_string(),
     ))?;
-    let instance = AgentInstanceId::parse(agent_instance_id).ok_or((
-        StatusCode::BAD_REQUEST,
-        "agent_instance_id must match [A-Za-z0-9_-]".to_string(),
-    ))?;
-    Ok(AgentRouteKey::new(package, instance))
+    Ok(AgentRouteKey::new(package))
 }

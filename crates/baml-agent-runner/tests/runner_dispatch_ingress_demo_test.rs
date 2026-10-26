@@ -114,7 +114,7 @@ async fn dispatch_ingress_demo_with_task_per_lifecycle_unit() {
         .expect("runner api");
 
     let dispatch_url = format!(
-        "{}/agents/dispatch-ingress-demo/default/dispatch",
+        "{}/agents/dispatch-ingress-demo/dispatch",
         runner_api.base_url.trim_end_matches('/')
     );
     let body = json!({

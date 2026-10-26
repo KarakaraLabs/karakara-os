@@ -13,9 +13,9 @@ use async_trait::async_trait;
 use tracing::warn;
 
 use crate::{
-    AgentDiscoveryEntry, AgentDispatchAck, AgentDispatchRequest, AgentInstanceId, AgentPackageName,
-    AgentRouteKey, DispatchTarget, EventDeliveryOutcome, HostIngressRecorder, ProducedEvent,
-    Result, SubscriberAcceptance, SubscriberDeliveryFailure,
+    AgentDiscoveryEntry, AgentDispatchAck, AgentDispatchRequest, AgentPackageName, AgentRouteKey,
+    DispatchTarget, EventDeliveryOutcome, HostIngressRecorder, ProducedEvent, Result,
+    SubscriberAcceptance, SubscriberDeliveryFailure,
     deployed_agent_lookup::DeployedAgentLookup,
     ensure_dispatch_task_scope,
     event_subscription::{PublishedEvent, subscriptions_match_published_event},
@@ -47,13 +47,11 @@ pub fn matching_subscriber_routes(
         .filter(|entry| subscriptions_match_published_event(&entry.agent_card.subscriptions, event))
         .filter_map(|entry| {
             let package = AgentPackageName::parse(&entry.agent_package);
-            let instance = AgentInstanceId::parse(&entry.agent_instance_id);
-            match (package, instance) {
-                (Some(p), Some(i)) => Some(AgentRouteKey::new(p, i)),
-                _ => {
+            match package {
+                Some(p) => Some(AgentRouteKey::new(p)),
+                None => {
                     warn!(
                         agent_package = %entry.agent_package,
-                        agent_instance_id = %entry.agent_instance_id,
                         "matched subscriber has invalid route key and will be skipped"
                     );
                     None
@@ -203,7 +201,6 @@ pub async fn deliver_to_subscribers(
                 outcome.subscribers_accepted += 1;
                 outcome.acceptances.push(SubscriberAcceptance {
                     agent_package: target.agent_package.to_string(),
-                    agent_instance_id: target.agent_instance_id.to_string(),
                     detail: ack.detail.unwrap_or_else(|| "accepted".to_string()),
                 });
             }
@@ -235,7 +232,6 @@ mod tests {
     fn entry(package: &str, subs: Vec<EventSubscription>) -> AgentDiscoveryEntry {
         AgentDiscoveryEntry {
             agent_package: package.into(),
-            agent_instance_id: "default".into(),
             name: package.into(),
             version: "1".into(),
             agent_card: AgentCard {
@@ -244,7 +240,6 @@ mod tests {
                 content_hash: None,
                 repository_version: None,
                 agent_package: package.into(),
-                agent_instance_id: "default".into(),
                 tools: vec![],
                 baml_functions: vec![],
                 description: None,
@@ -300,12 +295,8 @@ mod tests {
             target: &crate::AgentRouteKey,
             _request: crate::AgentDispatchRequest,
         ) -> crate::Result<crate::AgentDispatchAck> {
-            let key = format!(
-                "{}/{}",
-                target.agent_package.as_str(),
-                target.agent_instance_id.as_str()
-            );
-            match self.responses.get(&key) {
+            let key = target.agent_package.as_str();
+            match self.responses.get(key) {
                 Some(MockDispatchResponse::Accept) => Ok(crate::AgentDispatchAck {
                     accepted: true,
                     detail: None,
@@ -366,15 +357,12 @@ mod tests {
         let index = SubscriberIndex::new(&entries);
         let port = MockDispatchPort {
             responses: HashMap::from([
-                ("accept-agent/default".into(), MockDispatchResponse::Accept),
+                ("accept-agent".into(), MockDispatchResponse::Accept),
                 (
-                    "reject-agent/default".into(),
+                    "reject-agent".into(),
                     MockDispatchResponse::Reject("not now"),
                 ),
-                (
-                    "error-agent/default".into(),
-                    MockDispatchResponse::Fail("boom"),
-                ),
+                ("error-agent".into(), MockDispatchResponse::Fail("boom")),
             ]),
         };
 

@@ -238,14 +238,10 @@ struct RunArgs {
 
     /// Optional explicit target agent package.
     ///
-    /// When omitted together with `--dispatch-agent-instance-id`, task-daemon delivers to subscribed
-    /// agents discovered from the host instead of one implicit default target.
+    /// When omitted, task-daemon delivers to subscribed agents discovered from the host instead
+    /// of one implicit default target.
     #[arg(long)]
     dispatch_agent_package: Option<String>,
-
-    /// Optional explicit target agent instance id. Must be provided together with --dispatch-agent-package.
-    #[arg(long)]
-    dispatch_agent_instance_id: Option<String>,
 
     /// When set with the agent host base URL, sends live dispatch requests instead of dry-run logging.
     #[arg(long, default_value_t = false)]
@@ -412,7 +408,7 @@ async fn run(args: RunArgs) -> Result<()> {
     }
 
     if let Some(url) = args.dispatch_base_url.clone() {
-        if args.dispatch_agent_package.is_some() || args.dispatch_agent_instance_id.is_some() {
+        if args.dispatch_agent_package.is_some() {
             tracing::warn!(
                 "explicit dispatch agent target is ignored; publish uses subscription matching on the runner"
             );

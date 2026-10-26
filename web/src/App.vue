@@ -189,7 +189,7 @@ function currentChatRouteKey(): string {
   return chatRouteKey({
     view: "chat",
     agentPackage: selectedAgent.value?.agent_package ?? null,
-    agentInstance: selectedAgent.value?.agent_instance_id ?? null,
+    agentInstance: null,
     contextId: selectedHistoryContextId.value ?? contextId.value ?? null,
   });
 }
@@ -201,7 +201,7 @@ function syncChatRouteToUrl(push: boolean): void {
   writeChatRouteToUrl(
     {
       agentPackage: selectedAgent.value?.agent_package ?? null,
-      agentInstance: selectedAgent.value?.agent_instance_id ?? null,
+      agentInstance: null,
       contextId: selectedHistoryContextId.value ?? contextId.value ?? null,
     },
     { push },
@@ -220,15 +220,11 @@ async function applyChatRouteFromUrl(): Promise<void> {
     }
     if (next.agentPackage && activeClient.value?.agents.value.length) {
       const match = activeClient.value.agents.value.find(
-        (a) =>
-          a.agent_package === next.agentPackage &&
-          (!next.agentInstance || a.agent_instance_id === next.agentInstance),
+        (a) => a.agent_package === next.agentPackage,
       );
       if (match) {
         const cur = activeClient.value.selectedAgent.value;
-        const sameAgent =
-          cur?.agent_package === match.agent_package &&
-          cur?.agent_instance_id === match.agent_instance_id;
+        const sameAgent = cur?.agent_package === match.agent_package;
         if (!sameAgent) {
           activeClient.value.selectAgent(match);
         }
@@ -266,18 +262,16 @@ watch(
   [
     () => activeClient.value?.clientId ?? null,
     () => selectedAgent.value?.agent_package ?? null,
-    () => selectedAgent.value?.agent_instance_id ?? null,
     () => selectedHistoryContextId.value ?? contextId.value ?? null,
     () => messages.value.length,
   ],
-  ([clientId, agentPackage, agentInstance, currentContextId, messageCount]) => {
+  ([clientId, agentPackage, currentContextId, messageCount]) => {
     if (window.location.hostname !== "localhost") return;
     console.debug(
       "[transcript]",
       JSON.stringify({
         activeClientId: clientId,
         agentPackage,
-        agentInstance,
         contextId: currentContextId,
         messageCount,
       }),
@@ -378,7 +372,6 @@ watch(
     () => view.value,
     () => activeTabId.value,
     () => selectedAgent.value?.agent_package ?? null,
-    () => selectedAgent.value?.agent_instance_id ?? null,
     () => selectedHistoryContextId.value ?? contextId.value ?? null,
   ],
   () => {
@@ -466,7 +459,6 @@ watch(
           <ProvenancePane
             :context-id="contextId"
             :task-id="taskId ?? undefined"
-            :selected-agent-id="selectedAgent?.agent_instance_id ?? undefined"
             :run-status="chatRunStatus"
             :diagrams="provenancePaneDiagrams"
             :trace-refresh-tick="traceRefreshGeneration"

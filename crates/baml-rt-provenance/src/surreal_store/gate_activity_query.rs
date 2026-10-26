@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use super::{
-    SurrealProvenanceStore, agent_runtime_index::normalize_agent_field_for_ops,
+    SurrealProvenanceStore,
+    agent_runtime_index::{AgentVersionIndex, normalize_agent_field_for_ops},
     payload::decode_payload_row,
 };
 use crate::{
@@ -33,6 +34,7 @@ impl SurrealProvenanceStore {
 
         // Registry table only — never graph-scan AgentRuntimeInstance on this hot path.
         let index = self.load_agent_runtime_index_from_registry().await?;
+        let version_index = self.load_agent_version_index().await?;
         let agent_package_filter = filters.agent_package.clone();
 
         let q = GraphQuery::<labels::ToolCall, _>::new()
@@ -69,7 +71,7 @@ impl SurrealProvenanceStore {
             let Some(mut out) = canonicalize_gate_tool_row(&row) else {
                 continue;
             };
-            apply_gate_agent_identity(&mut out, &identity_by_agent_id);
+            apply_gate_agent_identity(&mut out, &identity_by_agent_id, &version_index);
             if let Some(ref pkg) = agent_package_filter
                 && !gate_row_matches_agent_package(&out, pkg)
             {
@@ -180,7 +182,8 @@ fn canonicalize_gate_tool_row(row: &Value) -> Option<Map<String, Value>> {
 
 fn apply_gate_agent_identity(
     row: &mut Map<String, Value>,
-    identity_by_agent_id: &HashMap<String, (String, String)>,
+    identity_by_agent_id: &HashMap<String, String>,
+    version_index: &AgentVersionIndex,
 ) {
     let Some(agent_id) = row.get("agent_id").and_then(Value::as_str) else {
         if let Some(pkg) = row
@@ -192,19 +195,27 @@ fn apply_gate_agent_identity(
         }
         return;
     };
-    if let Some((agent_package, agent_version)) = identity_by_agent_id.get(agent_id) {
+    if let Some(agent_package) = identity_by_agent_id.get(agent_id) {
         row.insert(
             "agent_package".to_string(),
             Value::String(agent_package.clone()),
         );
-        row.insert(
-            "agent_version".to_string(),
-            Value::String(agent_version.clone()),
-        );
-        row.insert(
-            "agent_display".to_string(),
-            Value::String(format!("{agent_package}/{agent_version}")),
-        );
+        if let Some(agent_version) = version_index.version_for_row(&Value::Object(row.clone())) {
+            row.insert(
+                "agent_version".to_string(),
+                Value::String(agent_version.to_string()),
+            );
+            row.insert(
+                "agent_display".to_string(),
+                Value::String(format!("{agent_package}/{agent_version}")),
+            );
+        } else {
+            row.remove("agent_version");
+            row.insert(
+                "agent_display".to_string(),
+                Value::String(agent_package.clone()),
+            );
+        }
         return;
     }
     let agent_package =

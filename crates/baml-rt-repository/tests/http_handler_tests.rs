@@ -41,7 +41,7 @@ async fn publish_agent(app: &axum::Router, name: &str, content: &str) -> serde_j
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/publish")
+                .uri("/drafts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),
@@ -97,7 +97,7 @@ async fn post_publish_duplicate_hash_returns_409() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/publish")
+                .uri("/drafts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd1).unwrap()))
                 .unwrap(),
@@ -111,7 +111,7 @@ async fn post_publish_duplicate_hash_returns_409() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/publish")
+                .uri("/drafts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd2).unwrap()))
                 .unwrap(),
@@ -258,7 +258,7 @@ async fn get_agent_versions() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/publish")
+                .uri("/drafts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),
@@ -330,7 +330,7 @@ async fn get_entries_by_name_and_version_query() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/publish")
+                .uri("/drafts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),
@@ -396,7 +396,7 @@ async fn post_fork_returns_ok() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/fork")
+                .uri("/drafts/fork")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),
@@ -470,7 +470,7 @@ async fn get_lineage_returns_subgraph() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/fork")
+                .uri("/drafts/fork")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),
@@ -650,7 +650,7 @@ async fn fork_missing_parent_returns_422() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/fork")
+                .uri("/drafts/fork")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&cmd).unwrap()))
                 .unwrap(),

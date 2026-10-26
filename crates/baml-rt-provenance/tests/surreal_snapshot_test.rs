@@ -89,7 +89,10 @@ async fn bootstrap(store: &dyn SnapshotStore, context_id: &ContextId, task_id: &
                 agent_id: agent_id.clone(),
                 agent_type: AgentType::new("snapshot-test").expect("agent_type"),
                 agent_version: "1.0.0".to_string(),
-                archive_path: "snapshot-test@1.0.0".to_string(),
+                identity_digest: "a".repeat(64),
+                artifact_hash: "b".repeat(64),
+                deployment_content_hash: "snapshot-test@1.0.0".to_string(),
+                runner_id: "snapshot-runner".to_string(),
             },
         }))
         .await
@@ -119,6 +122,7 @@ async fn bootstrap(store: &dyn SnapshotStore, context_id: &ContextId, task_id: &
                 task_id: task_id.clone(),
                 agent_id: agent_id.clone(),
                 context_id: context_id.clone(),
+                boot_event_id: None,
             },
         }))
         .await

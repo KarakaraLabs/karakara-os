@@ -27,12 +27,11 @@ import { deriveDispatchEnvelope } from "./messageShapes";
 
 function agent(
   pkg: string,
-  inst: string,
+  _inst: string,
   subscriptions: AgentDiscoveryEntry["agent_card"]["subscriptions"],
 ): AgentDiscoveryEntry {
   return {
     agent_package: pkg,
-    agent_instance_id: inst,
     agent_card: { subscriptions },
   } as AgentDiscoveryEntry;
 }

@@ -21,7 +21,6 @@ pub struct AgentCard {
     pub repository_version: Option<u32>,
     /// Route key for A2A dispatch.
     pub agent_package: String,
-    pub agent_instance_id: String,
     /// Tool names declared in manifest.
     #[serde(default)]
     pub tools: Vec<String>,
@@ -46,11 +45,10 @@ pub trait AgentLister: Send + Sync {
     fn list_agents(&self) -> Vec<AgentDiscoveryEntry>;
 }
 
-/// Discovery entry for one running agent instance (GET /agents).
+/// Discovery entry for one running agent (GET /agents).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDiscoveryEntry {
     pub agent_package: String,
-    pub agent_instance_id: String,
     /// Manifest name (human-readable).
     pub name: String,
     pub version: String,

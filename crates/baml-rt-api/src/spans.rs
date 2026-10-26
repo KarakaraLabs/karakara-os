@@ -7,7 +7,7 @@
 //! Instrumentation is kept orthogonal to handlers per the trace guide.
 //! All span names use the `baml_rt_api.` namespace for low cardinality.
 
-use baml_rt_core::{AgentInstanceId, AgentPackageName};
+use baml_rt_core::AgentPackageName;
 use baml_rt_observability::UNKNOWN_SERVICE_INSTANCE_ID;
 use tracing::Span;
 
@@ -40,7 +40,7 @@ pub(crate) fn list_agents() -> Span {
 #[inline]
 pub(crate) fn post_a2a(
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     forwarded: bool,
     ingress_service_instance_id: &str,
     serving_service_instance_id: &str,
@@ -65,7 +65,7 @@ pub(crate) fn post_a2a(
 #[inline]
 pub(crate) fn post_dispatch(
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     forwarded: bool,
     ingress_service_instance_id: &str,
     serving_service_instance_id: &str,

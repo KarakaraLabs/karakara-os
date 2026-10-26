@@ -25,7 +25,6 @@ export interface AgentCardDto {
   contentHash?: string | null;
   repositoryVersion?: number | null;
   agentPackage: string;
-  agentInstanceId: string;
   tools: string[];
   description?: string | null;
   capabilities: string[];
@@ -155,7 +154,6 @@ export interface InternalA2aSendInput {
 
 export interface InternalA2aTarget {
   agent_package: string;
-  agent_instance_id: string;
   [key: string]: JsonValue | undefined;
 }
 

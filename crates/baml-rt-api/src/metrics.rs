@@ -9,7 +9,7 @@
 use std::{sync::OnceLock, time::Duration};
 
 use axum::{Json, http::StatusCode as AxumStatus};
-use baml_rt_core::{AgentInstanceId, AgentPackageName};
+use baml_rt_core::AgentPackageName;
 use http_api_problem::HttpApiProblem;
 use opentelemetry::{
     KeyValue, global,
@@ -50,7 +50,7 @@ fn request_attributes(route: &str, result: &str) -> [KeyValue; 2] {
 fn agent_request_attributes(
     route: &str,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     forwarded: bool,
     ingress_service_instance_id: &str,
     result: &str,
@@ -58,7 +58,7 @@ fn agent_request_attributes(
     [
         KeyValue::new("route", route.to_string()),
         KeyValue::new("agent_package", agent_package.as_str().to_string()),
-        KeyValue::new("agent_instance_id", agent_instance_id.as_str().to_string()),
+        KeyValue::new("agent_instance_id", agent_instance_id.to_string()),
         KeyValue::new("forwarded", forwarded.to_string()),
         KeyValue::new(
             "ingress_service_instance_id",
@@ -153,7 +153,7 @@ pub(crate) fn record_request(route: &str, result: &str, duration: Duration) {
 pub(crate) fn record_agent_http_request(
     route: &str,
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     forwarded: bool,
     ingress_service_instance_id: &str,
     result: &str,
@@ -188,14 +188,14 @@ pub(crate) fn record_conversation_history_payload(
 
 #[cfg(test)]
 mod tests {
-    use baml_rt_core::{AgentInstanceId, AgentPackageName};
+    use baml_rt_core::AgentPackageName;
 
     use super::{agent_request_attributes, request_attributes};
 
-    fn demo_identity() -> (AgentPackageName, AgentInstanceId) {
+    fn demo_identity() -> (AgentPackageName, String) {
         (
             AgentPackageName::parse("demo-agent").expect("valid package identifier"),
-            AgentInstanceId::parse("default").expect("valid instance identifier"),
+            "default".to_string(),
         )
     }
 

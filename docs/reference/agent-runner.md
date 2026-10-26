@@ -37,7 +37,9 @@ The runner no longer assumes a default embedding model. When drift scoring is en
 The runner implements the Agent-to-Agent JSON-RPC protocol over HTTP with Server-Sent Events (SSE) for real-time updates.
 
 **Key endpoints:**
-- `POST /conversations/{id}/a2a` - A2A JSON-RPC with SSE streaming (note: no separate `/a2a/sse` route)
+- `GET /agents` - Agent discovery (one entry per deployed package)
+- `POST /agents/{agent_package}/a2a` - A2A JSON-RPC with SSE streaming
+- `POST /agents/{agent_package}/dispatch` - Deterministic host-to-agent event delivery
 - `GET /conversations/{id}` - Conversation state retrieval
 - `POST /conversations` - New conversation creation
 
@@ -68,13 +70,45 @@ The runner integrates with `baml-rt-provenance` for conversation tracking:
 
 ## Runtime Behavior
 
+### Agent Identity
+
+The runner derives a stable `AgentId` from the extracted package before building
+the agent bridge. The identity digest covers the behavior-defining content
+(manifest projection, authored TypeScript, BAML prompts and generated prelude,
+tool-schema catalog, and session-plan dispatch table) and ignores repository
+version, compiled `dist/**`, and package framing.
+
+- The same packaged content keeps its `AgentId` across boots, replicas, and
+  relocations.
+- A behavior-defining source change produces a new `AgentId`.
+- The `ArtifactHash` identifies the exact stored `.tar.gz` bytes. Two artifacts
+  can share an `AgentId` and still execute different compiled output.
+
+Boot verifies both values. A mismatch between the supplied `AgentId` or
+`ArtifactHash` and the extracted package fails before the agent starts serving.
+The `AgentBooted` event records the real process identity, not a placeholder.
+Task execution carries that boot event ID explicitly, so provenance links a task
+to the process lifetime and artifact that actually executed it. Ops rows resolve
+`agent_version` only through that exact boot-to-artifact path; rows with no such
+path omit the version and display the package alone. Startup restore also verifies
+the persisted deployment artifact hash against the repository entry before
+booting.
+
+Cluster placements require an artifact hash. Forwarded A2A requests carry
+`X-Agentium-Expected-Artifact-Hash`; the receiving runner compares it with the
+exact `BootedAgent` selected for dispatch before creating a task, and returns
+`412 Precondition Failed` on mismatch.
+`AutoGenerate` identity is limited to ephemeral tests and development agents;
+production boot paths pass the identity explicitly.
+
 ### Agent Lifecycle
 
 1. **Package Resolution**: Load agent from repository or local path
 2. **Build Pipeline**: Compile BAML → TypeScript → QuickJS bytecode
-3. **Session Creation**: Initialize conversation context and tool sessions
-4. **Execution**: Run agent code with tool access and conversation state
-5. **Cleanup**: Terminate tool sessions and persist final state
+3. **Identity Derivation**: Hash the behavior set and derive `AgentId`
+4. **Session Creation**: Initialize conversation context and tool sessions
+5. **Execution**: Run agent code with tool access and conversation state
+6. **Cleanup**: Terminate tool sessions and persist final state
 
 ### Error Handling
 

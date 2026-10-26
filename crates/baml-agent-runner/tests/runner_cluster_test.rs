@@ -1015,7 +1015,7 @@ mod cluster {
         );
 
         // Send A2A request to runner-A for dispatch-echo (hosted on runner-B).
-        let a2a_url = format!("{}/agents/dispatch-echo/default/a2a", runner_a.base_url);
+        let a2a_url = format!("{}/agents/dispatch-echo/a2a", runner_a.base_url);
         let body = send_stream_request("hello from cross-runner test");
         let resp = client
             .post(&a2a_url)
@@ -1224,7 +1224,7 @@ mod cluster {
         deploy_hash(&client, &runner_a.base_url, &hash_a, DEFAULT_TOKEN).await;
         deploy_hash(&client, &runner_b.base_url, &hash_b, DEFAULT_TOKEN).await;
 
-        let a2a_url = format!("{}/agents/dispatch-echo/default/a2a", runner_a.base_url);
+        let a2a_url = format!("{}/agents/dispatch-echo/a2a", runner_a.base_url);
         let body = send_stream_request("test multi-runner placement");
         let resp = client
             .post(&a2a_url)
@@ -2001,7 +2001,7 @@ async fn undeploy_drains_in_flight_request() {
 
     // Start an A2A request in background.
     let bg_client = client.clone();
-    let bg_url = format!("{}/agents/dispatch-echo/default/a2a", runner.base_url);
+    let bg_url = format!("{}/agents/dispatch-echo/a2a", runner.base_url);
     let bg_body = send_stream_request("in-flight message");
     let bg_handle =
         tokio::spawn(async move { post_a2a_sse_collect(&bg_client, &bg_url, &bg_body).await });
@@ -2029,7 +2029,7 @@ async fn undeploy_drains_in_flight_request() {
     drop(bg_result);
 
     // New requests after undeploy should fail with 404.
-    let a2a_url = format!("{}/agents/dispatch-echo/default/a2a", runner.base_url);
+    let a2a_url = format!("{}/agents/dispatch-echo/a2a", runner.base_url);
     let body = send_stream_request("post-undeploy message");
     let resp = client
         .post(&a2a_url)
@@ -2058,7 +2058,7 @@ async fn draining_agent_rejects_new_requests() {
     let hash = publish_and_deploy(&client, &runner.base_url, &package_path, DEFAULT_TOKEN).await;
 
     // Send one A2A message to create agent state.
-    let a2a_url = format!("{}/agents/dispatch-echo/default/a2a", runner.base_url);
+    let a2a_url = format!("{}/agents/dispatch-echo/a2a", runner.base_url);
     let body = send_stream_request("warmup message");
     let _ = post_a2a_sse_collect(&client, &a2a_url, &body).await;
 
@@ -2148,7 +2148,7 @@ async fn undeploy_emits_agent_stopped_event() {
     let hash = publish_and_deploy(&client, &runner.base_url, &package_path, DEFAULT_TOKEN).await;
 
     // Send one A2A message to create provenance context.
-    let a2a_url = format!("{}/agents/dispatch-echo/default/a2a", runner.base_url);
+    let a2a_url = format!("{}/agents/dispatch-echo/a2a", runner.base_url);
     let body = send_stream_request("provenance test message");
     let _ = post_a2a_sse_collect(&client, &a2a_url, &body).await;
 

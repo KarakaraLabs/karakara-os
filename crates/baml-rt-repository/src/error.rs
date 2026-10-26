@@ -10,7 +10,7 @@
 
 use thiserror::Error;
 
-use crate::ids::{AgentName, ContentHash, Version};
+use crate::ids::{AgentName, ArtifactHash, ContentHash, Version};
 
 /// Repository operation errors.
 #[derive(Error, Debug)]
@@ -38,6 +38,9 @@ pub enum RepositoryError {
     #[error("Version conflict: {name}@{version} already exists")]
     VersionConflict { name: AgentName, version: Version },
 
+    #[error("Could not reserve a version for {name} after {attempts} attempts")]
+    VersionReservationExhausted { name: AgentName, attempts: u32 },
+
     // --- Validation failures ---
     #[error("Invalid source bundle: {reason}")]
     InvalidSourceBundle { reason: String },
@@ -49,6 +52,12 @@ pub enum RepositoryError {
     HashMismatch {
         expected: ContentHash,
         computed: ContentHash,
+    },
+
+    #[error("Artifact hash mismatch: expected {expected}, computed {computed}")]
+    ArtifactHashMismatch {
+        expected: ArtifactHash,
+        computed: ArtifactHash,
     },
 
     // --- Lineage violations ---

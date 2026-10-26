@@ -15,14 +15,15 @@ use baml_rt_a2a::{A2aRequestHandler, a2a};
 use baml_rt_api::RuntimeProgressMeter;
 use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentCard, AgentDiscoveryEntry, AgentDispatchAck,
-    AgentDispatchRequest, AgentInstanceId, AgentLister, AgentPackageName, AgentRouteKey,
-    BamlRtError, DeployedAgentLookup, DeploymentContentHash, DeploymentManager, DeploymentRecord,
+    AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, ArtifactHash, BamlRtError,
+    DeployedAgentLookup, DeploymentContentHash, DeploymentManager, DeploymentRecord,
     DeploymentStatus, DispatchTarget, ObservationUpdate, Result, UndeployResult,
     bus::BusStream,
     callback_scheduling_scopes_differ_from_dispatch, context, ensure_dispatch_task_scope,
     ids::{AgentId, ContextId, TaskId},
     scheduling_scope_from_dispatch_metadata,
 };
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_observability::spans;
 use baml_rt_provenance::{ProvEvent, ProvenanceWriter};
 use baml_rt_repository::{ContentHash, RepositoryService, manifest_package_name_from_tar_gz};
@@ -66,6 +67,12 @@ fn callback_dispatch_context_link_event(
         dispatch_task.clone(),
         agent_id.clone(),
     ))
+}
+
+struct RepositoryDeploymentMetadata {
+    repository_version: u32,
+    artifact_hash: ArtifactHash,
+    expected_agent_id: Option<AgentId>,
 }
 
 fn parse_repository_entry_version(value: &serde_json::Value) -> Option<u32> {
@@ -220,18 +227,13 @@ impl AgentRunner {
 
     pub(crate) async fn fetch_blob_from_repository(
         &self,
-        content_hash: &DeploymentContentHash,
+        artifact_hash: &ArtifactHash,
     ) -> Result<Vec<u8>> {
         if let Some(repo) = &self.embedded_repository {
-            let hash = ContentHash::from_str(content_hash.as_str()).map_err(|e| {
-                BamlRtError::Io(std::io::Error::other(format!(
-                    "embedded repository: invalid content hash: {e}"
-                )))
-            })?;
-            match repo.get_blob(&hash).await {
+            match repo.get_blob(artifact_hash).await {
                 Ok(Some(bytes)) => {
                     tracing::trace!(
-                        content_hash = content_hash.as_str(),
+                        artifact_hash = artifact_hash.as_str(),
                         bytes_len = bytes.len(),
                         "repository blob read from embedded store"
                     );
@@ -241,7 +243,7 @@ impl AgentRunner {
                 Err(e) => {
                     return Err(BamlRtError::Io(std::io::Error::other(format!(
                         "embedded repository blob read failed for {}: {e}",
-                        content_hash.as_str()
+                        artifact_hash.as_str()
                     ))));
                 }
             }
@@ -250,7 +252,7 @@ impl AgentRunner {
         let url = format!(
             "{}/blobs/{}",
             self.repository_url.trim_end_matches('/'),
-            content_hash.as_str()
+            artifact_hash.as_str()
         );
         let response = self
             .repository_http_client
@@ -265,8 +267,8 @@ impl AgentRunner {
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(BamlRtError::AgentNotFound(format!(
-                "Repository blob not found for hash {}",
-                content_hash.as_str()
+                "Repository blob not found for artifact hash {}",
+                artifact_hash.as_str()
             )));
         }
         if !status.is_success() {
@@ -278,15 +280,15 @@ impl AgentRunner {
         response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
             BamlRtError::Io(std::io::Error::other(format!(
                 "failed reading repository blob body for {}: {e}",
-                content_hash.as_str()
+                artifact_hash.as_str()
             )))
         })
     }
 
-    pub(crate) async fn fetch_repository_version(
+    async fn fetch_repository_version(
         &self,
         content_hash: &DeploymentContentHash,
-    ) -> Result<Option<u32>> {
+    ) -> Result<Option<RepositoryDeploymentMetadata>> {
         if let Some(repo) = &self.embedded_repository {
             let hash = ContentHash::from_str(content_hash.as_str()).map_err(|e| {
                 BamlRtError::Io(std::io::Error::other(format!(
@@ -296,12 +298,26 @@ impl AgentRunner {
             match repo.get_by_hash(&hash).await {
                 Ok(Some(entry)) => {
                     let repository_version = entry.version_ref.version.as_u32();
+                    let artifact_hash = entry.artifact_hash.ok_or_else(|| {
+                        BamlRtError::InvalidArgument(format!(
+                            "repository entry {} is source-only (no artifact hash) and cannot be deployed; republish through the build path",
+                            content_hash.as_str()
+                        ))
+                    })?;
                     tracing::trace!(
                         content_hash = content_hash.as_str(),
+                        artifact_hash = artifact_hash.as_str(),
                         repository_version,
                         "repository entry read from embedded store"
                     );
-                    return Ok(Some(repository_version));
+                    return Ok(Some(RepositoryDeploymentMetadata {
+                        repository_version,
+                        artifact_hash,
+                        expected_agent_id: entry
+                            .identity_digest
+                            .as_ref()
+                            .map(AgentId::from_identity_digest),
+                    }));
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -356,7 +372,40 @@ impl AgentRunner {
                 content_hash.as_str()
             ))));
         };
-        Ok(Some(version))
+        let artifact_hash = value
+            .get("artifact_hash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                BamlRtError::InvalidArgument(format!(
+                    "repository entry JSON missing artifact_hash for {}",
+                    content_hash.as_str()
+                ))
+            })?
+            .parse::<ArtifactHash>()
+            .map_err(|e| {
+                BamlRtError::InvalidArgument(format!(
+                    "repository entry JSON has invalid artifact_hash for {}: {e}",
+                    content_hash.as_str()
+                ))
+            })?;
+        let expected_agent_id = value
+            .get("identity_digest")
+            .and_then(serde_json::Value::as_str)
+            .map(str::parse::<AgentIdentityDigest>)
+            .transpose()
+            .map_err(|e| {
+                BamlRtError::InvalidArgument(format!(
+                    "repository entry JSON has invalid identity_digest for {}: {e}",
+                    content_hash.as_str()
+                ))
+            })?
+            .as_ref()
+            .map(AgentId::from_identity_digest);
+        Ok(Some(RepositoryDeploymentMetadata {
+            repository_version: version,
+            artifact_hash,
+            expected_agent_id,
+        }))
     }
 
     /// Verifies that blob bytes are a valid packaged agent and that the canonical
@@ -366,9 +415,16 @@ impl AgentRunner {
     /// [`MetadataStore::insert_entry`](baml_rt_repository::storage::MetadataStore::insert_entry)).
     pub(crate) fn verify_artifact_integrity(
         content_hash: &DeploymentContentHash,
+        artifact_hash: &ArtifactHash,
         bytes: &[u8],
         repository_version: u32,
     ) -> Result<()> {
+        let computed_artifact_hash = ArtifactHash::from_bytes(bytes);
+        if &computed_artifact_hash != artifact_hash {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: expected artifact hash {artifact_hash}, computed {computed_artifact_hash}"
+            )));
+        }
         let (_, source) =
             baml_rt_repository::package::source_bundle_from_tar_gz(bytes).map_err(|e| {
                 BamlRtError::InvalidArgument(format!(
@@ -387,8 +443,9 @@ impl AgentRunner {
         }
         tracing::debug!(
             content_hash = content_hash.as_str(),
+            artifact_hash = artifact_hash.as_str(),
             repository_version,
-            "Artifact blob verified (canonical hash matches repository content_hash)"
+            "Artifact blob verified against artifact and deployment content hashes"
         );
         Ok(())
     }
@@ -397,8 +454,16 @@ impl AgentRunner {
         &self,
         bytes: &[u8],
         content_hash: &DeploymentContentHash,
+        artifact_hash: &ArtifactHash,
         repository_version: u32,
+        expected_agent_id: Option<&AgentId>,
     ) -> Result<(String, AgentRouteKey, BootedAgent)> {
+        let computed_artifact_hash = ArtifactHash::from_bytes(bytes);
+        if &computed_artifact_hash != artifact_hash {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: expected artifact hash {artifact_hash}, computed {computed_artifact_hash}"
+            )));
+        }
         let mut package_file = tempfile::Builder::new()
             .prefix("baml-deploy-")
             .suffix(".tar.gz")
@@ -409,13 +474,22 @@ impl AgentRunner {
         package_file.flush().map_err(BamlRtError::Io)?;
 
         let package = AgentPackage::load_from_file(package_file.path()).await?;
+        let identity_digest = package.identity_digest()?;
+        let agent_id = AgentId::from_identity_digest(&identity_digest);
+        if let Some(expected_agent_id) = expected_agent_id
+            && &agent_id != expected_agent_id
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Agent identity mismatch: deployment expects {expected_agent_id}, package derives {agent_id}"
+            )));
+        }
         let name = package.name().to_string();
         let package_name = AgentPackageName::parse(&name).ok_or_else(|| {
             BamlRtError::InvalidArgument(format!(
                 "Agent package name '{name}' is invalid; allowed characters: [A-Za-z0-9_-]"
             ))
         })?;
-        let route_key = AgentRouteKey::new(package_name, AgentInstanceId::default());
+        let route_key = AgentRouteKey::new(package_name);
         let scoped_router: Arc<dyn A2aRequestHandler> = Arc::new(ScopedInternalA2aRouter::new(
             route_key.clone(),
             self.internal_a2a_router().clone(),
@@ -428,8 +502,13 @@ impl AgentRunner {
                     entries: self.discovery_entries(),
                 })
             };
-        let (agent, _agent_id) = package
+        let (agent, booted_agent_id, boot_event_id) = package
             .boot(AgentPackageBootArgs {
+                agent_id: agent_id.clone(),
+                artifact_hash: artifact_hash.clone(),
+                identity_digest,
+                deployment_content_hash: content_hash.clone(),
+                repository_version,
                 shared_context_ref_store: self.shared_context_ref_store.clone(),
                 provenance_config: self.provenance_config(),
                 policy: self.access_policy(),
@@ -444,6 +523,11 @@ impl AgentRunner {
                 compaction_summarizer: Arc::clone(&self.compaction_summarizer),
             })
             .await?;
+        if booted_agent_id != agent_id {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "agent boot identity mismatch: expected {agent_id}, booted {booted_agent_id}"
+            )));
+        }
         let manifest = package.manifest().clone();
         let baml_functions: Vec<String> = {
             let bridge_arc = agent.bridge();
@@ -466,9 +550,11 @@ impl AgentRunner {
             baml_functions,
             provenance: DeploymentProvenance::Repository {
                 content_hash: content_hash.clone(),
+                artifact_hash: artifact_hash.clone(),
                 version: repository_version,
             },
             lifecycle: Arc::new(AtomicU8::new(0)),
+            boot_event_id,
         };
         Ok((name, route_key, booted))
     }
@@ -515,7 +601,6 @@ impl AgentRunner {
                     content_hash: booted.content_hash().map(|h| h.as_str().to_string()),
                     repository_version: booted.repository_version(),
                     agent_package: pkg.clone(),
-                    agent_instance_id: AgentInstanceId::DEFAULT.to_string(),
                     tools: m.tools.clone(),
                     baml_functions: booted.baml_functions.clone(),
                     description: m.discovery.as_ref().and_then(|d| d.description.clone()),
@@ -533,7 +618,6 @@ impl AgentRunner {
                 };
                 AgentDiscoveryEntry {
                     agent_package: pkg.clone(),
-                    agent_instance_id: AgentInstanceId::DEFAULT.to_string(),
                     name: m.name.clone(),
                     version,
                     agent_card,
@@ -557,17 +641,43 @@ impl AgentRunner {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
+        self.handle_a2a_by_key_with_precondition(key, request, None)
+            .await
+    }
+
+    /// Resolve the route and verify an optional expected artifact hash against the exact
+    /// booted agent selected for dispatch, before any task or provenance write.
+    pub(crate) async fn handle_a2a_by_key_with_precondition(
+        &self,
+        key: &AgentRouteKey,
+        request: A2aWireRequest,
+        expected_artifact_hash: Option<&ArtifactHash>,
+    ) -> Result<BusStream<A2aStreamChunk>> {
         // Check drain state and resolve route atomically so requests cannot
         // slip between a drain check and the route lookup.
         let routed_agent = {
             let agents = self.agents.read().expect("RwLock poison");
-            if let Some(booted) = agents.get(key.agent_package.as_str())
-                && booted.lifecycle_state() == AgentLifecycleState::Draining
-            {
-                let agent = key.agent_package.as_str();
-                return Err(BamlRtError::AgentDraining(format!(
-                    "Agent {agent} is draining (undeploy in progress)",
-                )));
+            if let Some(booted) = agents.get(key.agent_package.as_str()) {
+                if booted.lifecycle_state() == AgentLifecycleState::Draining {
+                    let agent = key.agent_package.as_str();
+                    return Err(BamlRtError::AgentDraining(format!(
+                        "Agent {agent} is draining (undeploy in progress)",
+                    )));
+                }
+                if let Some(expected) = expected_artifact_hash {
+                    let actual = booted.artifact_hash().ok_or_else(|| {
+                        BamlRtError::InvalidArgument(format!(
+                            "agent {} has no artifact hash for precondition verification",
+                            key.agent_package.as_str()
+                        ))
+                    })?;
+                    if actual != expected {
+                        return Err(BamlRtError::InvalidArgument(format!(
+                            "artifact precondition failed for {}: expected {expected}, serving {actual}",
+                            key.agent_package.as_str()
+                        )));
+                    }
+                }
             }
             let routed_agents = self.routed_agents.read().expect("RwLock poison");
             routed_agents.get(key).cloned()
@@ -599,9 +709,8 @@ impl AgentRunner {
                 }
                 Err(e) => {
                     let pkg = key.agent_package.as_str();
-                    let inst = key.agent_instance_id.as_str();
                     return Err(BamlRtError::Io(std::io::Error::other(format!(
-                        "cluster placement lookup failed for {pkg}/{inst}: {e}"
+                        "cluster placement lookup failed for {pkg}: {e}"
                     ))));
                 }
                 Ok(None) => {}
@@ -609,10 +718,7 @@ impl AgentRunner {
         }
 
         let pkg = key.agent_package.as_str();
-        let inst = key.agent_instance_id.as_str();
-        Err(BamlRtError::AgentNotFound(format!(
-            "Agent {pkg}/{inst} not found"
-        )))
+        Err(BamlRtError::AgentNotFound(format!("Agent {pkg} not found")))
     }
 
     pub(crate) async fn handle_dispatch_by_key(
@@ -633,8 +739,7 @@ impl AgentRunner {
             let routed_agents = self.routed_agents.read().expect("RwLock poison");
             routed_agents.get(key).cloned().ok_or_else(|| {
                 let pkg = key.agent_package.as_str();
-                let inst = key.agent_instance_id.as_str();
-                BamlRtError::AgentNotFound(format!("Agent {pkg}/{inst} not found"))
+                BamlRtError::AgentNotFound(format!("Agent {pkg} not found"))
             })?
         };
         ensure_dispatch_task_scope(&mut request, key);
@@ -855,42 +960,73 @@ impl AgentRunner {
 }
 
 // `?Send` matches core trait contract; deploy boot path is currently local-executor bound.
-#[async_trait(?Send)]
-impl DeploymentManager for AgentRunner {
-    async fn deploy_by_hash(
+impl AgentRunner {
+    /// Deploy a repository entry and pin the exact artifact hash the caller expects.
+    ///
+    /// `expected_artifact_hash` is used by startup restore so a repository state change cannot
+    /// silently boot different bytes than the deployment record names.
+    pub(crate) async fn deploy_by_hash_expected(
         &self,
         content_hash: &DeploymentContentHash,
+        expected_artifact_hash: Option<&ArtifactHash>,
     ) -> Result<baml_rt_core::DeployResult> {
         {
             let agents = self.agents.read().expect("RwLock poison");
-            if agents
+            if let Some(agent) = agents
                 .values()
-                .any(|agent| agent.content_hash() == Some(content_hash))
+                .find(|agent| agent.content_hash() == Some(content_hash))
             {
+                if let Some(expected) = expected_artifact_hash
+                    && agent.artifact_hash() != Some(expected)
+                {
+                    return Err(BamlRtError::InvalidArgument(format!(
+                        "Artifact integrity failure: content hash {} is already deployed with artifact {:?}, expected {expected}",
+                        content_hash.as_str(),
+                        agent.artifact_hash().map(ArtifactHash::as_str)
+                    )));
+                }
                 return Ok(baml_rt_core::DeployResult {
                     already_deployed: true,
                 });
             }
         }
 
-        let repository_version = match self.fetch_repository_version(content_hash).await {
-            Ok(Some(v)) => v,
+        let deployment = match self.fetch_repository_version(content_hash).await {
+            Ok(Some(metadata)) => metadata,
             Ok(None) => {
                 return Err(BamlRtError::InvalidArgument(format!(
-                    "Repository has no entry for content hash {} — cannot verify artifact against canonical hash",
+                    "Repository has no entry for content hash {} — cannot resolve its artifact hash",
                     content_hash.as_str()
                 )));
             }
             Err(err) => {
                 return Err(BamlRtError::Io(std::io::Error::other(format!(
-                    "Failed to load repository entry for {} (need version for canonical hash verification): {err}",
+                    "Failed to load repository entry for {} (need version and artifact hash): {err}",
                     content_hash.as_str()
                 ))));
             }
         };
+        let RepositoryDeploymentMetadata {
+            repository_version,
+            artifact_hash,
+            expected_agent_id,
+        } = deployment;
+        if let Some(expected) = expected_artifact_hash
+            && &artifact_hash != expected
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: repository content hash {} resolves to artifact {artifact_hash}, expected {expected}",
+                content_hash.as_str()
+            )));
+        }
 
-        let bytes = self.fetch_blob_from_repository(content_hash).await?;
-        AgentRunner::verify_artifact_integrity(content_hash, &bytes, repository_version)?;
+        let bytes = self.fetch_blob_from_repository(&artifact_hash).await?;
+        AgentRunner::verify_artifact_integrity(
+            content_hash,
+            &artifact_hash,
+            &bytes,
+            repository_version,
+        )?;
 
         let package_name = manifest_package_name_from_tar_gz(&bytes).map_err(|e| {
             BamlRtError::InvalidArgument(format!(
@@ -927,15 +1063,40 @@ impl DeploymentManager for AgentRunner {
         }
 
         let (name, route_key, booted) = self
-            .boot_from_blob_bytes(&bytes, content_hash, repository_version)
+            .boot_from_blob_bytes(
+                &bytes,
+                content_hash,
+                &artifact_hash,
+                repository_version,
+                expected_agent_id.as_ref(),
+            )
             .await?;
+        let booted_artifact_hash = booted.artifact_hash().cloned().ok_or_else(|| {
+            BamlRtError::InvalidArgument(
+                "repository deployment booted without an artifact hash".to_string(),
+            )
+        })?;
+        if booted_artifact_hash != artifact_hash {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "Artifact integrity failure: booted package recorded {booted_artifact_hash}, expected {artifact_hash}"
+            )));
+        }
 
         {
             let mut agents = self.agents.write().expect("RwLock poison");
-            if agents
+            if let Some(agent) = agents
                 .values()
-                .any(|agent| agent.content_hash() == Some(content_hash))
+                .find(|agent| agent.content_hash() == Some(content_hash))
             {
+                if let Some(expected) = expected_artifact_hash
+                    && agent.artifact_hash() != Some(expected)
+                {
+                    return Err(BamlRtError::InvalidArgument(format!(
+                        "Artifact integrity failure: content hash {} is already deployed with artifact {:?}, expected {expected}",
+                        content_hash.as_str(),
+                        agent.artifact_hash().map(ArtifactHash::as_str)
+                    )));
+                }
                 return Ok(baml_rt_core::DeployResult {
                     already_deployed: true,
                 });
@@ -957,6 +1118,7 @@ impl DeploymentManager for AgentRunner {
             .deployment_state
             .save_deployment(&DeploymentRecord {
                 content_hash: content_hash.clone(),
+                artifact_hash: booted_artifact_hash.clone(),
                 agent_name: name.clone(),
                 deployed_at: now.clone(),
                 status: DeploymentStatus::Active,
@@ -987,7 +1149,13 @@ impl DeploymentManager for AgentRunner {
 
         // Record agent placement in cluster registry (if cluster mode is active).
         if let Some(cluster_mgr) = self.cluster_manager.get()
-            && let Err(e) = cluster_mgr.record_placement(&route_key, content_hash).await
+            && let Err(e) = cluster_mgr
+                .record_placement_with_artifact(
+                    &route_key,
+                    content_hash,
+                    Some(&booted_artifact_hash),
+                )
+                .await
         {
             tracing::warn!(
                 error = %e,
@@ -999,6 +1167,16 @@ impl DeploymentManager for AgentRunner {
         Ok(baml_rt_core::DeployResult {
             already_deployed: false,
         })
+    }
+}
+
+#[async_trait(?Send)]
+impl DeploymentManager for AgentRunner {
+    async fn deploy_by_hash(
+        &self,
+        content_hash: &DeploymentContentHash,
+    ) -> Result<baml_rt_core::DeployResult> {
+        self.deploy_by_hash_expected(content_hash, None).await
     }
 
     async fn undeploy_by_hash(
@@ -1050,7 +1228,7 @@ impl DeploymentManager for AgentRunner {
             agents.remove(&target_name);
             match AgentPackageName::parse(&booted.manifest.name) {
                 Some(package_name) => {
-                    let rk = AgentRouteKey::new(package_name, AgentInstanceId::default());
+                    let rk = AgentRouteKey::new(package_name);
                     routed.remove(&rk);
                 }
                 None => {
@@ -1066,7 +1244,7 @@ impl DeploymentManager for AgentRunner {
         if let Some(cluster_mgr) = self.cluster_manager.get()
             && let Some(package_name) = AgentPackageName::parse(&target_name)
         {
-            let rk = AgentRouteKey::new(package_name, AgentInstanceId::default());
+            let rk = AgentRouteKey::new(package_name);
             if let Err(e) = cluster_mgr.remove_placement(&rk).await {
                 tracing::warn!(
                     agent = %target_name,
@@ -1086,7 +1264,11 @@ impl DeploymentManager for AgentRunner {
         //    cluster — restart will re-deploy and emit a fresh AgentBooted
         //    without an orphaned AgentStopped in the graph.
         let agent_id = booted.agent.agent_id().clone();
-        let stop_event = ProvEvent::agent_stopped(agent_id, "undeploy".to_string());
+        let stop_event = ProvEvent::agent_stopped(
+            agent_id,
+            booted.boot_event_id.clone(),
+            "undeploy".to_string(),
+        );
         let store = self.provenance_config.store();
         if let Err(e) = store.add_event(stop_event).await {
             tracing::warn!(

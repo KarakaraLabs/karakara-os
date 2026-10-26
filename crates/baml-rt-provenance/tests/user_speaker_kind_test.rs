@@ -16,8 +16,7 @@ async fn a2a_child_context_user_message_classified_as_relay() {
     let child_task_id = TaskId::for_delegated_child(
         UuidId::parse_str("00000000-0000-0000-0000-0000000000a2").unwrap(),
     );
-    let context_id =
-        ContextId::for_a2a_child(&caller, "argument-cleese", "default", &child_task_id);
+    let context_id = ContextId::for_a2a_child(&caller, "argument-cleese", &child_task_id);
     let agent_id = baml_rt_core::ids::AgentId::from_uuid(
         UuidId::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
     );

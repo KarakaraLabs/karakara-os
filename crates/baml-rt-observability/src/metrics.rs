@@ -9,7 +9,7 @@
 
 use std::{sync::OnceLock, time::Duration};
 
-use baml_rt_core::{AgentInstanceId, AgentPackageName, InvocationKind};
+use baml_rt_core::{AgentPackageName, InvocationKind};
 use opentelemetry::{
     KeyValue, global,
     metrics::{Counter, Histogram},
@@ -662,7 +662,7 @@ pub fn cluster_a2a_forward_attributes(
 /// / `invalid_argument` / `error` (see `cluster_forward_error_label`).
 pub fn record_cluster_a2a_forward(
     agent_package: &AgentPackageName,
-    agent_instance_id: &AgentInstanceId,
+    agent_instance_id: &str,
     result: &str,
     ingress_service_instance_id: &str,
     target_service_instance_id: Option<&str>,
@@ -670,7 +670,7 @@ pub fn record_cluster_a2a_forward(
 ) {
     let attrs = cluster_a2a_forward_attributes(
         agent_package.as_str(),
-        agent_instance_id.as_str(),
+        agent_instance_id,
         result,
         ingress_service_instance_id,
         target_service_instance_id,

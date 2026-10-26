@@ -49,6 +49,9 @@ node_label_ty!(TaskState => TaskState);
 node_label_ty!(Artifact => Artifact);
 node_label_ty!(AgentBoot => AgentBoot);
 node_label_ty!(AgentStop => AgentStop);
+node_label_ty!(AgentArtifact => AgentArtifact);
+node_label_ty!(Agent => Agent);
+// Legacy query markers read graphs written before the identity cutover.
 node_label_ty!(AgentArchive => AgentArchive);
 node_label_ty!(AgentRuntimeInstance => AgentRuntimeInstance);
 node_label_ty!(PromptRejected => PromptRejected);
@@ -67,6 +70,8 @@ mod tests {
         assert_eq!(Task::LABEL_STR, "A2ATask");
         assert_eq!(MessageProcessing::LABEL_STR, "A2AMessageProcessing");
         assert_eq!(LlmCall::LABEL_STR, "LlmCall");
+        assert_eq!(Agent::LABEL_STR, "Agent");
+        assert_eq!(AgentArtifact::LABEL_STR, "AgentArtifact");
         assert_eq!(AgentRuntimeInstance::LABEL_STR, "AgentRuntimeInstance");
     }
 }

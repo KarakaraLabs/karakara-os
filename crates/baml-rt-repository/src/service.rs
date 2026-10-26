@@ -11,17 +11,18 @@
 use std::sync::Arc;
 
 use baml_rt_core::clock_events;
+use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_tools::{
     StaticToolCatalogResponse, external_tools::ExternalToolSnapshot,
     mcp_snapshot::McpServerSnapshot,
 };
 
 use crate::{
-    commands::{ForkCommand, PublishCommand, PublishOrigin, PublishResult},
-    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp},
+    commands::{DraftResult, ForkCommand, PublishCommand, PublishOrigin, PublishResult},
+    entry::{NewEntry, RepositoryEntry, RepositoryEntryHeader, Tag, Timestamp, VersionReservation},
     error::{RepositoryError, Result},
     external_tool::{ExternalToolRegistryTool, ExternalToolRegistryToolVersion},
-    ids::{AgentName, ContentHash, Generation, LineageEdgeId, Version},
+    ids::{AgentName, ArtifactHash, ContentHash, Generation, LineageEdgeId, Version},
     lineage::{EdgeDescription, LineageEdge, LineageKind, LineageSubgraph, Parentage},
     mcp::{McpRegistryServer, McpRegistryServerVersion, McpRegistryToolVersion},
     search::SearchQuery,
@@ -30,6 +31,13 @@ use crate::{
         SearchStore,
     },
 };
+
+/// Default lifetime of a version reservation held by one publisher.
+///
+/// A publisher reserves before building, so this must comfortably exceed a full build. A
+/// crashed publisher blocks its version for at most this long. A gap left behind costs
+/// nothing: versions are monotonic labels, not dense counters.
+pub const DEFAULT_VERSION_RESERVATION_TTL_MS: u64 = 600_000;
 
 /// The main repository service.
 ///
@@ -200,13 +208,114 @@ impl RepositoryService {
     // Publish
     // -----------------------------------------------------------------------
 
-    /// Publish a new agent version.
+    /// Create a source-only draft for review or lineage work.
     ///
-    /// 1. Determine parentage and generation from origin.
-    /// 2. Insert metadata (store atomically assigns version, writes it into
-    ///    the manifest, and computes the content hash).
-    /// 3. Record lineage edges (using the hash returned by the store).
-    pub async fn publish(&self, cmd: PublishCommand) -> Result<PublishResult> {
+    /// Drafts are not deployment candidates. Release paths must use
+    /// [`publish_built`](Self::publish_built) with a built artifact.
+    pub async fn publish_draft(&self, cmd: PublishCommand) -> Result<DraftResult> {
+        let reservation = self.reserve_version(&cmd.name).await?;
+        let stored = self
+            .publish_with_reservation(cmd, &reservation, None, None)
+            .await?;
+        Ok(DraftResult {
+            hash: stored.hash,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    /// Reserve the next free version for `name`.
+    ///
+    /// Callers that build an artifact before publishing reserve first so the artifact's
+    /// manifest and the stored entry carry the same version.
+    pub async fn reserve_version(&self, name: &AgentName) -> Result<VersionReservation> {
+        self.metadata
+            .reserve_version(name, DEFAULT_VERSION_RESERVATION_TTL_MS)
+            .await
+    }
+
+    /// Release a reservation that will not produce an entry.
+    pub async fn release_version(&self, reservation: &VersionReservation) -> Result<()> {
+        self.metadata.release_version(reservation).await
+    }
+
+    /// Publish a source bundle that realizes an already-built package artifact.
+    ///
+    /// The artifact must already be stored under `artifact_hash`. The caller holds the
+    /// version reservation so the artifact manifest and the entry agree.
+    pub async fn publish_built(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: ArtifactHash,
+        identity_digest: AgentIdentityDigest,
+    ) -> Result<PublishResult> {
+        let stored = self
+            .publish_with_reservation(
+                cmd,
+                reservation,
+                Some(artifact_hash.clone()),
+                Some(identity_digest.clone()),
+            )
+            .await?;
+        Ok(PublishResult {
+            hash: stored.hash,
+            artifact_hash,
+            identity_digest,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    /// Publish at an explicitly reserved version with an already-built artifact.
+    pub async fn publish_reserved(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: ArtifactHash,
+        identity_digest: AgentIdentityDigest,
+    ) -> Result<PublishResult> {
+        self.publish_built(cmd, reservation, artifact_hash, identity_digest)
+            .await
+    }
+
+    async fn publish_with_reservation(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
+    ) -> Result<RepositoryEntry> {
+        if reservation.name != cmd.name {
+            let _ = self.release_version(reservation).await;
+            return Err(RepositoryError::VersionConflict {
+                name: cmd.name.clone(),
+                version: reservation.version,
+            });
+        }
+        let result = self
+            .finish_publish(cmd, reservation, artifact_hash, identity_digest)
+            .await;
+        if result.is_err()
+            && let Err(e) = self.release_version(reservation).await
+        {
+            tracing::warn!(
+                agent = %reservation.name,
+                version = reservation.version.as_u32(),
+                error = %e,
+                "failed to release version reservation after publish failure; it will expire"
+            );
+        }
+        result
+    }
+
+    async fn finish_publish(
+        &self,
+        cmd: PublishCommand,
+        reservation: &VersionReservation,
+        artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
+    ) -> Result<RepositoryEntry> {
         let _span = crate::spans::publish(cmd.name.as_str());
 
         // Determine parentage, generation, and deferred edge descriptors.
@@ -275,6 +384,8 @@ impl RepositoryService {
         let tags = manifest_tags(&source);
         let new_entry = NewEntry {
             name: cmd.name.clone(),
+            artifact_hash,
+            identity_digest,
             source,
             parentage,
             generation,
@@ -282,8 +393,12 @@ impl RepositoryService {
             tags,
         };
 
-        // Store atomically assigns version, writes it into manifest, computes hash.
-        let stored = self.metadata.insert_entry(&new_entry).await?;
+        // Insert at the reserved version. The store fails if the lineage no longer
+        // agrees with it, so a concurrent publisher cannot steal this version.
+        let stored = self
+            .metadata
+            .insert_reserved_entry(&new_entry, reservation)
+            .await?;
 
         // Now create lineage edges using the store-assigned hash as target.
         if !edge_descriptors.is_empty() {
@@ -304,22 +419,74 @@ impl RepositoryService {
             hash = %stored.hash,
             version = %stored.version_ref,
             generation = stored.generation.as_u32(),
-            event = "published"
+            event = if stored.artifact_hash.is_some() { "published" } else { "drafted" }
         );
 
-        Ok(PublishResult {
-            hash: stored.hash,
-            version_ref: stored.version_ref,
-            generation: stored.generation,
-        })
+        Ok(stored)
     }
 
     // -----------------------------------------------------------------------
     // Fork
     // -----------------------------------------------------------------------
 
-    /// Fork an existing entry into a new lineage.
-    pub async fn fork(&self, cmd: ForkCommand) -> Result<PublishResult> {
+    /// Create a source-only fork draft in a new lineage.
+    ///
+    /// The fork is not a deployment candidate until it is built and published.
+    pub async fn fork_draft(&self, cmd: ForkCommand) -> Result<DraftResult> {
+        let stored = self.finish_fork(cmd, None, None, None).await?;
+        Ok(DraftResult {
+            hash: stored.hash,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    /// Fork an existing entry and publish the already-built forked artifact.
+    pub async fn fork_built(
+        &self,
+        cmd: ForkCommand,
+        reservation: &VersionReservation,
+        artifact_hash: ArtifactHash,
+        identity_digest: AgentIdentityDigest,
+    ) -> Result<PublishResult> {
+        if reservation.name != cmd.new_name {
+            let _ = self.release_version(reservation).await;
+            return Err(RepositoryError::VersionConflict {
+                name: cmd.new_name.clone(),
+                version: reservation.version,
+            });
+        }
+        let stored = self
+            .finish_fork(
+                cmd,
+                Some(artifact_hash.clone()),
+                Some(identity_digest.clone()),
+                Some(reservation),
+            )
+            .await;
+        let stored = match stored {
+            Ok(stored) => stored,
+            Err(error) => {
+                let _ = self.release_version(reservation).await;
+                return Err(error);
+            }
+        };
+        Ok(PublishResult {
+            hash: stored.hash,
+            artifact_hash,
+            identity_digest,
+            version_ref: stored.version_ref,
+            generation: stored.generation,
+        })
+    }
+
+    async fn finish_fork(
+        &self,
+        cmd: ForkCommand,
+        artifact_hash: Option<ArtifactHash>,
+        identity_digest: Option<AgentIdentityDigest>,
+        reservation: Option<&VersionReservation>,
+    ) -> Result<RepositoryEntry> {
         let _span = crate::spans::fork(cmd.source_hash.as_str(), cmd.new_name.as_str());
 
         // Verify source exists
@@ -340,6 +507,8 @@ impl RepositoryService {
 
         let new_entry = NewEntry {
             name: cmd.new_name.clone(),
+            artifact_hash,
+            identity_digest,
             source: cmd.source,
             parentage,
             generation,
@@ -347,9 +516,14 @@ impl RepositoryService {
             tags: cmd.tags,
         };
 
-        // Store atomically assigns version (v1 for a new lineage), writes it
-        // into manifest, computes hash.
-        let stored = self.metadata.insert_entry(&new_entry).await?;
+        let stored = match reservation {
+            Some(reservation) => {
+                self.metadata
+                    .insert_reserved_entry(&new_entry, reservation)
+                    .await?
+            }
+            None => self.metadata.insert_entry(&new_entry).await?,
+        };
 
         // Record fork edge using the store-assigned hash.
         let edge = LineageEdge {
@@ -365,14 +539,10 @@ impl RepositoryService {
             hash = %stored.hash,
             version = %stored.version_ref,
             forked_from = %cmd.source_hash,
-            event = "forked"
+            event = if stored.artifact_hash.is_some() { "forked" } else { "fork_drafted" }
         );
 
-        Ok(PublishResult {
-            hash: stored.hash,
-            version_ref: stored.version_ref,
-            generation: stored.generation,
-        })
+        Ok(stored)
     }
 
     // -----------------------------------------------------------------------
@@ -408,29 +578,44 @@ impl RepositoryService {
         self.metadata.list_agents().await
     }
 
-    /// Version number the next [`publish`](Self::publish) for this agent will receive
-    /// (matches [`MetadataStore::insert_entry`](crate::storage::MetadataStore::insert_entry) logic).
+    /// Version number the next [`publish`](Self::publish) for this agent will receive.
+    ///
+    /// Counts live reservations as well as stored entries.
     pub async fn next_version_for_agent(&self, name: &AgentName) -> Result<u32> {
-        Ok(match self.get_latest(name).await? {
-            Some(prev) => prev.version_ref.version.as_u32().saturating_add(1),
-            None => 1,
-        })
+        Ok(self.metadata.next_version(name).await?.as_u32())
     }
 
     // -----------------------------------------------------------------------
     // Blob operations
     // -----------------------------------------------------------------------
 
-    /// Retrieve a tar.gz blob.
-    pub async fn get_blob(&self, hash: &ContentHash) -> Result<Option<Vec<u8>>> {
-        self.blobs.get(hash).await
+    /// Retrieve a tar.gz package by its exact artifact hash and verify it before returning it.
+    pub async fn get_blob(&self, hash: &ArtifactHash) -> Result<Option<Vec<u8>>> {
+        let Some(bytes) = self.blobs.get_artifact(hash).await? else {
+            return Ok(None);
+        };
+        let computed = ArtifactHash::from_bytes(&bytes);
+        if &computed != hash {
+            return Err(RepositoryError::ArtifactHashMismatch {
+                expected: hash.clone(),
+                computed,
+            });
+        }
+        Ok(Some(bytes))
     }
 
-    /// Store a repository-built tar.gz blob under content hash.
+    /// Store a repository-built tar.gz blob under its exact byte hash.
     ///
     /// This is intended for trusted in-process orchestrators (not public HTTP upload).
-    pub async fn put_built_blob(&self, hash: &ContentHash, data: &[u8]) -> Result<()> {
-        self.blobs.put(hash, data).await
+    pub async fn put_built_blob(&self, hash: &ArtifactHash, data: &[u8]) -> Result<()> {
+        let computed = ArtifactHash::from_bytes(data);
+        if &computed != hash {
+            return Err(RepositoryError::ArtifactHashMismatch {
+                expected: hash.clone(),
+                computed,
+            });
+        }
+        self.blobs.put_artifact(hash, data).await
     }
 
     /// Persist server-generated dev artifacts for a published package hash.
