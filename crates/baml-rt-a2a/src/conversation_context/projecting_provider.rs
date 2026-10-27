@@ -190,6 +190,12 @@ impl ProjectingConversationContextProvider {
                     &context_id_str,
                     agent_id.as_str(),
                 );
+                // Wholesale publish is safe only because one agent has exactly one runtime manager,
+                // and this path runs inside that manager's serialized step-executor loop. The Send
+                // path that `insert_at`s a pending receipt is the same loop, so a projection never
+                // overlaps a Send for this `(context_id, agent_id)`. If the runner ever fans one
+                // agent out across managers sharing a `SharedContextRefStore`, replace this with a
+                // merge (or generation check) so a stale snapshot cannot discard a new receipt.
                 tables.insert(key, Arc::clone(&prepared));
             }
             prepared
@@ -282,6 +288,8 @@ impl ProjectingConversationContextProvider {
                 &context_id_str,
                 agent_id.as_str(),
             );
+            // Same invariant as the prompt projection path: this is the agent's serialized loop, so
+            // a wholesale publish cannot race the Send path's `insert_at`. See the note above.
             tables.insert(key, Arc::clone(&ref_table_arc));
         }
 

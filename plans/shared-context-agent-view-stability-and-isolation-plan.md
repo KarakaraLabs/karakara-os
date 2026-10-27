@@ -664,10 +664,14 @@ P1 exit gate:
       `get_ref_table`, and `invalidate_ref_table` take an agent. Durable `archive_prefix` /
       `archive_body` identity stays context-global. Pinned by
       `shared_context_ref_store_test::shared_store_same_agent_shares_table_and_siblings_do_not`.
-- [ ] **P2.5 Replace stale table publication.** Still open. `prepare_ref_table_for_projection`
-      publishes a freshly hydrated table wholesale; a concurrent refresh can in theory overwrite a
-      newer in-memory pending receipt. The pending receipt is still recoverable from `archive_body`,
-      so this is a cache-freshness gap, not a data-loss bug. Needs a merge or generation check.
+- [x] **P2.5 Replace stale table publication.** Closed as not reachable in the current topology.
+      The only wholesale cache publishes are the two in `projecting_provider.rs`, both inside the
+      agent's serialized step-executor loop; the Send path that `insert_at`s a pending receipt is
+      the same loop, so a projection never overlaps a Send for one `(context_id, agent_id)`. The
+      effect subscriber and compaction paths return fresh tables and never publish. The race could
+      only arise if one `AgentId` ran across two `BamlRuntimeManager`s sharing a
+      `SharedContextRefStore`, which the runner does not produce. Documented as an invariant comment
+      at both publish sites; revisit with a merge/generation check if that topology appears.
 - [x] **P2.6 Narrow invalidation.** `write_event` now invalidates only the task/message agent's
       table (`invalidate_ref_table`); the effect subscriber narrows where the agent is known and
       falls back to `invalidate_ref_tables_for_context` otherwise. A sibling's table survives an
