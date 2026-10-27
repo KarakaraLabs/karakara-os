@@ -86,10 +86,17 @@ impl ProjectingConversationContextProvider {
         };
         let context_id = scope.context_id();
         let agent_id = scope.agent_id().clone();
-        // Budget is measured on this agent's own view: hidden sibling rows must not
-        // push an agent over the item or byte threshold (P4.6).
+        // Budget is measured on the same materialization the prompt path renders: this
+        // agent's compacted (summary + bounded tail) or windowed view. Measuring raw history
+        // here would keep tripping the emergency trigger after a summary already shrank the
+        // prompt (P4 review finding 2).
         let agent_items = store
-            .conversation_context_for_agent(context_id, &agent_id, None)
+            .conversation_context_for_agent_prompt(
+                context_id,
+                &agent_id,
+                Some(DEFAULT_LLM_CONTEXT_ITEM_CAP),
+                None,
+            )
             .await
             .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                 source: Box::new(e),

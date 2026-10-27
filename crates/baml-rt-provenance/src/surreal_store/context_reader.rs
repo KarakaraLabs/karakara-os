@@ -380,14 +380,30 @@ impl SurrealProvenanceStore {
         let head = self
             .latest_compaction_head(context_id, Some(agent_id), task_id)
             .await?;
+        let cap = limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP).max(1);
         if head.is_some() {
-            return Ok(crate::context_compaction::apply_compaction_profile(
+            let compacted = crate::context_compaction::apply_compaction_profile(
                 TranscriptProjectionProfile::AgentPromptCompacted,
                 items,
                 head.as_ref(),
-            ));
+            );
+            // The prompt is the summary plus a bounded newest tail. `apply_compaction_profile`
+            // returns summary + every post-coverage row (uncapped), so trim the tail to
+            // `cap - 1` items rather than letting a deferred compaction leave the prompt unbounded.
+            if compacted.len() <= cap {
+                return Ok(compacted);
+            }
+            let tail_keep = cap - 1;
+            let mut out = Vec::with_capacity(cap);
+            out.push(compacted[0].clone()); // summary row is always kept
+            let tail = &compacted[1..];
+            out.extend(
+                tail.iter()
+                    .skip(tail.len().saturating_sub(tail_keep))
+                    .cloned(),
+            );
+            return Ok(out);
         }
-        let cap = limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP).max(1);
         if items.len() <= cap {
             return Ok(items);
         }

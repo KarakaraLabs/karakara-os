@@ -131,8 +131,14 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
             "DEFINE INDEX IF NOT EXISTS idx_context_planning_ctx_order ON {TBL_CONTEXT_PLANNING_INDEX} FIELDS context_id, latest_planning_event_order"
         ),
         format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_COMPACTION_INDEX}"),
+        // The compaction head is keyed by (context, agent, task): agent-prompt summaries are
+        // per-agent, and an operator/audit summary is the agent_id = NONE slot. The old
+        // (context, task) unique index let two agents collide on the same task.
         format!(
-            "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_task ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, task_entity_id UNIQUE"
+            "REMOVE INDEX IF EXISTS idx_context_compaction_ctx_task ON {TBL_CONTEXT_COMPACTION_INDEX}"
+        ),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_agent_task ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, agent_id, task_entity_id UNIQUE"
         ),
         format!(
             "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_order ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, event_order"

@@ -19,8 +19,8 @@ use baml_rt_llm_config::LlmClientConfig;
 use baml_rt_provenance::{
     AgentType, CompactionPrefixInput, CompactionRequest, CompactionSummarizeError,
     CompactionTriggerInput, CompactionTriggerSource, ContextCompactionSubscriber,
-    ConversationCompactionSummarizer, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvEvent, ProvenanceQueryApi,
-    ProvenanceWriter, finalize_compaction_summary,
+    ContextCompactionTrigger, ConversationCompactionSummarizer, DEFAULT_LLM_CONTEXT_ITEM_CAP,
+    ProvEvent, ProvenanceQueryApi, ProvenanceWriter, finalize_compaction_summary,
 };
 use baml_rt_tools::tools::ToolRegistry;
 use test_support::testing::provenance_fixtures::{build_isolated_store, wall_clock_tick};
@@ -301,4 +301,119 @@ async fn two_agents_receive_private_summaries_while_operator_reads_full_context(
         )
     });
     assert!(has_a && has_b, "operator sees both agents' rows");
+}
+
+/// P4 review finding 1: the compaction head is keyed by (context, agent, task), so two agents
+/// compacting the *same* task must each persist an independent head. The old (context, task)
+/// unique index made the second write collide.
+#[tokio::test]
+async fn two_agents_write_independent_task_scoped_heads_without_collision() {
+    let store = Arc::new(build_isolated_store().await);
+    let ctx = ContextId::new(9801, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let b = agent_id("00000000-0000-0000-0000-0000000000bb");
+    let task = TaskId::from_external(ExternalId::new("shared-task"));
+
+    let event = |ctx: &ContextId, task: &TaskId, agent: &AgentId, text: &str| {
+        ProvEvent::context_compaction_recorded_global(
+            ctx.clone(),
+            Some(agent.clone()),
+            Some(task.clone()),
+            0,
+            100,
+            vec!["n-1".to_string()],
+            text.to_string(),
+            ContextCompactionTrigger::PostTurnThreshold,
+            8,
+            120,
+            20,
+            4000,
+            100,
+            format!("hash-{text}"),
+            false,
+        )
+    };
+
+    store
+        .add_event(event(&ctx, &task, &a, "summary for A"))
+        .await
+        .expect("agent-a head write must not collide");
+    store
+        .add_event(event(&ctx, &task, &b, "summary for B"))
+        .await
+        .expect("agent-b head write must not collide");
+
+    let head_a = store
+        .latest_compaction_head(&ctx, Some(&a), Some(&task))
+        .await
+        .expect("read a")
+        .expect("agent-a task head");
+    let head_b = store
+        .latest_compaction_head(&ctx, Some(&b), Some(&task))
+        .await
+        .expect("read b")
+        .expect("agent-b task head");
+
+    assert_eq!(head_a.summary_text, "summary for A");
+    assert_eq!(head_b.summary_text, "summary for B");
+    assert_ne!(
+        head_a.activity_anchor, head_b.activity_anchor,
+        "each agent owns a distinct task-scoped head"
+    );
+}
+
+/// P4 review finding 2: a compacted prompt is the summary plus a *bounded* newest tail. A
+/// deferred compaction that lets the tail grow must not produce an unbounded prompt.
+#[tokio::test]
+async fn compacted_prompt_tail_is_bounded() {
+    let store = Arc::new(build_isolated_store().await);
+    let ctx = ContextId::new(9802, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let task = TaskId::from_external(ExternalId::new("task-bounded"));
+    boot(&store, &a, "clickup-agent").await;
+    ensure_task(&store, &ctx, &task, &a).await;
+
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 20;
+    seed_messages(&store, &ctx, &task, &a, "agent-a", count, 1_900_000_200_000).await;
+
+    let subscriber = subscriber(Arc::clone(&store));
+    subscriber
+        .evaluate_and_compact(
+            &CompactionRequest {
+                context_id: ctx.clone(),
+                agent_id: a.clone(),
+            },
+            force_trigger(),
+            "default",
+        )
+        .await;
+
+    let head = store
+        .latest_compaction_head(&ctx, Some(&a), None)
+        .await
+        .expect("head")
+        .expect("agent-a compaction head");
+    assert!(
+        head.covered_event_order_end > 0,
+        "compaction must cover a non-empty prefix"
+    );
+
+    // Read with a small bound: the result must respect it regardless of tail size.
+    let limit = 5usize;
+    let prompt = store
+        .conversation_context_for_agent_prompt(&ctx, &a, Some(limit), None)
+        .await
+        .expect("prompt");
+    assert!(
+        prompt.len() <= limit,
+        "compacted prompt must respect the limit: got {} items for limit {limit}",
+        prompt.len()
+    );
+    assert!(
+        matches!(
+            prompt[0].content,
+            ConversationItemContent::CompactionSummary { .. }
+        ),
+        "compacted prompt leads with the summary"
+    );
 }
