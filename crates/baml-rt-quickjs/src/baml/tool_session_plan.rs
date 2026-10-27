@@ -177,21 +177,27 @@ impl BamlRuntimeManager {
     }
 
     /// Live [`RefTable`] first; on miss, optional Surreal [`SurrealProvenanceStore`](baml_rt_provenance::SurrealProvenanceStore).
+    ///
+    /// Agent-scoped: a sibling's `@prefix/local` does not resolve, even when the same process
+    /// shares a backing [`baml_rt_tools::archive_refs::ContextRefTables`].
     async fn resolve_archive_entry(
         &self,
         context_id: &baml_rt_core::ids::ContextId,
+        agent_id: &baml_rt_core::ids::AgentId,
         archive_ref: baml_rt_tools::archive_read::ShortRef,
     ) -> Result<baml_rt_tools::archive_refs::ArchiveEntry> {
         let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
             &self.state.archive_ref_tables,
             context_id.as_str(),
+            agent_id.as_str(),
         );
         if let Some(cell) = ref_table.get(archive_ref) {
             return Ok(cell.value().clone());
         }
         if let Some(store) = self.state.archive_ref_store.as_ref() {
+            let principal = baml_rt_provenance::ProvenanceReadPrincipal::Agent(agent_id.clone());
             let remote = store
-                .archive_get_body(context_id, archive_ref)
+                .archive_get_body(context_id, archive_ref, &principal)
                 .await
                 .map_err(map_archive_provenance_err)?;
             if let Some(e) = remote {
@@ -205,20 +211,24 @@ impl BamlRuntimeManager {
     }
 
     /// Clear the durable duplicate guard for a Send whose result was consumed.
+    ///
+    /// Ownership-enforced: only the owning agent clears its own guard.
     pub(crate) async fn mark_archive_send_consumed(
         &self,
         context_id: &baml_rt_core::ids::ContextId,
+        agent_id: &baml_rt_core::ids::AgentId,
         archive_ref: baml_rt_tools::archive_read::ShortRef,
     ) -> Result<()> {
         if let Some(store) = self.state.archive_ref_store.as_ref() {
             store
-                .archive_mark_send_consumed(context_id, archive_ref)
+                .archive_mark_send_consumed(context_id, archive_ref, agent_id)
                 .await
                 .map_err(map_archive_provenance_err)?;
         }
         let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
             &self.state.archive_ref_tables,
             context_id.as_str(),
+            agent_id.as_str(),
         );
         ref_table.mark_send_consumed(archive_ref);
         Ok(())
@@ -294,7 +304,7 @@ impl BamlRuntimeManager {
             "FSM step: global archive read"
         );
         let entry = match self
-            .resolve_archive_entry(scope.context_id(), archive_ref)
+            .resolve_archive_entry(scope.context_id(), scope.agent_id(), archive_ref)
             .await
         {
             Ok(e) => e,
@@ -303,7 +313,7 @@ impl BamlRuntimeManager {
             }
             Err(other) => return Err(other),
         };
-        self.mark_archive_send_consumed(scope.context_id(), archive_ref)
+        self.mark_archive_send_consumed(scope.context_id(), scope.agent_id(), archive_ref)
             .await?;
         let archive_ref_str = archive_ref.to_string();
         let grep_raw = grep.as_ref().map(|g| g.pattern_text().to_string());
@@ -440,6 +450,7 @@ impl BamlRuntimeManager {
             let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
                 &self.state.archive_ref_tables,
                 plan_scope.context_id().as_str(),
+                plan_scope.agent_id().as_str(),
             );
             if let Some((archive_ref, header, receipt)) =
                 ref_table.find_receipt_by_send_signature(&signature)
@@ -608,6 +619,7 @@ impl BamlRuntimeManager {
                     let ref_table = baml_rt_tools::archive_refs::get_or_create_ref_table(
                         &self.state.archive_ref_tables,
                         plan_scope.context_id().as_str(),
+                        plan_scope.agent_id().as_str(),
                     );
                     if let Some((archive_ref, header, receipt)) =
                         ref_table.find_receipt_by_send_signature(&signature)
@@ -777,7 +789,11 @@ impl BamlRuntimeManager {
                         "FSM step: SearchRead (archive line filter)"
                     );
                     let entry = match self
-                        .resolve_archive_entry(plan_scope.context_id(), archive_ref)
+                        .resolve_archive_entry(
+                            plan_scope.context_id(),
+                            plan_scope.agent_id(),
+                            archive_ref,
+                        )
                         .await
                     {
                         Ok(e) => e,
@@ -788,8 +804,12 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
-                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
-                        .await?;
+                    self.mark_archive_send_consumed(
+                        plan_scope.context_id(),
+                        plan_scope.agent_id(),
+                        archive_ref,
+                    )
+                    .await?;
                     let grep_str = grep.pattern_text().to_string();
                     let mut current_offset = offset;
                     let mut bodies = Vec::new();
@@ -894,7 +914,11 @@ impl BamlRuntimeManager {
                         "FSM step: PageRead (archive paging)"
                     );
                     let entry = match self
-                        .resolve_archive_entry(plan_scope.context_id(), archive_ref)
+                        .resolve_archive_entry(
+                            plan_scope.context_id(),
+                            plan_scope.agent_id(),
+                            archive_ref,
+                        )
                         .await
                     {
                         Ok(e) => e,
@@ -905,8 +929,12 @@ impl BamlRuntimeManager {
                         }
                         Err(e) => return Err(e),
                     };
-                    self.mark_archive_send_consumed(plan_scope.context_id(), archive_ref)
-                        .await?;
+                    self.mark_archive_send_consumed(
+                        plan_scope.context_id(),
+                        plan_scope.agent_id(),
+                        archive_ref,
+                    )
+                    .await?;
                     let mut current_offset = offset;
                     let mut lines = Vec::new();
                     let mut materialized_pages = 0usize;

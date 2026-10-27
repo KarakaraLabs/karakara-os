@@ -201,6 +201,9 @@ pub struct SurrealProvenanceStore {
     archive_prefix_cache: DashMap<(String, String), u32>,
     /// Serializes `archive_next_local` per `(context_id, archive_prefix)` to cut MVCC/CREATE races.
     archive_local_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    /// Serializes `archive_ensure_prefix` per context so concurrent prefix allocation cannot
+    /// thundering-herd the max-prefix SELECT + INSERT and exhaust write-conflict retries.
+    archive_prefix_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     /// One in-flight allocate per `(context_id, activity_anchor)`; pairs with unique DB index.
     archive_anchor_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     /// Optional in-process ref-table cache (invalidated after each context-scoped write).

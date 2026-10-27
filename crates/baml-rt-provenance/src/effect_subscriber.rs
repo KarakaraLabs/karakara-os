@@ -33,7 +33,7 @@ use crate::{
     },
     id_semantics::{SessionStepEntityId, SessionStepEntityInput},
     provenance_item_to_projection_item,
-    store::ProvenanceWriter,
+    store::{ProvenanceReadPrincipal, ProvenanceWriter},
     types::ProvEntityId,
 };
 
@@ -187,15 +187,30 @@ impl ProvenanceEffectSubscriber {
         self.archive_ref_tables = Some(tables);
     }
 
-    fn invalidate_context_ref_cache(&self, context_id: &ContextId) {
+    fn invalidate_context_ref_cache(&self, context_id: &ContextId, agent_id: Option<&AgentId>) {
         if let Some(tables) = &self.archive_ref_tables {
-            baml_rt_tools::archive_refs::invalidate_ref_table(tables, context_id.as_str());
+            match agent_id {
+                Some(agent) => {
+                    baml_rt_tools::archive_refs::invalidate_ref_table(
+                        tables,
+                        context_id.as_str(),
+                        agent.as_str(),
+                    );
+                }
+                None => {
+                    baml_rt_tools::archive_refs::invalidate_ref_tables_for_context(
+                        tables,
+                        context_id.as_str(),
+                    );
+                }
+            }
         }
     }
 
     async fn ref_table_for_context(
         &self,
         context_id: &ContextId,
+        principal: &ProvenanceReadPrincipal,
         conversation_items: &[ProvenanceConversationContextItem],
     ) -> Option<Arc<RefTable>> {
         let registry = self.tool_registry.as_ref()?;
@@ -208,26 +223,33 @@ impl ProvenanceEffectSubscriber {
             crate::surreal_store::prepare_ref_table_for_projection(
                 store,
                 context_id,
+                principal,
                 &projection_items,
                 registry.as_ref(),
             )
             .await
             .ok()
         } else {
-            Some(
-                self.archive_ref_tables
-                    .as_ref()
-                    .and_then(|tables| {
-                        baml_rt_tools::archive_refs::get_ref_table(tables, context_id.as_str())
+            let cached = match principal {
+                ProvenanceReadPrincipal::Agent(agent_id) => {
+                    self.archive_ref_tables.as_ref().and_then(|tables| {
+                        baml_rt_tools::archive_refs::get_ref_table(
+                            tables,
+                            context_id.as_str(),
+                            agent_id.as_str(),
+                        )
                     })
-                    .unwrap_or_else(|| Arc::new(RefTable::new())),
-            )
+                }
+                ProvenanceReadPrincipal::Operator => None,
+            };
+            Some(cached.unwrap_or_else(|| Arc::new(RefTable::new())))
         }
     }
 
     async fn compute_citation_integrity(
         &self,
         context_id: &ContextId,
+        principal: &ProvenanceReadPrincipal,
         citation_strings: &[String],
         conversation_items: &[ProvenanceConversationContextItem],
         strict_citation_anchors: bool,
@@ -236,7 +258,7 @@ impl ProvenanceEffectSubscriber {
             return None;
         }
         let ref_table = self
-            .ref_table_for_context(context_id, conversation_items)
+            .ref_table_for_context(context_id, principal, conversation_items)
             .await?;
         let _history = project_prompt_context(
             conversation_items
@@ -625,9 +647,13 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     .get("agent_package")
                     .and_then(Value::as_str);
                 let citation_policy = resolve_semiotic_policy(agent_package);
+                let citation_principal = agent_id_from_metadata(&metadata.metadata)
+                    .map(ProvenanceReadPrincipal::Agent)
+                    .unwrap_or(ProvenanceReadPrincipal::Operator);
                 let citation_integrity = if bool::from(*outcome) && !citation_strings.is_empty() {
                     self.compute_citation_integrity(
                         context_id,
+                        &citation_principal,
                         &citation_strings,
                         &conv_items_for_citations,
                         citation_policy.strict_citation_anchors,
@@ -765,7 +791,10 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     )
                     .await;
                 }
-                self.invalidate_context_ref_cache(context_id);
+                self.invalidate_context_ref_cache(
+                    context_id,
+                    agent_id_from_metadata(&metadata.metadata).as_ref(),
+                );
                 if !bool::from(*outcome) && rejection_reason.as_deref().is_some() {
                     let reason = rejection_reason.clone().unwrap_or_default();
                     tracing::warn!(
@@ -796,7 +825,10 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     self.writer
                         .add_event_with_logging(rejected_event, "effect subscriber")
                         .await;
-                    self.invalidate_context_ref_cache(context_id);
+                    self.invalidate_context_ref_cache(
+                        context_id,
+                        agent_id_from_metadata(&metadata.metadata).as_ref(),
+                    );
                 }
                 return Ok(());
             }
@@ -909,11 +941,12 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
         };
 
         let ctx_for_cache = prov_event.context_id_opt().cloned();
+        let cache_agent = prov_event.message_agent_id().cloned();
         self.writer
             .add_event_with_logging(prov_event, "effect subscriber")
             .await;
         if let Some(ctx) = ctx_for_cache.as_ref() {
-            self.invalidate_context_ref_cache(ctx);
+            self.invalidate_context_ref_cache(ctx, cache_agent.as_ref());
         }
         Ok(())
     }

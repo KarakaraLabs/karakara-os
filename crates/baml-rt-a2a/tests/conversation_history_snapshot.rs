@@ -134,12 +134,12 @@ use baml_rt_core::{
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_provenance::{
-    CallScope, PlanStepSpec, ProvEvent, ProvenanceContextReader, ProvenanceWriter,
-    SurrealStoreBuilder, prepare_ref_table_for_projection,
+    CallScope, PlanStepSpec, ProvEvent, ProvenanceContextReader, ProvenanceReadPrincipal,
+    ProvenanceWriter, SurrealStoreBuilder, prepare_ref_table_for_projection,
 };
 use baml_rt_tools::{
     archive_read::{ShortRef, format_session_read_from_vtable, render_to_lines},
-    archive_refs::{ArchiveEntry, ContextRefTables, get_or_create_ref_table},
+    archive_refs::{ArchiveEntry, ContextRefTables, RefTable, get_or_create_ref_table},
     prompt_projection::{
         PromptProjectionContent, PromptProjectionItem, SessionStepPayload, SessionStepProjection,
         project_prompt_context,
@@ -147,11 +147,9 @@ use baml_rt_tools::{
 };
 
 fn make_archive_reader(
-    tables: ContextRefTables,
-    context_id: String,
+    ref_table: Arc<RefTable>,
 ) -> impl Fn(&str, Option<&str>, usize, usize) -> Option<String> {
     move |archive_ref_str, grep_str, offset, limit| {
-        let ref_table = baml_rt_tools::archive_refs::get_ref_table(&tables, &context_id)?;
         format_session_read_from_vtable(&ref_table, archive_ref_str, grep_str, offset, limit)
     }
 }
@@ -167,7 +165,6 @@ async fn conversation_history_renders_like_ctx_tags() {
         .await
         .expect("build isolated test store");
     let context_id = ContextId::new(1, 1);
-    let ctx_key = context_id.as_str().to_string();
     let msg_id = MessageId::from_external(ExternalId::new("msg-1"));
     let agent_id =
         AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
@@ -255,7 +252,6 @@ async fn conversation_history_renders_like_ctx_tags() {
         )
         .await
         .expect("durable archive body");
-    let tables: ContextRefTables = ContextRefTables::new();
     let archive_ref = short_at1.to_string();
     let header = entry.display_header(short_at1);
 
@@ -331,12 +327,16 @@ async fn conversation_history_renders_like_ctx_tags() {
         .collect();
 
     let registry = discover_stub::registry();
-    let ref_table =
-        prepare_ref_table_for_projection(&store, &context_id, &projection_items, &registry)
-            .await
-            .expect("graph-backed ref table");
-    tables.insert(ctx_key.clone(), Arc::clone(&ref_table));
-    let reader = make_archive_reader(tables, ctx_key);
+    let ref_table = prepare_ref_table_for_projection(
+        &store,
+        &context_id,
+        &ProvenanceReadPrincipal::Operator,
+        &projection_items,
+        &registry,
+    )
+    .await
+    .expect("graph-backed ref table");
+    let reader = make_archive_reader(Arc::clone(&ref_table));
     let history = project_prompt_context(projection_items, &registry, &ref_table, Some(&reader));
 
     insta::assert_json_snapshot!(history);
@@ -349,7 +349,6 @@ async fn conversation_history_includes_active_planning_state() {
         .await
         .expect("build isolated test store");
     let context_id = ContextId::new(1_700_000_000_100, 1);
-    let ctx_key = context_id.as_str().to_string();
     let task_id = TaskId::from_external(ExternalId::new("planning-task-1"));
     let msg_id = MessageId::from_external(ExternalId::new("planning-msg-1"));
     let agent_id =
@@ -447,12 +446,15 @@ async fn conversation_history_includes_active_planning_state() {
         .collect();
 
     let registry = discover_stub::registry();
-    let ref_table =
-        prepare_ref_table_for_projection(&store, &context_id, &projection_items, &registry)
-            .await
-            .expect("graph-backed ref table");
-    let tables: ContextRefTables = ContextRefTables::new();
-    tables.insert(ctx_key, Arc::clone(&ref_table));
+    let ref_table = prepare_ref_table_for_projection(
+        &store,
+        &context_id,
+        &ProvenanceReadPrincipal::Operator,
+        &projection_items,
+        &registry,
+    )
+    .await
+    .expect("graph-backed ref table");
     let history = project_prompt_context(projection_items, &registry, &ref_table, None);
 
     insta::assert_json_snapshot!("planning_history_in_transcript", history);
@@ -581,7 +583,7 @@ async fn delegated_context_send_done_replay_seeds_later_archive_read() {
         .collect();
 
     let tables = ContextRefTables::new();
-    let ref_table = get_or_create_ref_table(&tables, &ctx_key);
+    let ref_table = get_or_create_ref_table(&tables, &ctx_key, "replay-agent");
     let registry = discover_stub::registry();
     let history = project_prompt_context(seed_items, &registry, &ref_table, None);
 

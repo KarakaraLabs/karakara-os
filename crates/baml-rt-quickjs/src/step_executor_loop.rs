@@ -759,7 +759,7 @@ pub async fn run_step_executor_loop(
         if let Some(archive_ref) = consumed_receipt_ref {
             let guard = manager.read().await;
             guard
-                .mark_archive_send_consumed(scope.context_id(), archive_ref)
+                .mark_archive_send_consumed(scope.context_id(), scope.agent_id(), archive_ref)
                 .await?;
         }
 

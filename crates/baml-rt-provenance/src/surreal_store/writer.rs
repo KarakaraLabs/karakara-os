@@ -177,7 +177,24 @@ impl SurrealProvenanceStore {
             && let Ok(guard) = self.ref_table_cache.read()
             && let Some(tables) = guard.as_ref()
         {
-            baml_rt_tools::archive_refs::invalidate_ref_table(tables, ctx);
+            // Narrow invalidation to the agents this write touches. A sibling agent's ref table
+            // (including its in-memory pending receipts) survives an unrelated write.
+            let mut affected_agents: Vec<String> = Vec::new();
+            if let Some(agent) = context.task_agent_id.as_ref() {
+                affected_agents.push(agent.as_str().to_string());
+            }
+            if let Some(agent) = event.message_agent_id() {
+                affected_agents.push(agent.as_str().to_string());
+            }
+            affected_agents.sort();
+            affected_agents.dedup();
+            if affected_agents.is_empty() {
+                baml_rt_tools::archive_refs::invalidate_ref_tables_for_context(tables, ctx);
+            } else {
+                for agent in &affected_agents {
+                    baml_rt_tools::archive_refs::invalidate_ref_table(tables, ctx, agent);
+                }
+            }
         }
         Ok(())
     }

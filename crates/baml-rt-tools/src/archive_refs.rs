@@ -565,13 +565,15 @@ impl RefTable {
     }
 }
 
-/// Convenience: shared `RefTable` per context, created on first use.
+/// Convenience: one agent-scoped `RefTable` per `(context_id, agent_id)` pair, created on first
+/// use. The map key is [`ref_table_cache_key`].
 ///
 /// Each BAML runtime manager (QuickJS host) normally holds its own `Arc<ContextRefTables>`.
 /// For multiple managers that share one provenance `context_id` (e.g. coordinator and
 /// internal-A2A callee **in the same OS process**), use one [`SharedContextRefStore`] and inject
-/// the same `Arc` into every manager so archive refs resolve across those managers without
-/// hitting the database on every read.
+/// the same `Arc` into every manager so each agent's archive refs resolve across those managers
+/// without hitting the database on every read. Sibling agents share the backing store but never
+/// the same table contents.
 pub type ContextRefTables = DashMap<String, Arc<RefTable>>;
 
 /// Process-scoped [`ContextRefTables`] shared across several BAML runtime manager instances for
@@ -609,22 +611,51 @@ impl Default for SharedContextRefStore {
     }
 }
 
-/// Get or create the `RefTable` for a context ID.
-pub fn get_or_create_ref_table(tables: &ContextRefTables, context_id: &str) -> Arc<RefTable> {
+/// Stable cache key for one agent's execution ref table in a context.
+///
+/// The `\0` separator keeps a context id from colliding with an agent id prefix (neither id
+/// carries `\0`).
+#[must_use]
+pub fn ref_table_cache_key(context_id: &str, agent_id: &str) -> String {
+    format!("{context_id}\0{agent_id}")
+}
+
+/// Get or create the agent-scoped `RefTable` for a context.
+pub fn get_or_create_ref_table(
+    tables: &ContextRefTables,
+    context_id: &str,
+    agent_id: &str,
+) -> Arc<RefTable> {
+    let key = ref_table_cache_key(context_id, agent_id);
     tables
-        .entry(context_id.to_string())
+        .entry(key)
         .or_insert_with(|| Arc::new(RefTable::new()))
         .clone()
 }
 
-/// Get the `RefTable` for a context ID if it exists; returns `None` if not yet created.
-pub fn get_ref_table(tables: &ContextRefTables, context_id: &str) -> Option<Arc<RefTable>> {
-    tables.get(context_id).map(|r| r.clone())
+/// Get the agent-scoped `RefTable` for a context if it exists; `None` if not yet created.
+pub fn get_ref_table(
+    tables: &ContextRefTables,
+    context_id: &str,
+    agent_id: &str,
+) -> Option<Arc<RefTable>> {
+    tables
+        .get(&ref_table_cache_key(context_id, agent_id))
+        .map(|r| r.clone())
 }
 
-/// Drop the in-process cache for a context (call after provenance writes that may change refs).
-pub fn invalidate_ref_table(tables: &ContextRefTables, context_id: &str) {
-    tables.remove(context_id);
+/// Drop one agent's in-process cache for a context (call after that agent writes provenance).
+pub fn invalidate_ref_table(tables: &ContextRefTables, context_id: &str, agent_id: &str) {
+    tables.remove(&ref_table_cache_key(context_id, agent_id));
+}
+
+/// Drop every agent-scoped cache for a context.
+///
+/// Used when a write cannot be attributed to a single agent (e.g. an operator or host event).
+/// This is conservative: it removes only this context's entries, never a sibling context.
+pub fn invalidate_ref_tables_for_context(tables: &ContextRefTables, context_id: &str) {
+    let prefix = format!("{context_id}\0");
+    tables.retain(|key, _| !key.starts_with(&prefix));
 }
 
 #[cfg(test)]
@@ -719,6 +750,28 @@ mod tests {
             .expect("signature lookup");
         assert_eq!(found.0, r);
         assert!(found.1.contains("Send(expr=\"up\")"));
+    }
+
+    #[test]
+    fn sibling_agents_do_not_suppress_each_others_sends() {
+        let tables = ContextRefTables::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        let owner = get_or_create_ref_table(&tables, "ctx-1", "clickup-agent");
+        let sibling = get_or_create_ref_table(&tables, "ctx-1", "notion-agent");
+
+        owner.insert(
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        assert!(
+            owner.find_by_send_signature(signature).is_some(),
+            "the owner suppresses its own immediate repeat"
+        );
+        assert!(
+            sibling.find_by_send_signature(signature).is_none(),
+            "a sibling agent's table must not see another agent's pending Send"
+        );
     }
 
     #[test]
@@ -828,13 +881,15 @@ mod tests {
     }
 
     #[test]
-    fn context_ref_tables() {
+    fn context_ref_tables_are_scoped_by_context_and_agent() {
         let tables = ContextRefTables::new();
-        let t1 = get_or_create_ref_table(&tables, "ctx-1");
-        let t2 = get_or_create_ref_table(&tables, "ctx-1");
-        let t3 = get_or_create_ref_table(&tables, "ctx-2");
-        assert!(Arc::ptr_eq(&t1, &t2));
-        assert!(!Arc::ptr_eq(&t1, &t3));
+        let t1 = get_or_create_ref_table(&tables, "ctx-1", "agent-a");
+        let t2 = get_or_create_ref_table(&tables, "ctx-1", "agent-a");
+        let t3 = get_or_create_ref_table(&tables, "ctx-2", "agent-a");
+        let t4 = get_or_create_ref_table(&tables, "ctx-1", "agent-b");
+        assert!(Arc::ptr_eq(&t1, &t2), "same context + agent shares a table");
+        assert!(!Arc::ptr_eq(&t1, &t3), "different context separates tables");
+        assert!(!Arc::ptr_eq(&t1, &t4), "different agent separates tables");
     }
 
     #[test]

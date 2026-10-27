@@ -12,7 +12,7 @@ use baml_rt_conversation::view::ProvenanceConversationContextItem;
 use baml_rt_core::{Result, context};
 use baml_rt_provenance::{
     CompactionRequest, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvenanceContextReader,
-    STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
+    ProvenanceReadPrincipal, STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
 };
 use baml_rt_quickjs::baml_execution::ConversationContextProvider;
 use baml_rt_tools::{
@@ -173,9 +173,11 @@ impl ProjectingConversationContextProvider {
         let context_id_str = context_id.as_str().to_string();
 
         let ref_table_arc = if let Some(store) = self.provenance_store.as_ref() {
+            let principal = ProvenanceReadPrincipal::Agent(agent_id.clone());
             let prepared = baml_rt_provenance::prepare_ref_table_for_projection(
                 store,
                 context_id,
+                &principal,
                 &projection_items,
                 self.tool_registry.as_ref(),
             )
@@ -184,20 +186,29 @@ impl ProjectingConversationContextProvider {
                 source: Box::new(e),
             })?;
             if let Some(tables) = self.archive_ref_tables.as_ref() {
-                tables.insert(context_id_str.clone(), Arc::clone(&prepared));
+                let key = baml_rt_tools::archive_refs::ref_table_cache_key(
+                    &context_id_str,
+                    agent_id.as_str(),
+                );
+                tables.insert(key, Arc::clone(&prepared));
             }
             prepared
         } else if let Some(tables) = self.archive_ref_tables.as_deref() {
-            baml_rt_tools::archive_refs::get_or_create_ref_table(tables, &context_id_str)
+            baml_rt_tools::archive_refs::get_or_create_ref_table(
+                tables,
+                &context_id_str,
+                agent_id.as_str(),
+            )
         } else {
             Arc::new(baml_rt_tools::archive_refs::RefTable::new())
         };
 
         let reader: Option<BoxedArchiveReader> = self.archive_ref_tables.clone().map(|t| {
             let ctx = context_id_str.clone();
+            let aid = agent_id.as_str().to_string();
             let boxed: BoxedArchiveReader =
                 Box::new(move |archive_ref_str, grep_str, offset, limit| {
-                    let ref_table = baml_rt_tools::archive_refs::get_ref_table(&t, &ctx)?;
+                    let ref_table = baml_rt_tools::archive_refs::get_ref_table(&t, &ctx, &aid)?;
                     baml_rt_tools::archive_read::format_session_read_from_vtable(
                         &ref_table,
                         archive_ref_str,
@@ -254,9 +265,11 @@ impl ProjectingConversationContextProvider {
             .collect::<Vec<_>>();
 
         let context_id_str = context_id.as_str().to_string();
+        let principal = ProvenanceReadPrincipal::Agent(agent_id.clone());
         let ref_table_arc = baml_rt_provenance::prepare_ref_table_for_projection(
             store,
             context_id,
+            &principal,
             &projection_items,
             self.tool_registry.as_ref(),
         )
@@ -265,14 +278,19 @@ impl ProjectingConversationContextProvider {
             source: Box::new(e),
         })?;
         if let Some(tables) = self.archive_ref_tables.as_ref() {
-            tables.insert(context_id_str.clone(), Arc::clone(&ref_table_arc));
+            let key = baml_rt_tools::archive_refs::ref_table_cache_key(
+                &context_id_str,
+                agent_id.as_str(),
+            );
+            tables.insert(key, Arc::clone(&ref_table_arc));
         }
 
         let reader: Option<BoxedArchiveReader> = self.archive_ref_tables.clone().map(|t| {
             let ctx = context_id_str.clone();
+            let aid = agent_id.as_str().to_string();
             let boxed: BoxedArchiveReader =
                 Box::new(move |archive_ref_str, grep_str, offset, limit| {
-                    let ref_table = baml_rt_tools::archive_refs::get_ref_table(&t, &ctx)?;
+                    let ref_table = baml_rt_tools::archive_refs::get_ref_table(&t, &ctx, &aid)?;
                     baml_rt_tools::archive_read::format_session_read_from_vtable(
                         &ref_table,
                         archive_ref_str,

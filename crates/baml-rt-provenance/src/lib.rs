@@ -173,8 +173,8 @@ pub use store::{
     ProvenanceArchivePayload, ProvenanceArchiveRecord, ProvenanceContextReader,
     ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
     ProvenanceOpsQueryResponse, ProvenanceOpsResource, ProvenanceOutcomeSegment,
-    ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceResponseProfile,
-    ProvenanceWriter, TaskAgentResolution,
+    ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceReadPrincipal,
+    ProvenanceResponseProfile, ProvenanceWriter, TaskAgentResolution,
 };
 pub use surreal_config::SurrealStoreConfig;
 pub use surreal_store::{

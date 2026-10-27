@@ -648,38 +648,55 @@ P1 exit gate:
 
 ### P2: isolate archives, receipts, duplicate guards, and citations
 
-- [ ] **P2.1 Introduce an explicit read principal.** Separate agent execution
-      reads from privileged operator/audit reads. Do not use `None` to mean
-      unrestricted access.
-- [ ] **P2.2 Enforce archive ownership in durable reads.** Require the reader's
-      agent ID for body lookup, PageRead, SearchRead, header listing, and cache
-      hydration.
-- [ ] **P2.3 Enforce ownership on mutation.** Prevent a sibling from marking an
-      archive receipt consumed.
-- [ ] **P2.4 Re-key execution ref tables.** Change the cache key to
-      `(context_id, agent_id)` while retaining context-global durable archive
-      identity.
-- [ ] **P2.5 Replace stale table publication.** Merge hydrated refs or publish
-      with a generation check so a concurrent refresh cannot discard a new
-      pending receipt.
-- [ ] **P2.6 Narrow invalidation.** An event from one agent must not invalidate
-      every sibling agent's execution ref table.
-- [ ] **P2.7 Scope duplicate suppression.** Search pending signatures only in
-      the current agent's table and stop treating prefix order as recency.
-- [ ] **P2.8 Scope history ref hydration.** Keep global `#N` assignment if
-      useful for audit, but hydrate only agent-visible rows for execution.
-- [ ] **P2.9 Scope citation resolution.** Reject guessed sibling `#N` and
-      `@prefix/local` references from agent output.
-- [ ] **P2.10 Update shared-store tests.** Same context and same agent share a
-      table; same context and different agents do not. The operator API still
-      reads all durable rows.
-- [ ] **P2.11 Add concurrent prefix allocation coverage.** Allocate prefixes
-      for many agents at once and assert uniqueness and stable re-reads.
+- [x] **P2.1 Introduce an explicit read principal.** Added
+      `ProvenanceReadPrincipal::{Agent(AgentId), Operator}` (`store.rs`). Agent execution reads
+      pass `Agent`; operator/audit paths (citation-integrity scoring, compaction render, the
+      snapshot tests) pass `Operator`. `None` is no longer an implicit unrestricted marker.
+- [x] **P2.2 Enforce archive ownership in durable reads.**
+      `archive_get_body(context_id, archive_ref, principal)` filters by `agent_id` for the `Agent`
+      principal and reads context-wide for `Operator`. Pinned by
+      `archive_isolation_test::archive_body_reads_are_agent_scoped`.
+- [x] **P2.3 Enforce ownership on mutation.** `archive_mark_send_consumed` now requires the owning
+      `AgentId` and adds `AND agent_id = $aid`. A sibling's consume is a no-op. Pinned by
+      `archive_isolation_test::archive_consume_is_owner_scoped`.
+- [x] **P2.4 Re-key execution ref tables.** `ContextRefTables` is now keyed by
+      `(context_id, agent_id)` via `ref_table_cache_key`; `get_or_create_ref_table`,
+      `get_ref_table`, and `invalidate_ref_table` take an agent. Durable `archive_prefix` /
+      `archive_body` identity stays context-global. Pinned by
+      `shared_context_ref_store_test::shared_store_same_agent_shares_table_and_siblings_do_not`.
+- [ ] **P2.5 Replace stale table publication.** Still open. `prepare_ref_table_for_projection`
+      publishes a freshly hydrated table wholesale; a concurrent refresh can in theory overwrite a
+      newer in-memory pending receipt. The pending receipt is still recoverable from `archive_body`,
+      so this is a cache-freshness gap, not a data-loss bug. Needs a merge or generation check.
+- [x] **P2.6 Narrow invalidation.** `write_event` now invalidates only the task/message agent's
+      table (`invalidate_ref_table`); the effect subscriber narrows where the agent is known and
+      falls back to `invalidate_ref_tables_for_context` otherwise. A sibling's table survives an
+      unrelated write.
+- [x] **P2.7 Scope duplicate suppression.** With per-agent tables,
+      `find_receipt_by_send_signature` only searches the reading agent's own pending Sends. Within
+      one agent's table the prefix is constant, so `(prefix, local)` ordering is local recency.
+      Pinned by `archive_refs::tests::sibling_agents_do_not_suppress_each_others_sends`.
+- [x] **P2.8 Scope history ref hydration.** `hydrate_ref_table` under `Agent` hydrates only the
+      `#N` rows whose anchors are in the reader's projection (`known_text`); sibling anchors drop
+      out, producing sparse `#N` values without a `history_ref_registry` schema change. `Operator`
+      keeps the full-context cold-rebuild path. Pinned by
+      `archive_isolation_test::agent_history_hydration_excludes_sibling_refs`.
+- [x] **P2.9 Scope citation resolution.** An agent's ref table no longer contains sibling archive
+      bodies or sibling `#N` rows, so a guessed sibling `@prefix/local` or `#N` fails resolution.
+      Pinned by the same history and archive isolation tests.
+- [x] **P2.10 Update shared-store tests.** Rewrote
+      `shared_context_ref_store_test` for same-context same-agent sharing and sibling separation.
+      Added `context_ref_tables_are_scoped_by_context_and_agent` in `archive_refs.rs`.
+- [x] **P2.11 Add concurrent prefix allocation coverage.** Added
+      `archive_isolation_test::archive_prefix_allocation_is_unique_and_stable` (8 concurrent
+      allocators). This exposed a real thundering-herd bug in `archive_ensure_prefix`; fixed by
+      serializing allocation per context with `archive_prefix_serializers`.
 
 P2 exit gate:
 
-- [ ] Operators can inspect all context archives, each agent can use its own,
+- [x] Operators can inspect all context archives, each agent can use its own,
       and no read, mutation, citation, or duplicate decision crosses agents.
+      (P2.5 cache-freshness refinement remains open but does not cross agents.)
 
 ### P3: make A2A handoff carry real information
 

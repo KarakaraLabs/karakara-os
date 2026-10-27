@@ -178,6 +178,20 @@ pub enum ProvenanceReadIntent {
     Api,
 }
 
+/// Principal for provenance reads that carry private per-agent state.
+///
+/// Agent-scoped execution reads (archive bodies, pending receipts, citations, ref tables) must
+/// pass [`ProvenanceReadPrincipal::Agent`]. Operator and audit paths (timeline, graph export,
+/// compaction, citation-integrity scoring) use [`ProvenanceReadPrincipal::Operator`], which reads
+/// the full context. `None` must not be used as an implicit "unrestricted" marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvenanceReadPrincipal {
+    /// Execution read scoped to one agent's own rows.
+    Agent(AgentId),
+    /// Privileged context-wide read for operator and audit surfaces only.
+    Operator,
+}
+
 /// Reader for task and conversation context used by agents to build prompts.
 ///
 /// **No-stale-read invariant:** A read of [context_messages] or [conversation_context] must

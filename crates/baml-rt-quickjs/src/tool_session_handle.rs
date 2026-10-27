@@ -1063,8 +1063,11 @@ impl ToolSessionExecutionHandle {
                     .with_search_hints(search_hints)
                     .with_send_signature(signature);
                     let context_id = plan_scope.context_id().as_str().to_string();
-                    let ref_table =
-                        archive_refs::get_or_create_ref_table(archive_ref_tables, &context_id);
+                    let ref_table = archive_refs::get_or_create_ref_table(
+                        archive_ref_tables,
+                        &context_id,
+                        plan_scope.agent_id().as_str(),
+                    );
                     let (archive_ref, header) =
                         if let Some(store) = self.ctx.archive_ref_store.as_ref() {
                             let archive_ref = store

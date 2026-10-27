@@ -15,7 +15,8 @@ use baml_rt_tools::{
 };
 
 use crate::{
-    error::Result, prepare_ref_table_for_projection, surreal_store::SurrealProvenanceStore,
+    error::Result, prepare_ref_table_for_projection, store::ProvenanceReadPrincipal,
+    surreal_store::SurrealProvenanceStore,
 };
 
 /// One hydrated rendering context for a stable item set.
@@ -122,8 +123,14 @@ pub async fn prepare_render_context(
     let ref_table = if projection_items.is_empty() {
         Arc::new(RefTable::new())
     } else {
-        prepare_ref_table_for_projection(store, context_id, &projection_items, tool_registry)
-            .await?
+        prepare_ref_table_for_projection(
+            store,
+            context_id,
+            &ProvenanceReadPrincipal::Operator,
+            &projection_items,
+            tool_registry,
+        )
+        .await?
     };
     Ok(Some(CompactionRenderContext { ref_table }))
 }
