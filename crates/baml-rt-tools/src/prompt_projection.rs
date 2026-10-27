@@ -353,7 +353,12 @@ pub fn project_prompt_context(
 /// One projected conversation line plus its durable provenance identity.
 ///
 /// Used by the step-executor delta so rows can be compared by identity
-/// (`activity_anchor` / `event_order`) instead of raw JSON value equality.
+/// (`activity_anchor`) instead of raw JSON value equality, and ordered by
+/// `event_order`. The store read sorts raw rows by the durable key
+/// `(event_order, node_id)`; projection preserves that order verbatim (it
+/// never re-sorts) and drops `node_id` because `event_order` is the per-event
+/// monotonic counter and `activity_anchor` is the unique identity the delta
+/// compares. `node_id` stays a read-layer SQL tiebreaker only.
 #[derive(Debug, Clone)]
 pub struct ProjectedConversationRow {
     pub activity_anchor: String,

@@ -70,13 +70,16 @@ pub(crate) fn append_intra_lines_to_provider_then_cap(
 }
 
 /// Append new projected lines for this completed hop to the step-executor loop's local
-/// supplement (used at the next `invoke` when merged with the provider).
+/// supplement (used at the next `invoke` when merged with the provider) and return the
+/// appended lines so the caller can check that a content-bearing hop actually surfaced.
 pub(crate) fn append_step_intra_deltas(
     supplement: &mut Vec<Value>,
     before: &[ProjectedConversationRow],
     after: &[ProjectedConversationRow],
-) {
-    supplement.extend(hop_rows_from_provider_delta(before, after));
+) -> Vec<Value> {
+    let appended = hop_rows_from_provider_delta(before, after);
+    supplement.extend(appended.iter().cloned());
+    appended
 }
 
 /// Reads the complete (uncapped) projected agent view after a hop for the identity-based

@@ -312,6 +312,21 @@ fn is_archive_read_result(result: &Value) -> bool {
     matches!(step_op(result), Some("SearchRead" | "PageRead")) || result.get("has_more").is_some()
 }
 
+/// True when this hop promises a visible transcript line: a non-empty archive read
+/// (`SearchRead` / `PageRead`) whose body must survive projection.
+///
+/// `Open` / `SendDone` / `Finish` / `Abort` and empty-args `Send` hops archive without
+/// mirroring a line, so an empty delta is legitimate for them. An archive read with a
+/// non-empty body is the one hop whose content *must* appear; if the delta stays empty,
+/// a content-bearing row was silently lost.
+fn hop_promises_visible_read(result: &Value) -> bool {
+    is_archive_read_result(result)
+        && result
+            .get("output")
+            .and_then(Value::as_str)
+            .is_some_and(|output| !output.trim().is_empty())
+}
+
 /// True when an archive read returns exactly the output a prior read already produced.
 ///
 /// Repeated successful reads add no information and let a model spend the whole step
@@ -705,7 +720,16 @@ pub async fn run_step_executor_loop(
 
         let p_after =
             read_provider_conversation_rows_after_hop(manager, scope, &current_function).await?;
-        append_step_intra_deltas(&mut step_intra_supplement, &p_before, &p_after);
+        let appended = append_step_intra_deltas(&mut step_intra_supplement, &p_before, &p_after);
+        if hop_promises_visible_read(&result) && appended.is_empty() {
+            tracing::warn!(
+                hop = hop_idx,
+                function = %current_function,
+                visible_rows_before = p_before.len(),
+                visible_rows_after = p_after.len(),
+                "step_executor_loop: archive read promised a visible body but no new projected row appeared"
+            );
+        }
 
         // Content-loss signal: a visible row left the agent view between snapshots.
         // With the uncapped identity-based read this is rare (delegation dedup or an
@@ -1073,5 +1097,41 @@ mod session_context_wire_tests {
             &send,
             std::slice::from_ref(&prior)
         ));
+    }
+
+    #[test]
+    fn archive_read_hop_promises_visible_completion() {
+        use super::hop_promises_visible_read;
+
+        let read = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "next_offset": 2,
+            "output": "cat -n @1\n  - name: clickup-agent"
+        });
+        let empty_read = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "output": ""
+        });
+        let empty_args_send = serde_json::json!({
+            "op": "Send",
+            "input": {},
+            "status": "done",
+            "archive_ref": "@1",
+            "output": "@1 · \"teams\" · 3L · 40B"
+        });
+        let open = serde_json::json!({ "op": "Open", "status": "open" });
+
+        assert!(hop_promises_visible_read(&read));
+        assert!(
+            !hop_promises_visible_read(&empty_read),
+            "an empty read body promises no visible line"
+        );
+        assert!(
+            !hop_promises_visible_read(&empty_args_send),
+            "an empty-args Send archives without mirroring a line"
+        );
+        assert!(!hop_promises_visible_read(&open));
     }
 }

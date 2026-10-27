@@ -1830,3 +1830,45 @@ impl ProvenanceQueryApi for SurrealProvenanceStore {
         Ok(page.items)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::sort_conversation_rows;
+
+    #[test]
+    fn sort_conversation_rows_orders_by_event_order_then_node_id() {
+        let mut rows = vec![
+            json!({ "event_order": 2, "node_id": "node:b", "props": {} }),
+            json!({ "event_order": 1, "node_id": "node:z", "props": {} }),
+            json!({ "event_order": 2, "node_id": "node:a", "props": {} }),
+            json!({ "event_order": 1, "node_id": "node:a", "props": {} }),
+        ];
+        sort_conversation_rows(&mut rows);
+        let keys: Vec<(u64, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get("event_order")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    row.get("node_id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                (1, "node:a".to_string()),
+                (1, "node:z".to_string()),
+                (2, "node:a".to_string()),
+                (2, "node:b".to_string()),
+            ],
+            "rows must sort by (event_order, node_id) ascending"
+        );
+    }
+}
