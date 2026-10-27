@@ -357,6 +357,51 @@ fn is_conversational_chunk(chunk: &ConversationChunk) -> bool {
     })
 }
 
+/// Child-internal refs the delegated agent emitted in a conversational reply.
+///
+/// The caller's ref table is scoped to `(context_id, caller_agent_id)` and cannot resolve the
+/// child's `#N` history refs or `@prefix/local` archive refs. Any such token in a child reply is a
+/// handoff gap: preserve the text for audit, deny resolution, and log a bounded diagnostic telling
+/// the child to materialize the referenced content in its reply instead of leaking an ambient ref.
+fn leaked_child_refs(parts: &[ConversationPart]) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for part in parts {
+        if let Some(text) = part.text.as_deref() {
+            found.extend(baml_rt_tools::citations::scan_wire_citations(text));
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// Log one bounded warning per chunk that leaks child-internal refs. Body text is never logged; only
+/// the offending ref tokens (capped) and the stable identities needed to correlate the turn are.
+fn warn_on_leaked_child_refs(
+    context_id: &baml_rt_core::ids::ContextId,
+    caller_agent_id: &baml_rt_core::ids::AgentId,
+    child_task_id: &TaskId,
+    target_name: &str,
+    chunk: &ConversationChunk,
+) {
+    let Some(ref message) = chunk.message else {
+        return;
+    };
+    let leaked = leaked_child_refs(&message.parts);
+    if leaked.is_empty() {
+        return;
+    }
+    const MAX_REFS_LOGGED: usize = 8;
+    let shown = &leaked[..leaked.len().min(MAX_REFS_LOGGED)];
+    tracing::warn!(
+        context_id = %context_id.as_str(),
+        caller_agent_id = %caller_agent_id.as_str(),
+        child_task_id = %child_task_id.as_str(),
+        target = %target_name,
+        leaked_ref_count = leaked.len(),
+        leaked_refs = ?shown,
+        "system/internal_a2a child reply carried internal refs; preserved for audit but denied resolution — child must materialize referenced content in its reply"
+    );
+}
+
 /// Priority for merging completions: failure states dominate, then user-action suspensions,
 /// then normal completion.
 fn terminal_priority(completion: &InternalA2aCompletion) -> u8 {
@@ -461,6 +506,12 @@ impl ToolSession for A2aSession {
         let handler = self.handler.clone();
         let (tx, rx) = async_channel::unbounded::<InternalA2aNextOutput>();
         self.output_rx = Some(rx);
+        // Stable identities for the leaked-ref diagnostic, cloned before the spawned stream
+        // consumer outlives the borrow of `self`.
+        let caller_context_id = self.ctx.context_id.clone();
+        let caller_agent_id = self.ctx.agent_id.clone();
+        let child_task_id = self.child_task_id.clone();
+        let target_name = self.target.agent_package.clone();
         let handle = tokio::spawn(async move {
             let result = match delegation {
                 Some(delegation) => {
@@ -505,6 +556,13 @@ impl ToolSession for A2aSession {
                                 }],
                             });
                         }
+                        warn_on_leaked_child_refs(
+                            &caller_context_id,
+                            &caller_agent_id,
+                            &child_task_id,
+                            &target_name,
+                            &conversational,
+                        );
                         let out = InternalA2aNextOutput {
                             chunks: vec![conversational],
                             completion,
@@ -775,6 +833,60 @@ mod tests {
         InternalA2aTarget {
             agent_package: "responder-agent".to_string(),
         }
+    }
+
+    #[test]
+    fn leaked_child_refs_scans_history_and_archive_refs_without_body_text() {
+        let parts = vec![
+            ConversationPart {
+                text: Some("see #7 and @2/5 for the task list".to_string()),
+                ..Default::default()
+            },
+            ConversationPart {
+                text: Some("plain text with no ref".to_string()),
+                ..Default::default()
+            },
+        ];
+        let refs = leaked_child_refs(&parts);
+        assert_eq!(refs, vec!["#7".to_string(), "@2/5".to_string()]);
+
+        let chunk = ConversationChunk {
+            message: Some(ConversationMessage {
+                role: None,
+                parts: vec![ConversationPart {
+                    text: Some("materialize the content, do not leak @3".to_string()),
+                    ..Default::default()
+                }],
+            }),
+            task: None,
+            status_update: None,
+            artifact_update: None,
+        };
+        let no_message = ConversationChunk {
+            message: None,
+            task: None,
+            status_update: None,
+            artifact_update: None,
+        };
+        // No panic and no body logging for status-only chunks.
+        warn_on_leaked_child_refs(
+            &ContextId::new(1, 1),
+            &baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(
+                uuid::Uuid::new_v4(),
+            )),
+            &TaskId::from_external(ExternalId::new("child")),
+            "clickup-agent",
+            &chunk,
+        );
+        warn_on_leaked_child_refs(
+            &ContextId::new(1, 1),
+            &baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(
+                uuid::Uuid::new_v4(),
+            )),
+            &TaskId::from_external(ExternalId::new("child")),
+            "clickup-agent",
+            &no_message,
+        );
     }
 
     #[test]

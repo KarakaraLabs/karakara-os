@@ -1692,6 +1692,105 @@ async fn test_internal_a2a_can_route_to_different_agent_package() {
     );
 }
 
+/// P3.3/P3.4: the coordinator's `system/internal_a2a` completion is archived under the
+/// coordinator and its terminal response proves the parent consumed the persisted A2A reply.
+#[tokio::test]
+async fn test_internal_a2a_parent_tool_result_is_coordinator_owned_and_consumed() {
+    let _permit = e2e_serial_gate().acquire().await.expect("acquire e2e gate");
+
+    let (initiator_agent, responder_agent, initiator_store, responder_store) =
+        setup_internal_a2a_router_agents("responder-agent").await;
+    let context_id = ContextId::new(44, 2);
+    let request = send_message_request(
+        SendMessageRequest {
+            message: user_message("route-own", "ping parent-owned", Some(context_id.clone())),
+            configuration: None,
+            metadata: None,
+            tenant: None,
+            extra: std::collections::HashMap::new(),
+        },
+        "corr-1700000000100-1",
+    );
+
+    let responses = collect_stream_responses(&initiator_agent, request)
+        .await
+        .expect("internal_a2a routed request");
+    let chunks = chunks_from_responses(&responses);
+    let texts = message_texts_from_chunks(&chunks);
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Responder saw: ping parent-owned")),
+        "coordinator terminal response must consume the child reply. Texts: {:?}",
+        texts
+    );
+
+    // P3.3: the coordinator's own view carries the `system/internal_a2a` tool result, not a
+    // foreign child message. The child's reply stays in the child's store; the coordinator
+    // materializes it as a coordinator-owned tool result.
+    let page = initiator_store
+        .context_history_view(
+            &context_id,
+            initiator_agent.agent_id(),
+            Some(200),
+            None,
+            None,
+        )
+        .await
+        .expect("initiator participation view");
+    assert!(
+        page.items.iter().any(|item| {
+            matches!(
+                &item.content,
+                baml_rt_conversation::view::ConversationItemContent::ToolResult(tr)
+                    if tr.tool_name == "system/internal_a2a"
+            )
+        }),
+        "coordinator view must contain its own system/internal_a2a tool result: {:?}",
+        page.items
+    );
+    for item in &page.items {
+        assert!(
+            item.is_visible_to_agent(initiator_agent.agent_id()),
+            "coordinator view must contain only coordinator-visible rows: {item:?}"
+        );
+    }
+
+    // The child's own view keeps its reply actor-attributed and never carries the
+    // coordinator's internal_a2a tool result.
+    let child_page = responder_store
+        .context_history_view(
+            &context_id,
+            responder_agent.agent_id(),
+            Some(200),
+            None,
+            None,
+        )
+        .await
+        .expect("responder participation view");
+    assert!(
+        child_page.items.iter().any(|item| {
+            matches!(
+                &item.content,
+                baml_rt_conversation::view::ConversationItemContent::Message { text, .. }
+                    if text.contains("Responder saw: ping parent-owned")
+            )
+        }),
+        "child view must keep its own reply message: {:?}",
+        child_page.items
+    );
+    assert!(
+        child_page.items.iter().all(|item| {
+            !matches!(
+                &item.content,
+                baml_rt_conversation::view::ConversationItemContent::ToolResult(tr)
+                    if tr.tool_name == "system/internal_a2a"
+            )
+        }),
+        "child must never see the coordinator's internal_a2a tool result"
+    );
+}
+
 #[tokio::test]
 async fn test_internal_a2a_context_id_propagates() {
     let _permit = e2e_serial_gate().acquire().await.expect("acquire e2e gate");
