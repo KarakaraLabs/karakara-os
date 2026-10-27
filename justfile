@@ -28,6 +28,7 @@ otel_protocol := "grpc"
 # Binaries (build with `just build` / `just build-release`; paths default to release).
 # Respect CARGO_TARGET_DIR when present (.env sets it in some dev setups).
 agentium_bin := "${CARGO_TARGET_DIR:-target}/release/agentium"
+agentium_debug_bin := "${CARGO_TARGET_DIR:-target}/debug/agentium"
 
 # Regenerate `_baml_runtime.baml` + `src/baml-runtime.d.ts` for every fixture under `tests/fixtures/agents/` and agent under `agents/`. Requires all tool crates (same as build-release).
 regen-fixtures:
@@ -358,6 +359,22 @@ coordinator-agent: build-release
       {{agentium_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
     ) &
     exec {{agentium_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
+
+coordinator-agent-debug: build-debug
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "$(git rev-parse --show-toplevel)"
+    set -a
+    [ -f .env ] && . ./.env
+    set +a
+    (
+      ./scripts/wait-runner-http.sh "{{runner_base_url}}" {{runner_http_ready_secs}}
+      {{agentium_debug_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
+      {{agentium_debug_bin}} install agent --path agents/notion-agent --repository-url {{repository_url}} --url {{runner_base_url}}
+      {{agentium_debug_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
+    ) &
+    exec {{agentium_debug_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
+
 
 # Same as coordinator-agent stack, but adds claude-session + workspace coordinator-agent publish and persists provenance.
 coordinator-agent-provenance: build-release
