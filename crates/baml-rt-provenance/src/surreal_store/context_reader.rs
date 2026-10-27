@@ -357,15 +357,42 @@ struct ScopedConversationQuery<'a> {
 }
 
 impl SurrealProvenanceStore {
-    /// Agent-facing conversation rows: transcript engine + latest compaction head.
+    /// Agent-facing conversation rows for exactly one reader agent.
+    ///
+    /// Reads the same actor-or-target view as [`Self::context_history_view`] and
+    /// applies only that agent's own compaction head. A sibling's summary, or an
+    /// operator/audit summary, can never satisfy this read.
     pub async fn conversation_context_for_agent_prompt(
         &self,
         context_id: &ContextId,
+        agent_id: &AgentId,
         limit: Option<usize>,
         task_id: Option<&TaskId>,
     ) -> Result<Vec<ProvenanceConversationContextItem>> {
-        self.compacted_conversation_context(context_id, limit, task_id, None)
-            .await
+        use crate::{
+            conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP,
+            read::transcript::TranscriptProjectionProfile,
+        };
+
+        let items = self
+            .conversation_context_for_agent(context_id, agent_id, task_id)
+            .await?;
+        let head = self
+            .latest_compaction_head(context_id, Some(agent_id), task_id)
+            .await?;
+        if head.is_some() {
+            return Ok(crate::context_compaction::apply_compaction_profile(
+                TranscriptProjectionProfile::AgentPromptCompacted,
+                items,
+                head.as_ref(),
+            ));
+        }
+        let cap = limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP).max(1);
+        if items.len() <= cap {
+            return Ok(items);
+        }
+        let split_at = items.len() - cap;
+        Ok(items.into_iter().skip(split_at).collect())
     }
 
     /// `ContextHistoryView(context_id, agent_id, window)` — the prompt-facing
@@ -454,6 +481,51 @@ impl SurrealProvenanceStore {
             cursor: next_cursor.map(|cursor| cursor.encode()),
             truncated,
         })
+    }
+
+    /// Full, uncapped agent participation view for exactly one agent.
+    ///
+    /// This is the source for agent-prompt compaction (P4): it returns every
+    /// actor-or-target row for `agent_id` across the context so `prepare_compaction`
+    /// can select a covered prefix and a recent tail from the same view the prompt
+    /// measures. It deliberately does not page or window — callers are compaction and
+    /// budget measurement, not the bounded prompt window.
+    pub async fn conversation_context_for_agent(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        task_id: Option<&TaskId>,
+    ) -> Result<Vec<ProvenanceConversationContextItem>> {
+        // A large-but-finite cap keeps the DB from scanning unbounded while still
+        // covering any realistic agent participation in a single context.
+        const UNCAPPED_READ_CAP: usize = 1_000_000;
+        let mut rows = self
+            .fetch_agent_window_rows(context_id, agent_id, UNCAPPED_READ_CAP, None, task_id)
+            .await?;
+        sort_conversation_rows(&mut rows);
+        let proven = self.persisted_delegations(context_id).await?;
+        if !proven.is_empty() {
+            rows.retain(|row| !is_elided_delegation_payload(row, &proven));
+        }
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let items = self
+            .conversation_context_filtered(
+                context_id,
+                None,
+                task_id,
+                None,
+                None,
+                true,
+                false,
+                Some(rows),
+            )
+            .await?
+            .into_iter()
+            .filter(|item| item.is_visible_to_agent(agent_id))
+            .collect();
+        Ok(items)
     }
 
     /// Bounded, agent-scoped node fetch: the storage half of
@@ -574,14 +646,18 @@ impl SurrealProvenanceStore {
             TranscriptPageRequest {
                 scope,
                 limit: limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP),
-                profile: TranscriptProjectionProfile::AgentPromptCompacted,
+                profile: TranscriptProjectionProfile::OperatorTimeline,
                 direction: TranscriptPageDirection::Backward,
             },
         )
         .await?;
-        let head = self.latest_compaction_head(context_id, task_id).await?;
+        // Operator/audit reads may carry a context-wide audit summary (agent_id = None),
+        // never an agent-prompt summary.
+        let head = self
+            .latest_compaction_head(context_id, None, task_id)
+            .await?;
         Ok(crate::context_compaction::apply_compaction_profile(
-            TranscriptProjectionProfile::AgentPromptCompacted,
+            TranscriptProjectionProfile::OperatorTimeline,
             page.items,
             head.as_ref(),
         ))

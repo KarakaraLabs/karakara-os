@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -153,6 +154,7 @@ mod tests {
             trigger: super::super::types::ContextCompactionTrigger::PostTurnThreshold,
             event_order: 35,
             task_entity_id: None,
+            agent_id: None,
         };
         let out = apply_compaction_profile(
             TranscriptProjectionProfile::AgentPromptCompacted,

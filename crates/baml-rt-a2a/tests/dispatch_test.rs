@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -217,7 +218,7 @@ async fn dispatch_settlement_triggers_post_turn_compaction() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     loop {
         if store
-            .latest_compaction_head(&ctx, None)
+            .latest_compaction_head(&ctx, Some(&agent_id), None)
             .await
             .expect("head")
             .is_some()

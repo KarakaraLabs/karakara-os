@@ -2963,6 +2963,7 @@ fn normalize_event_with_registry(
             );
         }
         ProvEventData::ContextCompactionRecorded {
+            agent_id,
             covered_event_order_start,
             covered_event_order_end,
             covered_node_ids,
@@ -2987,6 +2988,12 @@ fn normalize_event_with_registry(
                 event.id().as_str()
             ));
             let mut activity_attrs = base_attrs(event);
+            if let Some(agent_id) = agent_id {
+                activity_attrs.insert(
+                    "agent_id".to_string(),
+                    Value::String(agent_id.as_str().to_string()),
+                );
+            }
             activity_attrs.insert(
                 "covered_event_order_start".to_string(),
                 Value::Number((*covered_event_order_start).into()),

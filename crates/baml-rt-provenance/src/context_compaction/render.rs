@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -77,11 +78,12 @@ fn compaction_operational_line(item: &ProvenanceConversationContextItem) -> Opti
 pub async fn render_items_for_context(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<String> {
     let Some(render_context) =
-        prepare_render_context(store, context_id, items, tool_registry).await?
+        prepare_render_context(store, context_id, principal, items, tool_registry).await?
     else {
         return Ok(String::new());
     };
@@ -92,6 +94,7 @@ pub async fn render_items_for_context(
 pub async fn estimate_compaction_prompt_bytes(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<u64> {
@@ -99,7 +102,7 @@ pub async fn estimate_compaction_prompt_bytes(
         return Ok(0);
     }
     let Some(render_context) =
-        prepare_render_context(store, context_id, items, tool_registry).await?
+        prepare_render_context(store, context_id, principal, items, tool_registry).await?
     else {
         return Ok(0);
     };
@@ -107,9 +110,14 @@ pub async fn estimate_compaction_prompt_bytes(
 }
 
 /// Hydrate the ref table once for a stable item set and reuse it for full/prefix/tail renders.
+///
+/// The `principal` scopes archive/citation hydration to the same reader the summary is for:
+/// agent-prompt compaction uses [`ProvenanceReadPrincipal::Agent`], operator/audit uses
+/// [`ProvenanceReadPrincipal::Operator`].
 pub async fn prepare_render_context(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<Option<CompactionRenderContext>> {
@@ -126,7 +134,7 @@ pub async fn prepare_render_context(
         prepare_ref_table_for_projection(
             store,
             context_id,
-            &ProvenanceReadPrincipal::Operator,
+            principal,
             &projection_items,
             tool_registry,
         )

@@ -590,6 +590,9 @@ pub enum ProvEventData {
     },
     /// Host compacted a sealed transcript prefix into a summary for agent-facing projection.
     ContextCompactionRecorded {
+        /// `Some(agent)` for an agent-prompt summary; `None` for an operator/audit summary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<AgentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<TaskId>,
         covered_event_order_start: u64,
@@ -2098,6 +2101,7 @@ impl ProvEvent {
     )]
     pub fn context_compaction_recorded_global(
         context_id: ContextId,
+        agent_id: Option<AgentId>,
         task_id: Option<TaskId>,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
@@ -2117,6 +2121,7 @@ impl ProvEvent {
             context_id,
             timestamp_ms: now_millis(),
             data: ProvEventData::ContextCompactionRecorded {
+                agent_id,
                 task_id,
                 covered_event_order_start,
                 covered_event_order_end,

@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use baml_rt_conversation::view::ProvenanceConversationContextItem;
 use baml_rt_core::{Result, context};
 use baml_rt_provenance::{
-    CompactionRequest, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvenanceContextReader,
-    ProvenanceReadPrincipal, STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
+    CompactionRequest, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvenanceReadPrincipal,
+    STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
 };
 use baml_rt_quickjs::baml_execution::ConversationContextProvider;
 use baml_rt_tools::{
@@ -85,23 +85,20 @@ impl ProjectingConversationContextProvider {
             return Ok(None);
         };
         let context_id = scope.context_id();
-        let task_id = scope.task_id_opt();
-        let full_items = store
-            .conversation_context(context_id, None)
-            .await
-            .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
-                source: Box::new(e),
-            })?;
-        let item_count = full_items.len();
+        let agent_id = scope.agent_id().clone();
+        // Budget is measured on this agent's own view: hidden sibling rows must not
+        // push an agent over the item or byte threshold (P4.6).
         let agent_items = store
-            .conversation_context_for_agent_prompt(context_id, None, task_id)
+            .conversation_context_for_agent(context_id, &agent_id, None)
             .await
             .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                 source: Box::new(e),
             })?;
+        let item_count = agent_items.len();
         let prompt_bytes = estimate_compaction_prompt_bytes(
             store,
             context_id,
+            &ProvenanceReadPrincipal::Agent(agent_id),
             &agent_items,
             self.tool_registry.as_ref(),
         )
@@ -126,14 +123,33 @@ impl ProjectingConversationContextProvider {
         // Agent prompts read this agent's participation across every task in the
         // context, so the store path is agent-scoped and deliberately not
         // task-filtered. A task filter is still correct for replay and inspection.
+        //
+        // When this agent has a compaction head, the prompt is the summary plus the
+        // recent tail (P4.7); otherwise it is the bounded newest window.
         let (items, truncated) = if let Some(store) = self.provenance_store.as_ref() {
-            let page = store
-                .context_history_view(context_id, &agent_id, item_limit, None, None)
+            let head = store
+                .latest_compaction_head(context_id, Some(&agent_id), None)
                 .await
                 .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                     source: Box::new(e),
                 })?;
-            (page.items, page.truncated)
+            if head.is_some() {
+                let items = store
+                    .conversation_context_for_agent_prompt(context_id, &agent_id, item_limit, None)
+                    .await
+                    .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
+                        source: Box::new(e),
+                    })?;
+                (items, false)
+            } else {
+                let page = store
+                    .context_history_view(context_id, &agent_id, item_limit, None, None)
+                    .await
+                    .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
+                        source: Box::new(e),
+                    })?;
+                (page.items, page.truncated)
+            }
         } else {
             (
                 self.source
