@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -563,6 +564,45 @@ impl RefTable {
         self.history.insert(n, entry);
         self.next.fetch_max(n.saturating_add(1), Ordering::Relaxed);
     }
+
+    /// Merge a freshly-hydrated projection snapshot into this table in place.
+    ///
+    /// This replaces the previous wholesale publish (`DashMap::insert` of a brand-new
+    /// `Arc<RefTable>`), which could discard a pending Send receipt that a concurrent same-agent
+    /// operation `insert_at`'d after the snapshot's DB read. The step executor locks the manager
+    /// per hop with a shared read lock, so same-agent operations can interleave. Merging into the
+    /// existing table — with existing entries winning — keeps duplicate suppression intact and
+    /// never resurrects a consumed Send.
+    ///
+    /// Archive entries are immutable once written (only `pending_send` toggles, in place via
+    /// [`Self::mark_send_consumed`]), so filling gaps with `or_insert` is sufficient and safe.
+    pub fn merge_hydrated_snapshot(&self, snapshot: &RefTable) {
+        for entry in snapshot.entries.iter() {
+            let key = *entry.key();
+            self.entries
+                .entry(key)
+                .or_insert_with(|| entry.value().clone());
+        }
+
+        for entry in snapshot.history.iter() {
+            let n = *entry.key();
+            let history = entry.value().clone();
+            let stable_key = history_stable_key(&history);
+            self.history.entry(n).or_insert_with(|| history.clone());
+            self.history_stable_key_to_n.entry(stable_key).or_insert(n);
+        }
+
+        // Prompt-visible text is refreshed on every projection; adopt the snapshot's text for
+        // anchors it covers and leave anchors the snapshot no longer covers untouched.
+        for entry in snapshot.history_text_by_activity.iter() {
+            self.history_text_by_activity
+                .insert(entry.key().clone(), Arc::clone(entry.value()));
+        }
+
+        // Never let a fresh snapshot's (potentially lower) allocator rewind this table's counter.
+        self.next
+            .fetch_max(snapshot.next.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
 /// Convenience: one agent-scoped `RefTable` per `(context_id, agent_id)` pair, created on first
@@ -951,6 +991,71 @@ mod tests {
             h.as_u32(),
             1,
             "composite replay namespaces must not consume flat @N/#N slots"
+        );
+    }
+
+    #[test]
+    fn merge_hydrated_snapshot_preserves_pending_receipt_and_fills_gaps() {
+        let table = RefTable::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        // A pending Send receipt recorded in RAM after a concurrent snapshot's DB read.
+        let receipt_ref = ShortRef::new(7);
+        table.insert_at(
+            receipt_ref,
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        // The stale snapshot lacks the pending receipt and carries an unrelated archive.
+        let snapshot = RefTable::new();
+        snapshot.insert_at(ShortRef::new(3), make_entry("support/notion", "read page"));
+
+        table.merge_hydrated_snapshot(&snapshot);
+
+        assert!(
+            table
+                .get(receipt_ref)
+                .is_some_and(|e| e.value().pending_send),
+            "pending receipt must survive a merge with a stale snapshot"
+        );
+        assert_eq!(
+            table
+                .find_by_send_signature(signature)
+                .expect("duplicate suppression still works after merge")
+                .0,
+            receipt_ref
+        );
+        assert!(
+            table.get(ShortRef::new(3)).is_some(),
+            "snapshot entries not yet present must be merged in"
+        );
+    }
+
+    #[test]
+    fn merge_hydrated_snapshot_does_not_resurrect_consumed_send() {
+        let table = RefTable::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        let r = table.insert(
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+        table.mark_send_consumed(r);
+        assert!(!table.get(r).expect("entry").value().pending_send);
+
+        // A snapshot taken before consumption still marks the Send pending. Merging it must not
+        // flip the in-RAM pending flag back on.
+        let snapshot = RefTable::new();
+        snapshot.insert_at(
+            r,
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        table.merge_hydrated_snapshot(&snapshot);
+
+        assert!(
+            !table.get(r).expect("entry").value().pending_send,
+            "consumed Send must stay consumed after a merge"
         );
     }
 }

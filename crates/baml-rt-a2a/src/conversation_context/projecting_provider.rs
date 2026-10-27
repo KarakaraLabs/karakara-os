@@ -209,19 +209,19 @@ impl ProjectingConversationContextProvider {
                 source: Box::new(e),
             })?;
             if let Some(tables) = self.archive_ref_tables.as_ref() {
-                let key = baml_rt_tools::archive_refs::ref_table_cache_key(
+                // Merge into the existing cached table rather than replacing it. A wholesale
+                // replace can discard a pending Send receipt inserted by a concurrent same-agent
+                // operation (the step executor's per-hop read lock lets operations interleave).
+                let cached = baml_rt_tools::archive_refs::get_or_create_ref_table(
+                    tables,
                     &context_id_str,
                     agent_id.as_str(),
                 );
-                // Wholesale publish is safe only because one agent has exactly one runtime manager,
-                // and this path runs inside that manager's serialized step-executor loop. The Send
-                // path that `insert_at`s a pending receipt is the same loop, so a projection never
-                // overlaps a Send for this `(context_id, agent_id)`. If the runner ever fans one
-                // agent out across managers sharing a `SharedContextRefStore`, replace this with a
-                // merge (or generation check) so a stale snapshot cannot discard a new receipt.
-                tables.insert(key, Arc::clone(&prepared));
+                cached.merge_hydrated_snapshot(&prepared);
+                cached
+            } else {
+                prepared
             }
-            prepared
         } else if let Some(tables) = self.archive_ref_tables.as_deref() {
             baml_rt_tools::archive_refs::get_or_create_ref_table(
                 tables,
@@ -295,7 +295,7 @@ impl ProjectingConversationContextProvider {
 
         let context_id_str = context_id.as_str().to_string();
         let principal = ProvenanceReadPrincipal::Agent(agent_id.clone());
-        let ref_table_arc = baml_rt_provenance::prepare_ref_table_for_projection(
+        let prepared = baml_rt_provenance::prepare_ref_table_for_projection(
             store,
             context_id,
             &principal,
@@ -306,15 +306,19 @@ impl ProjectingConversationContextProvider {
         .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
             source: Box::new(e),
         })?;
-        if let Some(tables) = self.archive_ref_tables.as_ref() {
-            let key = baml_rt_tools::archive_refs::ref_table_cache_key(
+        let ref_table_arc = if let Some(tables) = self.archive_ref_tables.as_ref() {
+            // Merge, don't replace: a wholesale publish can drop a pending Send receipt that a
+            // concurrent same-agent operation inserted after this snapshot's DB read.
+            let cached = baml_rt_tools::archive_refs::get_or_create_ref_table(
+                tables,
                 &context_id_str,
                 agent_id.as_str(),
             );
-            // Same invariant as the prompt projection path: this is the agent's serialized loop, so
-            // a wholesale publish cannot race the Send path's `insert_at`. See the note above.
-            tables.insert(key, Arc::clone(&ref_table_arc));
-        }
+            cached.merge_hydrated_snapshot(&prepared);
+            cached
+        } else {
+            prepared
+        };
 
         let reader: Option<BoxedArchiveReader> = self.archive_ref_tables.clone().map(|t| {
             let ctx = context_id_str.clone();
