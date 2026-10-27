@@ -159,7 +159,9 @@ pub enum LeaseTransition {
     Created,
     /// The requesting boot already held the lease; its heartbeat moved.
     Refreshed,
-    /// Another boot's lease was released or stale, so the token advanced.
+    /// A released tombstone was acquired and its fencing token advanced.
+    Reacquired,
+    /// Another boot's stale lease was taken over, so the token advanced.
     TakenOver,
 }
 
@@ -548,9 +550,8 @@ impl SurrealProvenanceStore {
 
         let transition = match before.as_ref() {
             None => LeaseTransition::Created,
-            Some(row)
-                if !row.released && row.boot_event_id.as_ref() == Some(&request.boot_event_id) =>
-            {
+            Some(row) if row.released => LeaseTransition::Reacquired,
+            Some(row) if row.boot_event_id.as_ref() == Some(&request.boot_event_id) => {
                 LeaseTransition::Refreshed
             }
             Some(_) => LeaseTransition::TakenOver,
@@ -564,7 +565,7 @@ impl SurrealProvenanceStore {
             })?;
 
         match transition {
-            LeaseTransition::Created => {
+            LeaseTransition::Created | LeaseTransition::Reacquired => {
                 self.record_audit_decision(
                     &request.context_id,
                     AuditDecision::OwnershipAcquired {

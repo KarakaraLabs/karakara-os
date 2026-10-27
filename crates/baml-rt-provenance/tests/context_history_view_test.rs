@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +11,8 @@
 
 use baml_rt_core::ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId};
 use baml_rt_provenance::{
-    AgentType, ContextHistoryCursor, ProvEvent, ProvenanceWriter, SurrealProvenanceStore,
+    AgentType, ContextHistoryCursor, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvEvent, ProvenanceWriter,
+    SurrealProvenanceStore,
 };
 use test_support::testing::provenance_fixtures::build_isolated_store;
 
@@ -297,5 +299,76 @@ async fn window_bounds_the_tail_and_reports_truncation() {
     assert_eq!(
         paged_sorted, full_sorted,
         "concatenated pages reconstruct the agent view with no gaps"
+    );
+}
+
+/// `context_history_view` treats `window: None` as [`DEFAULT_LLM_CONTEXT_ITEM_CAP`], not as
+/// "uncapped". The step-executor intra-turn read
+/// (`conversation_history_json_for_intra_dedup` -> `project_conversation_to_json(scope, None)`)
+/// passes `None` expecting an uncapped read, so it silently receives only the newest 40 rows.
+///
+/// This pins the semantic gap behind P0.3 of
+/// `shared-context-agent-view-stability-and-isolation-plan.md`: an explicit large window is
+/// uncapped, but `None` is not.
+#[tokio::test]
+async fn none_window_means_default_cap_not_uncapped() {
+    let store = build_isolated_store().await;
+    let ctx = ContextId::new(9300, 1);
+    let agent = agent_id("00000000-0000-0000-0000-0000000000c1");
+    let task_id = task("cap-task");
+    boot(&store, &agent, "clickup-agent").await;
+    store
+        .add_event(ProvEvent::task_exists(ctx.clone(), task_id.clone()))
+        .await
+        .expect("task exists");
+    store
+        .add_event(ProvEvent::task_execution_started(
+            ctx.clone(),
+            task_id.clone(),
+            agent.clone(),
+        ))
+        .await
+        .expect("task execution started");
+
+    let total = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+    for i in 0..total {
+        received(
+            &store,
+            &ctx,
+            &task_id,
+            &format!("m-{i}"),
+            &format!("row {i}"),
+            &agent,
+            1_900_000_000_000 + i as u64,
+        )
+        .await;
+    }
+
+    let default_read = store
+        .context_history_view(&ctx, &agent, None, None, None)
+        .await
+        .expect("default (None) read");
+    let explicit_large_read = store
+        .context_history_view(&ctx, &agent, Some(total + 10), None, None)
+        .await
+        .expect("explicit large read");
+
+    assert_eq!(
+        default_read.items.len(),
+        DEFAULT_LLM_CONTEXT_ITEM_CAP,
+        "None is interpreted as the default cap, not uncapped"
+    );
+    assert!(
+        default_read.truncated,
+        "the default read hides older rows outside its window"
+    );
+    assert_eq!(
+        explicit_large_read.items.len(),
+        total,
+        "an explicit window larger than the context is effectively uncapped"
+    );
+    assert!(
+        !explicit_large_read.truncated,
+        "the explicit large read leaves nothing hidden"
     );
 }

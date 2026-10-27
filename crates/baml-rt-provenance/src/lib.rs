@@ -118,7 +118,7 @@ pub use context_route_bindings::{
     BindingResolution, ContextRouteBinding, ContextRouteBindingRequest, ContextRouteForkRequest,
     ContextRouteRebindRequest, DEFAULT_CONTEXT_ACTIVITY_RETENTION_MS, PinnedContextActivity,
 };
-pub use conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP;
+pub use conversation_context_query::{DEFAULT_LLM_CONTEXT_ITEM_CAP, STEP_EXECUTOR_DELTA_ROW_CAP};
 pub use conversation_history_resume::{ConversationResumeUiHints, resolve_resume_ui_hints};
 pub use effect_subscriber::ProvenanceEffectSubscriber;
 pub use episode::{

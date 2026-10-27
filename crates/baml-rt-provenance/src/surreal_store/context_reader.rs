@@ -472,13 +472,15 @@ impl SurrealProvenanceStore {
     ) -> Result<Vec<Value>> {
         use crate::metamodel::query::{
             conversation_call_agent_instances_clause, conversation_message_agent_instances_clause,
+            conversation_session_step_agent_instances_clause,
         };
 
         let ctx_node_id = context_entity_id_string(context_id.as_str());
         let scoped_to = context_scope::SCOPED_TO;
         let agent_nodes = vec![crate::id_semantics::agent_node_id_string(agent_id)];
         let msg_filter = conversation_message_agent_instances_clause("agent_nodes");
-        let call_filter = conversation_call_agent_instances_clause("agent_nodes");
+        let tool_filter = conversation_call_agent_instances_clause("agent_nodes");
+        let session_filter = conversation_session_step_agent_instances_clause("agent_nodes");
         let task_message = task_id
             .map(|_| task_message_filter_sql())
             .unwrap_or_default();
@@ -502,10 +504,11 @@ impl SurrealProvenanceStore {
         let no_task_filter = String::new();
         let mut arms: Vec<(&str, &str)> = vec![(task_message.as_str(), msg_filter.as_str())];
         if task_id.is_some() {
-            arms.push((task_tool.as_str(), call_filter.as_str()));
-            arms.push((task_session.as_str(), call_filter.as_str()));
+            arms.push((task_tool.as_str(), tool_filter.as_str()));
+            arms.push((task_session.as_str(), session_filter.as_str()));
         } else {
-            arms.push((no_task_filter.as_str(), call_filter.as_str()));
+            arms.push((no_task_filter.as_str(), tool_filter.as_str()));
+            arms.push((no_task_filter.as_str(), session_filter.as_str()));
         }
         let mut rows: Vec<Value> = Vec::new();
         for (task_filter_sql, agent_filter_sql) in arms {
@@ -692,8 +695,15 @@ impl SurrealProvenanceStore {
         } else {
             String::new()
         };
-        let call_agent_filter = if agent_instances_ref.is_some() {
+        let tool_agent_filter = if agent_instances_ref.is_some() {
             crate::metamodel::query::conversation_call_agent_instances_clause(
+                "agent_instance_nodes",
+            )
+        } else {
+            String::new()
+        };
+        let session_agent_filter = if agent_instances_ref.is_some() {
+            crate::metamodel::query::conversation_session_step_agent_instances_clause(
                 "agent_instance_nodes",
             )
         } else {
@@ -712,15 +722,20 @@ impl SurrealProvenanceStore {
             } else {
                 ""
             };
-            let agent_call = if agent_instances_ref.is_some() {
-                call_agent_filter.as_str()
+            let agent_tool = if agent_instances_ref.is_some() {
+                tool_agent_filter.as_str()
+            } else {
+                ""
+            };
+            let agent_session = if agent_instances_ref.is_some() {
+                session_agent_filter.as_str()
             } else {
                 ""
             };
             for (label_task_filter_sql, agent_filter_sql) in [
                 (task_message.as_str(), agent_msg),
-                (task_tool.as_str(), agent_call),
-                (task_session.as_str(), agent_call),
+                (task_tool.as_str(), agent_tool),
+                (task_session.as_str(), agent_session),
             ] {
                 rows.extend(
                     self.fetch_scoped_conversation_nodes(ScopedConversationQuery {
@@ -737,7 +752,11 @@ impl SurrealProvenanceStore {
                 );
             }
         } else if !rows_from_preload && agent_instances_ref.is_some() {
-            for agent_filter_sql in [msg_agent_filter.as_str(), call_agent_filter.as_str()] {
+            for agent_filter_sql in [
+                msg_agent_filter.as_str(),
+                tool_agent_filter.as_str(),
+                session_agent_filter.as_str(),
+            ] {
                 rows.extend(
                     self.fetch_scoped_conversation_nodes(ScopedConversationQuery {
                         ctx_node_id: &ctx_node_id,

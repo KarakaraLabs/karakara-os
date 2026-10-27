@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,11 +12,14 @@ use baml_rt_conversation::view::ProvenanceConversationContextItem;
 use baml_rt_core::{Result, context};
 use baml_rt_provenance::{
     CompactionRequest, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvenanceContextReader,
-    estimate_compaction_prompt_bytes,
+    STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
 };
 use baml_rt_quickjs::baml_execution::ConversationContextProvider;
 use baml_rt_tools::{
-    prompt_projection::{PromptProjectionItem, project_prompt_context},
+    prompt_projection::{
+        ProjectedConversationRow, PromptProjectionItem, project_prompt_context,
+        project_prompt_context_with_identity,
+    },
     tools::ToolRegistry,
 };
 use serde_json::Value;
@@ -212,6 +216,81 @@ impl ProjectingConversationContextProvider {
             reader.as_deref(),
         )))
     }
+
+    /// Project the complete (uncapped) agent view into identity-carrying rows for the
+    /// step-executor intra-turn delta.
+    async fn project_conversation_rows_for_delta(
+        &self,
+        scope: &context::RuntimeScope,
+    ) -> Result<Vec<ProjectedConversationRow>> {
+        let context_id = scope.context_id();
+        let agent_id = scope.agent_id().clone();
+        let Some(store) = self.provenance_store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let page = store
+            .context_history_view(
+                context_id,
+                &agent_id,
+                Some(STEP_EXECUTOR_DELTA_ROW_CAP),
+                None,
+                None,
+            )
+            .await
+            .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
+                source: Box::new(e),
+            })?;
+
+        if page.items.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let projection_items = page
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                baml_rt_conversation::projection::agent_view_projection_item(item, &agent_id)
+            })
+            .collect::<Vec<_>>();
+
+        let context_id_str = context_id.as_str().to_string();
+        let ref_table_arc = baml_rt_provenance::prepare_ref_table_for_projection(
+            store,
+            context_id,
+            &projection_items,
+            self.tool_registry.as_ref(),
+        )
+        .await
+        .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
+            source: Box::new(e),
+        })?;
+        if let Some(tables) = self.archive_ref_tables.as_ref() {
+            tables.insert(context_id_str.clone(), Arc::clone(&ref_table_arc));
+        }
+
+        let reader: Option<BoxedArchiveReader> = self.archive_ref_tables.clone().map(|t| {
+            let ctx = context_id_str.clone();
+            let boxed: BoxedArchiveReader =
+                Box::new(move |archive_ref_str, grep_str, offset, limit| {
+                    let ref_table = baml_rt_tools::archive_refs::get_ref_table(&t, &ctx)?;
+                    baml_rt_tools::archive_read::format_session_read_from_vtable(
+                        &ref_table,
+                        archive_ref_str,
+                        grep_str,
+                        offset,
+                        limit,
+                    )
+                });
+            boxed
+        });
+
+        Ok(project_prompt_context_with_identity(
+            projection_items,
+            self.tool_registry.as_ref(),
+            &ref_table_arc,
+            reader.as_deref(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -267,6 +346,14 @@ impl ConversationContextProvider for ProjectingConversationContextProvider {
         _function_name: &str,
     ) -> Result<Option<Value>> {
         self.project_conversation_to_json(scope, None).await
+    }
+
+    async fn conversation_history_rows_for_delta(
+        &self,
+        scope: &context::RuntimeScope,
+        _function_name: &str,
+    ) -> Result<Vec<ProjectedConversationRow>> {
+        self.project_conversation_rows_for_delta(scope).await
     }
 }
 

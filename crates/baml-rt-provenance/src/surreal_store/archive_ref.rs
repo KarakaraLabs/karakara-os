@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -233,9 +234,11 @@ impl SurrealProvenanceStore {
         }
 
         for attempt in 0..super::WRITE_CONFLICT_MAX_ATTEMPTS {
+            // SurrealDB's `math::max` accepts an array, not a scalar aggregate argument.
+            // Ordering the rows also keeps this portable across the supported Surreal versions.
             let max_q = format!(
-                "SELECT math::max(archive_prefix) AS m FROM {TBL_ARCHIVE_PREFIX_REGISTRY} \
-                 WHERE context_id = $ctx"
+                "SELECT archive_prefix FROM {TBL_ARCHIVE_PREFIX_REGISTRY} \
+                 WHERE context_id = $ctx ORDER BY archive_prefix DESC LIMIT 1"
             );
             let max_resp = self
                 .db()
@@ -246,8 +249,8 @@ impl SurrealProvenanceStore {
             let max_rows: Vec<Value> = check_and_take_zero(max_resp, map_surreal_error)?;
             let next_p = match max_rows
                 .first()
-                .and_then(|r| r.get("m"))
-                .and_then(|m| if m.is_null() { None } else { m.as_u64() })
+                .and_then(|r| r.get("archive_prefix"))
+                .and_then(Value::as_u64)
             {
                 None => 1u32,
                 Some(m) => {

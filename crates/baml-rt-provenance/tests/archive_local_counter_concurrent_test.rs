@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,6 +10,26 @@ use std::{collections::HashSet, sync::Arc};
 use baml_rt_core::ids::{AgentId, ContextId, UuidId};
 use test_support::testing::provenance_fixtures::build_isolated_store;
 use uuid::Uuid;
+
+#[tokio::test]
+async fn archive_prefixes_are_unique_per_agent_in_one_context() {
+    let store = build_isolated_store().await;
+    let context_id = ContextId::new(9190, 1);
+    let coordinator = AgentId::from_uuid(UuidId::new(Uuid::nil()));
+    let clickup = AgentId::from_uuid(UuidId::new(Uuid::from_u128(1)));
+
+    let coordinator_prefix = store
+        .archive_ensure_prefix(&context_id, &coordinator)
+        .await
+        .expect("allocate coordinator prefix");
+    let clickup_prefix = store
+        .archive_ensure_prefix(&context_id, &clickup)
+        .await
+        .expect("allocate clickup prefix");
+
+    assert_eq!(coordinator_prefix, 1);
+    assert_eq!(clickup_prefix, 2);
+}
 
 #[tokio::test]
 async fn parallel_archive_next_local_succeeds_when_create_races() {

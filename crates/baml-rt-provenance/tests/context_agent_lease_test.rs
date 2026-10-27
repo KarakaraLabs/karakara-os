@@ -15,6 +15,57 @@ use test_support::testing::provenance_fixtures::build_isolated_store;
 const AGENT_UUID: &str = "00000000-0000-0000-0000-0000000000a7";
 
 #[tokio::test]
+async fn released_lease_is_reacquired_on_the_first_attempt() {
+    let store = build_isolated_store().await;
+    let context_id = ContextId::from("ctx-lease-reacquire");
+    let agent_id = AgentId::from_uuid(UuidId::parse_str(AGENT_UUID).unwrap());
+    let boot_id = ActivityAnchorId::from("prov-lease-reacquire");
+
+    let first = store
+        .acquire_context_agent_lease(ContextAgentLeaseRequest::new(
+            context_id.clone(),
+            agent_id.clone(),
+            boot_id.clone(),
+            "runner-a",
+            10_000,
+        ))
+        .await
+        .expect("initial acquisition");
+    let LeaseAcquisition::Acquired {
+        lease: first_lease,
+        transition: LeaseTransition::Created,
+    } = first
+    else {
+        panic!("initial request must create the lease");
+    };
+
+    store
+        .release_context_agent_lease(&first_lease.fence(), 10_100)
+        .await
+        .expect("release lease");
+
+    let reacquired = store
+        .acquire_context_agent_lease(ContextAgentLeaseRequest::new(
+            context_id, agent_id, boot_id, "runner-a", 10_200,
+        ))
+        .await
+        .expect("released lease must be reacquired without a retry");
+    let LeaseAcquisition::Acquired {
+        lease: reacquired_lease,
+        transition,
+    } = reacquired
+    else {
+        panic!("released lease must be acquired on the first attempt");
+    };
+
+    assert_eq!(transition, LeaseTransition::Reacquired);
+    assert!(
+        reacquired_lease.fencing_token > first_lease.fencing_token,
+        "reacquisition must advance the fence"
+    );
+}
+
+#[tokio::test]
 async fn takeover_bumps_token_and_rejects_stale_fenced_write() {
     let store = build_isolated_store().await;
     let context_id = ContextId::from("ctx-lease-fencing");

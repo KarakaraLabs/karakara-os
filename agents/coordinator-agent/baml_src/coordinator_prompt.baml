@@ -1,14 +1,3 @@
-// Discover which agents are available. Archive handle rules are in the merged runtime prelude; per-hop ops: narrowed return type only.
-function GetDiscoverAgentsPlan(
-  inferred_intent: string,
-) -> SystemDiscoverAgentsSessionPlan {
-  client DefaultClient
-  prompt #"
-    Discover available agents to match the user's intent.
-    Inferred intent: {{ inferred_intent }}
-  "#
-}
-
 // --- Coordinator classification (before discovery) ---
 // Exactly one variant: delegatable task ready, need user input to form a task, or meta-only (no routing).
 
@@ -123,10 +112,20 @@ Do not add text before or after the JSON object.
 "#
 }
 
-// Planning step: output a structured plan against discovered agents.
-// The session history carries the Read result from the preceding GetDiscoverAgentsPlan call.
+// Planning step: output a structured plan against an explicit discovered-agent list.
 // Never plan a step for coordinator-agent. For capability/meta requests, return plan_steps as [].
-function MakeStructuredPlan(user_message: string) -> StandardStructuredPlan {
+class CoordinatorAgentCandidate {
+  agent_package string
+  name string
+  description string?
+  capabilities string[]
+  tools string[]
+}
+
+function MakeStructuredPlan(
+  user_message: string,
+  available_agents: CoordinatorAgentCandidate[],
+) -> StandardStructuredPlan {
   client DefaultClient
   prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
@@ -146,14 +145,18 @@ Archive refs: `@N` names a visible tool-result handle, not evidence by itself. R
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
 
 You are PLANNING what to do; you do not perform the task yourself.
-    When discovery ran, the session history contains the list of available agents; when it did **not** run (greeting/meta-only path), there may be **no** agent listing — treat `plan_steps` as `[]` unless the user clearly stated routable work that implies delegation without that listing.
+    AVAILABLE AGENTS is the complete registry result for this routing decision. Use only exact `agent_package` values from this list. Never infer available agents from session history and never invent an agent package.
 
-    **Coordinator rule:** Non-empty `plan_steps` means at least one specialist conversation is justified by the user's message **and** (when present) the discovery list. If the user only wants orientation (capabilities, greetings, small talk), or discovery did not run and they did not state concrete work, `plan_steps` MUST be `[]`. If the user gave a concrete task matching one or more agents **in history**, include at least one step. Never invent agent packages not grounded in history.
+    ---AVAILABLE AGENTS---
+    {{ available_agents }}
+    ---END AVAILABLE AGENTS---
+
+    **Coordinator rule:** Non-empty `plan_steps` means at least one specialist conversation is justified by the user's message and the available-agent list. If the user gave a concrete task matching an available agent, include at least one step. If the user only wants orientation (capabilities, greetings, small talk), or no suitable agent is available, set `plan_steps` to `[]`.
 
     Output a structured plan:
     (1) intent_description — one sentence describing the user's high-level intent in concrete terms (not generic "delegate request").
     (2) objective — one sentence describing what we are achieving for the user.
-    (3) plan_steps — an ordered list of agent chats. Each step is one conversation with one agent: which agent (agent_package from the list) and what to send (sub_message). Use only agents from the history. Output the key as "plan_steps" (never "step").
+    (3) plan_steps — an ordered list of agent chats. Each step is one conversation with one agent: which agent (agent_package from AVAILABLE AGENTS) and what to send (sub_message). Output the key as "plan_steps" (never "step").
     Intent/plan separation contract:
     - intent_description and objective MUST stay goal-level (user outcome), not execution mechanics.
     - plan_steps/sub_message MUST contain the execution mechanics.

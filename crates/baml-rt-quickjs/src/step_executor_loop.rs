@@ -34,12 +34,13 @@ use baml_rt_core::{BamlFunctionId, BamlPromptName, BamlRtError, Result, VariantP
 use baml_rt_tools::{
     ToolName, ToolSlug, archive_refs::ArchiveReceipt,
     phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
+    prompt_projection::ProjectedConversationRow,
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::baml::{
-    BamlRuntimeManager, append_step_intra_deltas, read_provider_conversation_after_hop,
+    BamlRuntimeManager, append_step_intra_deltas, read_provider_conversation_rows_after_hop,
 };
 
 /// FSM status extracted from a tool session plan execution result.
@@ -305,13 +306,19 @@ fn step_op(result: &Value) -> Option<&str> {
     })
 }
 
+// Archive reads reach this loop in two shapes. Direct plan values retain `op`, while
+// dispatched reads replace it with the rendered output and root-level pagination fields.
+fn is_archive_read_result(result: &Value) -> bool {
+    matches!(step_op(result), Some("SearchRead" | "PageRead")) || result.get("has_more").is_some()
+}
+
 /// True when an archive read returns exactly the output a prior read already produced.
 ///
 /// Repeated successful reads add no information and let a model spend the whole step
 /// budget re-reading the same `@N`. Treating that as terminal consumes the receipt
 /// instead of surfacing `max_steps_exhausted`.
 fn is_repeated_archive_read_output(result: &Value, steps: &[Value]) -> bool {
-    if !matches!(step_op(result), Some("SearchRead" | "PageRead")) {
+    if !is_archive_read_result(result) {
         return false;
     }
     let Some(current_output) = result
@@ -322,7 +329,7 @@ fn is_repeated_archive_read_output(result: &Value, steps: &[Value]) -> bool {
         return false;
     };
     steps.iter().any(|step| {
-        matches!(step_op(step), Some("SearchRead" | "PageRead"))
+        is_archive_read_result(step)
             && step.get("output").and_then(Value::as_str) == Some(current_output)
     })
 }
@@ -585,10 +592,10 @@ pub async fn run_step_executor_loop(
     let mut step_intra_supplement: Vec<Value> = Vec::new();
     let mut last_step_context = LastStepContext::default();
     let mut archive_ledger: Vec<ArchiveLedgerEntry> = Vec::new();
-    // Carries the prior hop's terminal provider snapshot so we do not re-read the graph
+    // Carries the prior hop's terminal projected rows so we do not re-read the graph
     // at the start of the next hop. A fresh read can race async provenance / projection
-    // and disagree with the previous hop's `p_after`, breaking strict prefix extension.
-    let mut prev_hop_graph_lines: Option<Vec<Value>> = None;
+    // and disagree with the previous hop's snapshot.
+    let mut prev_hop_graph_rows: Option<Vec<ProjectedConversationRow>> = None;
 
     for hop_idx in 0..max_steps {
         if matches!(phase, Phase::Terminal(_)) {
@@ -631,12 +638,12 @@ pub async fn run_step_executor_loop(
             "step_executor_loop: starting hop"
         );
 
-        let p_before = if let Some(lines) = prev_hop_graph_lines.take() {
-            lines
+        let p_before = if let Some(rows) = prev_hop_graph_rows.take() {
+            rows
         } else {
             let guard = manager.read().await;
             guard
-                .read_provider_conversation_array(scope, &current_function)
+                .read_provider_conversation_rows(scope, &current_function)
                 .await?
         };
 
@@ -696,41 +703,34 @@ pub async fn run_step_executor_loop(
             None
         };
 
-        let p_after = if status == StepStatus::Open {
-            // Open is an acknowledged FSM transition, not a content-bearing result the
-            // next hop needs from graph-backed conversation history. The local FSM has
-            // the authoritative session/tool binding, so do not pay the strict-growth
-            // timeout when Open is not projected into conversation_context.
-            let guard = manager.read().await;
-            guard
-                .read_provider_conversation_array(scope, &current_function)
-                .await?
-        } else {
-            read_provider_conversation_after_hop(manager, scope, &p_before, &function_id).await?
-        };
-        if status == StepStatus::Open {
-            if let Err(err) = append_step_intra_deltas(
-                &mut step_intra_supplement,
-                &p_before,
-                &p_after,
-                &function_id,
-            ) {
-                tracing::debug!(
+        let p_after =
+            read_provider_conversation_rows_after_hop(manager, scope, &current_function).await?;
+        append_step_intra_deltas(&mut step_intra_supplement, &p_before, &p_after);
+
+        // Content-loss signal: a visible row left the agent view between snapshots.
+        // With the uncapped identity-based read this is rare (delegation dedup or an
+        // explicit removal); log it instead of failing the hop.
+        {
+            use std::collections::HashSet;
+            let after_anchors: HashSet<&str> = p_after
+                .iter()
+                .map(|row| row.activity_anchor.as_str())
+                .collect();
+            let evicted: Vec<&str> = p_before
+                .iter()
+                .map(|row| row.activity_anchor.as_str())
+                .filter(|anchor| !after_anchors.contains(anchor))
+                .collect();
+            if !evicted.is_empty() {
+                tracing::warn!(
                     hop = hop_idx,
                     function = %current_function,
-                    error = %err,
-                    "step_executor_loop: ignoring non-strict provider delta after Open"
+                    evicted_anchors = ?evicted,
+                    "step_executor_loop: visible row evicted from the agent view between snapshots"
                 );
             }
-        } else {
-            append_step_intra_deltas(
-                &mut step_intra_supplement,
-                &p_before,
-                &p_after,
-                &function_id,
-            )?;
         }
-        prev_hop_graph_lines = Some(p_after);
+        prev_hop_graph_rows = Some(p_after);
 
         if let Some(archive_ref) = consumed_receipt_ref {
             let guard = manager.read().await;
@@ -1034,22 +1034,24 @@ mod session_context_wire_tests {
     fn repeated_archive_read_output_is_terminal() {
         use super::is_repeated_archive_read_output;
 
+        // Dispatched reads no longer retain the plan's `op`; they expose their archive-read
+        // identity through pagination fields. This is the shape returned during a real turn.
         let prior = serde_json::json!({
-            "op": "SearchRead",
-            "input": {"archive_ref": "@1", "grep": "clickup"},
             "status": "done",
+            "has_more": false,
+            "next_offset": 2,
             "output": "@1 · discover_agents ...\n  - name: clickup-agent",
         });
         let repeat = serde_json::json!({
-            "op": "SearchRead",
-            "input": {"archive_ref": "@1", "grep": "clickup", "offset": 0},
             "status": "done",
+            "has_more": false,
+            "next_offset": 2,
             "output": "@1 · discover_agents ...\n  - name: clickup-agent",
         });
         let advanced = serde_json::json!({
-            "op": "PageRead",
-            "input": {"archive_ref": "@1", "offset": 20},
             "status": "done",
+            "has_more": false,
+            "next_offset": 3,
             "output": "@1 · discover_agents ...\n  - name: notion-agent",
         });
         let send = serde_json::json!({

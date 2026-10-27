@@ -63,6 +63,13 @@ export interface ConversationPart {
   [key: string]: JsonValue | undefined;
 }
 
+export interface CoordinatorAgentCandidate { agent_package: string;
+name: string;
+description: string | null;
+capabilities: string[];
+tools: string[];
+ }
+
 export interface CoordinatorMetaOnly { kind: "meta";
 reason: string;
  }
@@ -166,35 +173,6 @@ plan_steps: StandardAgentPlanStep[];
 citations: string[] | null;
  }
 
-export interface SystemDiscoverAgentsAbortStep { op: "Abort";
- }
-
-export interface SystemDiscoverAgentsFinishStep { op: "Finish";
- }
-
-export interface SystemDiscoverAgentsOpenStep { op: "Open";
-tool_name: "system/discover_agents";
-initial_input: DiscoverAgentsOpenInput | null;
- }
-
-export interface SystemDiscoverAgentsPageReadStep { op: "PageRead";
-input: ArchivePageReadInput;
- }
-
-export interface SystemDiscoverAgentsSearchReadStep { op: "SearchRead";
-input: ArchiveSearchReadInput;
- }
-
-export interface SystemDiscoverAgentsSendStep { op: "Send";
-tool_name: "system/discover_agents";
-input: DiscoverAgentsSendInput;
-citations: string[];
- }
-
-export interface SystemDiscoverAgentsSessionPlan { step: SystemDiscoverAgentsOpenStep | SystemDiscoverAgentsSendStep | SystemDiscoverAgentsSearchReadStep | SystemDiscoverAgentsPageReadStep | SystemDiscoverAgentsFinishStep | SystemDiscoverAgentsAbortStep;
-citations: string[];
- }
-
 export interface SystemInternalA2aAbortStep { op: "Abort";
  }
 
@@ -246,9 +224,7 @@ declare function DecideDelegationAction(args: { goal: string; agent_package: str
 
 declare function FormatCapabilities(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
 
-declare function GetDiscoverAgentsPlan(args: { inferred_intent: string } & { __baml_invocation_token?: string }): Promise<SystemDiscoverAgentsSessionPlan>;
-
-declare function MakeStructuredPlan(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<StandardStructuredPlan>;
+declare function MakeStructuredPlan(args: { user_message: string; available_agents: CoordinatorAgentCandidate[] } & { __baml_invocation_token?: string }): Promise<StandardStructuredPlan>;
 
 }
 
@@ -697,7 +673,7 @@ declare global {
 
 /** Generated Step Executor bindings (function -> typed step-executor args/result). */
 
-export type StepExecutorFunctionName = "DecideDelegationAction" | "DecideDelegationAction__active__system_internal_a2a" | "DecideDelegationAction__consume__system_internal_a2a" | "DecideDelegationAction__entry" | "GetDiscoverAgentsPlan" | "GetDiscoverAgentsPlan__active__system_discover_agents" | "GetDiscoverAgentsPlan__consume__system_discover_agents" | "GetDiscoverAgentsPlan__entry";
+export type StepExecutorFunctionName = "DecideDelegationAction" | "DecideDelegationAction__active__system_internal_a2a" | "DecideDelegationAction__consume__system_internal_a2a" | "DecideDelegationAction__entry";
 
 export interface SessionContext {
     contract_version: "session_context_v5";
@@ -760,10 +736,6 @@ export interface StepExecutorFunctionMap {
   DecideDelegationAction__active__system_internal_a2a: { args: Parameters<typeof DecideDelegationAction__active__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__active__system_internal_a2a>>; };
   DecideDelegationAction__consume__system_internal_a2a: { args: Parameters<typeof DecideDelegationAction__consume__system_internal_a2a>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__consume__system_internal_a2a>>; };
   DecideDelegationAction__entry: { args: Parameters<typeof DecideDelegationAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof DecideDelegationAction__entry>>; };
-  GetDiscoverAgentsPlan: { args: Parameters<typeof GetDiscoverAgentsPlan>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan>>; };
-  GetDiscoverAgentsPlan__active__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__active__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__active__system_discover_agents>>; };
-  GetDiscoverAgentsPlan__consume__system_discover_agents: { args: Parameters<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__consume__system_discover_agents>>; };
-  GetDiscoverAgentsPlan__entry: { args: Parameters<typeof GetDiscoverAgentsPlan__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof GetDiscoverAgentsPlan__entry>>; };
 }
 
 declare global {
