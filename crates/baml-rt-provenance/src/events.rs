@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -530,6 +531,23 @@ pub enum ProvEventData {
         dispatch_task_id: TaskId,
         agent_id: AgentId,
     },
+    /// Typed delegation lineage recorded by the trusted runtime before local
+    /// dispatch or remote forwarding.
+    ///
+    /// One record per delegated tool session. It is the only supported source
+    /// for child-task to parent-task, caller, target, and tool-session
+    /// correlation: callers must not reconstruct any of it from
+    /// `message.metadata.kind`, `referenceTaskIds`, or an `a2a:` context prefix.
+    DelegationLinked {
+        delegation_id: String,
+        parent_task_id: TaskId,
+        child_task_id: TaskId,
+        caller_agent_id: AgentId,
+        target_agent_id: AgentId,
+        caller_name: String,
+        target_name: String,
+        tool_session_id: String,
+    },
     /// Host recorded one task-daemon / producer poll window (`host.source-records.v1`).
     HostSourcePollRecorded {
         source_kind: String,
@@ -572,6 +590,9 @@ pub enum ProvEventData {
     },
     /// Host compacted a sealed transcript prefix into a summary for agent-facing projection.
     ContextCompactionRecorded {
+        /// `Some(agent)` for an agent-prompt summary; `None` for an operator/audit summary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<AgentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<TaskId>,
         covered_event_order_start: u64,
@@ -587,6 +608,14 @@ pub enum ProvEventData {
         source_render_hash: String,
         excluded_unresolved: bool,
     },
+    /// Operator-only record of an execution-ownership decision.
+    ///
+    /// The mutable lease row and the decision are deliberately different data:
+    /// a heartbeat or token touch is operational noise, while acquiring,
+    /// handing off, taking over, or refusing a pair is a permanent fact about
+    /// why a turn ran where it did. These rows carry no message payload and are
+    /// never rendered as a chat turn or included in an agent prompt.
+    AuditDecision { decision: AuditDecision },
 }
 
 /// Why host context compaction ran.
@@ -624,6 +653,147 @@ pub struct GlobalEvent {
     pub context_id: ContextId,
     pub timestamp_ms: u64,
     pub data: ProvEventData,
+}
+
+/// Full field set of a typed delegation lineage record.
+///
+/// Supplied by the trusted runtime from host-known values: the running caller's
+/// stable identity, the selected target's stable identity, and the tool session
+/// that owns the exchange. None of it is read back out of the A2A request body.
+#[derive(Debug, Clone)]
+pub struct DelegationLinkedSpec {
+    pub context_id: ContextId,
+    /// Host-generated per delegated tool session; stable across its sends.
+    pub delegation_id: String,
+    pub parent_task_id: TaskId,
+    pub child_task_id: TaskId,
+    pub caller_agent_id: AgentId,
+    pub target_agent_id: AgentId,
+    pub caller_name: String,
+    pub target_name: String,
+    pub tool_session_id: String,
+}
+
+/// One operator-only execution-ownership decision.
+///
+/// The context is carried by the enclosing event. Each variant's fields are the
+/// decision's full explanation; none of them is a graph relationship the reader
+/// has to reconstruct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub enum AuditDecision {
+    /// A boot began owning the pair where no lease row existed.
+    OwnershipAcquired {
+        agent_id: AgentId,
+        boot_event_id: ActivityAnchorId,
+        runner_id: String,
+    },
+    /// A planned deploy moved ownership from one boot to another.
+    OwnershipHandedOff {
+        agent_id: AgentId,
+        from_boot_event_id: ActivityAnchorId,
+        to_boot_event_id: ActivityAnchorId,
+    },
+    /// A stale or released lease let another boot take the pair.
+    OwnershipTakenOver {
+        agent_id: AgentId,
+        from_boot_event_id: ActivityAnchorId,
+        to_boot_event_id: ActivityAnchorId,
+        reason: String,
+    },
+    /// A request for the pair reached a boot that does not own it.
+    PairServedElsewhere {
+        agent_id: AgentId,
+        owner_boot_event_id: ActivityAnchorId,
+        requesting_boot_event_id: ActivityAnchorId,
+    },
+    /// First participation pinned a context route to one agent and artifact.
+    BindingCreated {
+        package_name: String,
+        agent_id: AgentId,
+        artifact_hash: baml_rt_core::ArtifactHash,
+    },
+    /// A turn resolved to a different pair than the context already pinned.
+    BindingConflict {
+        package_name: String,
+        pinned_agent_id: AgentId,
+        pinned_artifact_hash: baml_rt_core::ArtifactHash,
+        resolved_agent_id: AgentId,
+        resolved_artifact_hash: baml_rt_core::ArtifactHash,
+    },
+    /// An operator moved a context route from one revision to another.
+    RevisionRebound {
+        package_name: String,
+        from_agent_id: AgentId,
+        from_artifact_hash: baml_rt_core::ArtifactHash,
+        to_agent_id: AgentId,
+        to_artifact_hash: baml_rt_core::ArtifactHash,
+        rationale: String,
+    },
+    /// A context's pinned revision no longer has an eligible deployment.
+    PinnedRevisionMissing {
+        package_name: String,
+        pinned_agent_id: AgentId,
+        pinned_artifact_hash: baml_rt_core::ArtifactHash,
+        resolved_agent_id: Option<AgentId>,
+        resolved_artifact_hash: Option<baml_rt_core::ArtifactHash>,
+    },
+    /// An operator accepted removing a revision that active contexts pinned.
+    UndeployOverride {
+        package_name: String,
+        agent_id: AgentId,
+        artifact_hash: baml_rt_core::ArtifactHash,
+        contexts: Vec<String>,
+        rationale: String,
+    },
+}
+
+impl AuditDecision {
+    /// Stable wire/display kind. Deliberately distinct from the graph label.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::OwnershipAcquired { .. } => "ownership_acquired",
+            Self::OwnershipHandedOff { .. } => "ownership_handed_off",
+            Self::OwnershipTakenOver { .. } => "ownership_taken_over",
+            Self::PairServedElsewhere { .. } => "pair_served_elsewhere",
+            Self::BindingCreated { .. } => "binding_created",
+            Self::BindingConflict { .. } => "binding_conflict",
+            Self::RevisionRebound { .. } => "revision_rebound",
+            Self::PinnedRevisionMissing { .. } => "pinned_revision_missing",
+            Self::UndeployOverride { .. } => "undeploy_override",
+        }
+    }
+
+    /// Agent whose pair this decision concerns.
+    #[must_use]
+    pub const fn agent_id(&self) -> &AgentId {
+        match self {
+            Self::OwnershipAcquired { agent_id, .. }
+            | Self::OwnershipHandedOff { agent_id, .. }
+            | Self::OwnershipTakenOver { agent_id, .. }
+            | Self::PairServedElsewhere { agent_id, .. }
+            | Self::BindingCreated { agent_id, .. }
+            | Self::UndeployOverride { agent_id, .. } => agent_id,
+            Self::BindingConflict {
+                resolved_agent_id, ..
+            } => resolved_agent_id,
+            Self::RevisionRebound { to_agent_id, .. } => to_agent_id,
+            Self::PinnedRevisionMissing {
+                pinned_agent_id, ..
+            } => pinned_agent_id,
+        }
+    }
+
+    /// Identity of this decision, independent of the attempt that emitted it.
+    ///
+    /// The normalizer uses this to keep a retried decision to one node rather
+    /// than one node per attempt.
+    #[must_use]
+    pub fn identity_key(&self) -> String {
+        let encoded = serde_json::to_string(self).unwrap_or_else(|_| format!("{self:?}"));
+        sha256_hex(encoded)
+    }
 }
 
 /// AgentBooted has no context by design—it is a global event before any conversation.
@@ -1758,6 +1928,58 @@ impl ProvEvent {
         })
     }
 
+    /// Typed delegation lineage for one delegated tool session.
+    ///
+    /// Retries are idempotent through the derived `Delegation` entity identity in
+    /// the normalizer, which is keyed by `(context_id, delegation_id)`.
+    pub fn delegation_linked(spec: DelegationLinkedSpec) -> Self {
+        let DelegationLinkedSpec {
+            context_id,
+            delegation_id,
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            caller_name,
+            target_name,
+            tool_session_id,
+        } = spec;
+        ProvEvent::Global(GlobalEvent {
+            id: next_activity_anchor_id(),
+            context_id,
+            timestamp_ms: now_millis(),
+            data: ProvEventData::DelegationLinked {
+                delegation_id,
+                parent_task_id,
+                child_task_id,
+                caller_agent_id,
+                target_agent_id,
+                caller_name,
+                target_name,
+                tool_session_id,
+            },
+        })
+    }
+
+    /// Append one operator-only ownership or binding decision.
+    pub fn audit_decision(context_id: ContextId, decision: AuditDecision) -> Self {
+        Self::audit_decision_with_id(next_activity_anchor_id(), context_id, decision)
+    }
+
+    /// Append an ownership decision with a reserved anchor.
+    pub fn audit_decision_with_id(
+        id: ActivityAnchorId,
+        context_id: ContextId,
+        decision: AuditDecision,
+    ) -> Self {
+        ProvEvent::Global(GlobalEvent {
+            id,
+            context_id,
+            timestamp_ms: now_millis(),
+            data: ProvEventData::AuditDecision { decision },
+        })
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "event constructor mirrors the provenance event's full field set; a params struct would only duplicate the schema"
@@ -1879,6 +2101,7 @@ impl ProvEvent {
     )]
     pub fn context_compaction_recorded_global(
         context_id: ContextId,
+        agent_id: Option<AgentId>,
         task_id: Option<TaskId>,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
@@ -1898,6 +2121,7 @@ impl ProvEvent {
             context_id,
             timestamp_ms: now_millis(),
             data: ProvEventData::ContextCompactionRecorded {
+                agent_id,
                 task_id,
                 covered_event_order_start,
                 covered_event_order_end,

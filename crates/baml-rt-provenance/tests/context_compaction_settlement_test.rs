@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -96,7 +97,7 @@ async fn context_history_settled_triggers_post_turn_compaction() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if store
-            .latest_compaction_head(&ctx, None)
+            .latest_compaction_head(&ctx, Some(&agent_id), None)
             .await
             .expect("head")
             .is_some()
@@ -174,9 +175,15 @@ async fn render_items_for_context_includes_operational_only_rows() {
         .expect("poll");
     let items = store.conversation_context(&ctx, None).await.expect("items");
     let registry = ToolRegistry::new();
-    let rendered = render_items_for_context(&store, &ctx, &items, &registry)
-        .await
-        .expect("render");
+    let rendered = render_items_for_context(
+        &store,
+        &ctx,
+        &baml_rt_provenance::ProvenanceReadPrincipal::Operator,
+        &items,
+        &registry,
+    )
+    .await
+    .expect("render");
     assert!(
         rendered.contains("Host event (host.source-records.v1) from slack:slack:C123"),
         "operational-only context must render via render_items_for_context: {rendered}"
@@ -207,9 +214,15 @@ async fn pre_model_emergency_compacts_on_large_prompt() {
     }
 
     let items = store.conversation_context(&ctx, None).await.expect("items");
-    let prompt_bytes = estimate_compaction_prompt_bytes(&store, &ctx, &items, &ToolRegistry::new())
-        .await
-        .expect("bytes");
+    let prompt_bytes = estimate_compaction_prompt_bytes(
+        &store,
+        &ctx,
+        &baml_rt_provenance::ProvenanceReadPrincipal::Operator,
+        &items,
+        &ToolRegistry::new(),
+    )
+    .await
+    .expect("bytes");
     assert!(
         subscriber.pre_model_exceeds_emergency(prompt_bytes, items.len(), "default"),
         "large prompt must exceed emergency threshold"
@@ -229,7 +242,7 @@ async fn pre_model_emergency_compacts_on_large_prompt() {
 
     assert!(
         store
-            .latest_compaction_head(&ctx, None)
+            .latest_compaction_head(&ctx, Some(&agent_id), None)
             .await
             .expect("head")
             .is_some(),
@@ -272,7 +285,7 @@ async fn post_turn_runs_at_settlement_despite_awaiting_input_hint() {
 
     assert!(
         store
-            .latest_compaction_head(&ctx, None)
+            .latest_compaction_head(&ctx, Some(&agent_id), None)
             .await
             .expect("head")
             .is_some(),
@@ -328,6 +341,7 @@ async fn planning_agent_prefix_non_empty_with_live_step_in_tail() {
 
 fn msg(order: u64, text: &str) -> ProvenanceConversationContextItem {
     ProvenanceConversationContextItem {
+        attribution: None,
         timestamp_ms: order,
         activity_anchor: ActivityAnchorId::from(format!("m{order}")),
         role: "user".into(),
@@ -346,6 +360,7 @@ fn planning(
     status: Option<&str>,
 ) -> ProvenanceConversationContextItem {
     ProvenanceConversationContextItem {
+        attribution: None,
         timestamp_ms: order,
         activity_anchor: ActivityAnchorId::from(format!("p{order}")),
         role: "system".into(),

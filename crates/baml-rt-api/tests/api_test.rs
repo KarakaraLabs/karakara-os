@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -307,6 +308,7 @@ struct MockRegistry {
     dispatch_err_message: Option<String>,
     /// When set, capture the route key passed to handle_a2a_stream (for routing tests).
     key_captured: Option<std::sync::Arc<std::sync::Mutex<Option<AgentRouteKey>>>>,
+    expected_agent: Option<baml_rt_core::AgentId>,
     expected_artifact: Option<ArtifactHash>,
 }
 
@@ -1079,6 +1081,7 @@ impl MockRegistry {
             dispatch_ok: None,
             dispatch_err_message: None,
             key_captured: None,
+            expected_agent: None,
             expected_artifact: None,
         }
     }
@@ -1160,8 +1163,16 @@ impl AgentRegistry for MockRegistry {
         &self,
         key: &AgentRouteKey,
         request: A2aWireRequest,
+        expected_agent_id: Option<&baml_rt_core::AgentId>,
         expected_artifact_hash: Option<&ArtifactHash>,
     ) -> Result<BusStream<A2aStreamChunk>> {
+        if let Some(required) = self.expected_agent.as_ref()
+            && expected_agent_id != Some(required)
+        {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "agent precondition failed: expected {required}, got {expected_agent_id:?}"
+            )));
+        }
         if let Some(required) = self.expected_artifact.as_ref()
             && expected_artifact_hash != Some(required)
         {
@@ -2922,6 +2933,7 @@ impl DeploymentManager for SlowDeployManager {
     async fn undeploy_by_hash(
         &self,
         _content_hash: &DeploymentContentHash,
+        _override_rationale: Option<&str>,
     ) -> Result<UndeployResult> {
         std::thread::sleep(self.sleep);
         Ok(UndeployResult { removed: true })
@@ -3396,6 +3408,44 @@ async fn a2a_artifact_precondition_mismatch_returns_412() {
                 .method("POST")
                 .uri("/agents/pkg/a2a")
                 .header("content-type", "application/json")
+                .header(
+                    "x-agentium-expected-artifact-hash",
+                    ArtifactHash::from_bytes(b"different artifact").as_str(),
+                )
+                .body(Body::from(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "message.sendStream",
+                        "params": {}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+}
+
+#[tokio::test]
+async fn a2a_same_agent_with_different_artifact_returns_412() {
+    let agent_id = baml_rt_core::AgentId::from_uuid(
+        baml_rt_core::ids::UuidId::parse_str("00000000-0000-0000-0000-0000000000b1").unwrap(),
+    );
+    let mut registry =
+        MockRegistry::with_entries(vec![discovery_entry("pkg", "default", "pkg", "1.0.0")]);
+    registry.expected_agent = Some(agent_id.clone());
+    registry.expected_artifact = Some(ArtifactHash::from_bytes(b"expected artifact"));
+
+    let app = api_router(Arc::new(registry), None, None).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agents/pkg/a2a")
+                .header("content-type", "application/json")
+                .header("x-agentium-expected-agent-id", agent_id.as_str())
                 .header(
                     "x-agentium-expected-artifact-hash",
                     ArtifactHash::from_bytes(b"different artifact").as_str(),

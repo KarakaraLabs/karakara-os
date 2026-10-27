@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -66,6 +67,26 @@ impl ProvenanceWriter for NotifyingProvenanceWriter {
         let task_id = event.task_id().map(|t| t.as_str().to_string());
         let kinds = observation_kinds_for_event(&event);
         self.inner.add_event(event).await?;
+        self.notify(context_id, task_id, kinds);
+        Ok(())
+    }
+
+    async fn add_event_fenced(
+        &self,
+        event: ProvEvent,
+        fence: baml_rt_provenance::ContextAgentFence,
+    ) -> Result<()> {
+        let context_id = event.context_id_opt().map(|c| c.as_str().to_string());
+        let task_id = event.task_id().map(|t| t.as_str().to_string());
+        let kinds = observation_kinds_for_event(&event);
+        self.inner.add_event_fenced(event, fence).await?;
+        self.notify(context_id, task_id, kinds);
+        Ok(())
+    }
+}
+
+impl NotifyingProvenanceWriter {
+    fn notify(&self, context_id: Option<String>, task_id: Option<String>, kinds: u8) {
         if let Some(context_id) = context_id
             && kinds != 0
         {
@@ -75,6 +96,5 @@ impl ProvenanceWriter for NotifyingProvenanceWriter {
                 kinds,
             });
         }
-        Ok(())
     }
 }

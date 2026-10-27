@@ -1,6 +1,6 @@
 ---
 source: crates/baml-rt-api/tests/api_test.rs
-assertion_line: 1527
+assertion_line: 1546
 expression: snapshot
 ---
 {
@@ -4786,6 +4786,13 @@ expression: snapshot
           "properties": {
             "hash": {
               "type": "string"
+            },
+            "override_rationale": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Explicit operator override for an undeploy that would remove a revision\nstill pinned by recently active contexts. The rationale is recorded in\nprovenance; omitting it makes such an undeploy fail with a 409."
             }
           }
         },

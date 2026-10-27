@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -67,6 +68,7 @@ use baml_rt_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    context_agent_leases::ContextAgentFence,
     error::{ProvenanceError, Result},
     events::ProvEvent,
     task_agent_binding::{TaskAgentBinding, TaskAgentBindingSource},
@@ -110,6 +112,14 @@ impl TaskAgentResolution {
 #[async_trait]
 pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
     async fn add_event(&self, event: ProvEvent) -> Result<()>;
+
+    /// Write one event scoped to a context-agent pair, rejecting it when
+    /// `fence` is older than the current lease.
+    ///
+    /// The fence check runs inside each event transaction, so a takeover that
+    /// commits before this write makes the write fail rather than append after
+    /// the new owner.
+    async fn add_event_fenced(&self, event: ProvEvent, fence: ContextAgentFence) -> Result<()>;
 
     async fn add_events(&self, events: Vec<ProvEvent>) -> Result<()> {
         for event in events {
@@ -166,6 +176,20 @@ pub enum ProvenanceReadIntent {
     AgentContext,
     /// API or analytics: no guarantee of no-stale-read.
     Api,
+}
+
+/// Principal for provenance reads that carry private per-agent state.
+///
+/// Agent-scoped execution reads (archive bodies, pending receipts, citations, ref tables) must
+/// pass [`ProvenanceReadPrincipal::Agent`]. Operator and audit paths (timeline, graph export,
+/// compaction, citation-integrity scoring) use [`ProvenanceReadPrincipal::Operator`], which reads
+/// the full context. `None` must not be used as an implicit "unrestricted" marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvenanceReadPrincipal {
+    /// Execution read scoped to one agent's own rows.
+    Agent(AgentId),
+    /// Privileged context-wide read for operator and audit surfaces only.
+    Operator,
 }
 
 /// Reader for task and conversation context used by agents to build prompts.
@@ -276,6 +300,52 @@ pub trait ProvenanceQueryApi: Send + Sync {
 /// Planning snapshot for explainability. `intent_id` is the **task-scoped planning alias** from
 /// the execution-session wire (often agent-chosen or LLM-suggested text), **not** a standalone
 /// global provenance key; pair with `task_id` (and derived intent entity id in the graph).
+/// Opaque cursor over `(event_order, node_id)`, the durable ordering key of the
+/// transcript rows. Offsets are not usable: concurrent appends shift them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextHistoryCursor {
+    pub event_order: u64,
+    pub node_id: String,
+}
+
+impl ContextHistoryCursor {
+    #[must_use]
+    pub fn new(event_order: u64, node_id: impl Into<String>) -> Self {
+        Self {
+            event_order,
+            node_id: node_id.into(),
+        }
+    }
+
+    /// Encode for transport. Callers must treat this as opaque.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        format!("{}:{}", self.event_order, self.node_id)
+    }
+
+    /// Decode a cursor produced by [`Self::encode`].
+    #[must_use]
+    pub fn decode(raw: &str) -> Option<Self> {
+        let (order, node_id) = raw.split_once(':')?;
+        Some(Self {
+            event_order: order.parse().ok()?,
+            node_id: node_id.to_string(),
+        })
+    }
+}
+
+/// One page of [`ContextHistoryView`](crate::SurrealProvenanceStore::context_history_view):
+/// the prompt-facing projection of one agent's participation in a context.
+#[derive(Debug, Clone, Default)]
+pub struct ContextHistoryPage {
+    /// Newest visible rows, oldest-first, bounded by the requested window.
+    pub items: Vec<baml_rt_conversation::view::ProvenanceConversationContextItem>,
+    /// Opaque cursor identifying the oldest row in this page, for paging older-ward.
+    pub cursor: Option<String>,
+    /// True when older visible rows exist outside the window.
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanningIntentRecord {
     pub context_id: ContextId,
@@ -545,5 +615,27 @@ pub trait ProvenanceOpsQuery: Send + Sync {
         _archive_ref: &str,
     ) -> Result<Option<ProvenanceArchiveRecord>> {
         Ok(None)
+    }
+
+    /// One agent-scoped page of the prompt-facing context history view.
+    ///
+    /// This is the retrieval-tool entrypoint for
+    /// [`SurrealProvenanceStore::context_history_view`]: the rows carry the same
+    /// visibility, window, and delegation-dedup behavior the prompt uses, so a
+    /// model can never page in a row its prompt hid. Implementations that do not
+    /// back a conversation store may keep the default refusal; answering with an
+    /// empty page would read to a model as "the history is complete".
+    async fn context_history_view(
+        &self,
+        _context_id: &ContextId,
+        _agent_id: &AgentId,
+        _window: Option<usize>,
+        _cursor: Option<&ContextHistoryCursor>,
+        _task_id: Option<&TaskId>,
+    ) -> Result<ContextHistoryPage> {
+        Err(crate::error::ProvenanceError::InvalidEvent {
+            activity_anchor: String::new(),
+            reason: "this provenance store does not expose a context history view".to_string(),
+        })
     }
 }

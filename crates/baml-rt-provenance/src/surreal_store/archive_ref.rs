@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -23,6 +24,7 @@ use super::{
 };
 use crate::{
     error::{ProvenanceError, Result},
+    store::ProvenanceReadPrincipal,
     surreal_tables::{TBL_ARCHIVE_BODY, TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY},
 };
 
@@ -207,6 +209,19 @@ impl SurrealProvenanceStore {
         if let Some(hit) = self.archive_prefix_cache.get(&cache_key) {
             return Ok(*hit);
         }
+        // Serialize allocation per context. Without this, N concurrent allocators all read the
+        // same max prefix and collide on the same INSERT, burning write-conflict retries.
+        let ser_key = ctx.to_string();
+        let mx = self
+            .archive_prefix_serializers
+            .entry(ser_key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _serial = mx.lock().await;
+        // Another task may have allocated this agent's prefix while we waited on the lock.
+        if let Some(hit) = self.archive_prefix_cache.get(&cache_key) {
+            return Ok(*hit);
+        }
         let sel = format!(
             "SELECT archive_prefix FROM {TBL_ARCHIVE_PREFIX_REGISTRY} \
              WHERE context_id = $ctx AND agent_id = $aid LIMIT 1"
@@ -233,9 +248,11 @@ impl SurrealProvenanceStore {
         }
 
         for attempt in 0..super::WRITE_CONFLICT_MAX_ATTEMPTS {
+            // SurrealDB's `math::max` accepts an array, not a scalar aggregate argument.
+            // Ordering the rows also keeps this portable across the supported Surreal versions.
             let max_q = format!(
-                "SELECT math::max(archive_prefix) AS m FROM {TBL_ARCHIVE_PREFIX_REGISTRY} \
-                 WHERE context_id = $ctx"
+                "SELECT archive_prefix FROM {TBL_ARCHIVE_PREFIX_REGISTRY} \
+                 WHERE context_id = $ctx ORDER BY archive_prefix DESC LIMIT 1"
             );
             let max_resp = self
                 .db()
@@ -246,8 +263,8 @@ impl SurrealProvenanceStore {
             let max_rows: Vec<Value> = check_and_take_zero(max_resp, map_surreal_error)?;
             let next_p = match max_rows
                 .first()
-                .and_then(|r| r.get("m"))
-                .and_then(|m| if m.is_null() { None } else { m.as_u64() })
+                .and_then(|r| r.get("archive_prefix"))
+                .and_then(Value::as_u64)
             {
                 None => 1u32,
                 Some(m) => {
@@ -490,14 +507,18 @@ impl SurrealProvenanceStore {
     }
 
     /// Persist receipt consumption so a restored runtime permits a later identical Send.
+    ///
+    /// Ownership-enforced: only the owning agent may clear its own pending Send guard.
     pub async fn archive_mark_send_consumed(
         &self,
         context_id: &ContextId,
         archive_ref: ShortRef,
+        agent_id: &AgentId,
     ) -> Result<()> {
         let q = format!(
             "UPDATE {TBL_ARCHIVE_BODY} SET entry.pending_send = false \
-             WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc;"
+             WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc \
+             AND agent_id = $aid;"
         );
         let response = self
             .db()
@@ -505,31 +526,49 @@ impl SurrealProvenanceStore {
             .bind(("ctx", context_id.as_str().to_string()))
             .bind(("pfx", archive_ref.prefix))
             .bind(("loc", archive_ref.local))
+            .bind(("aid", agent_id.as_str().to_string()))
             .await
             .map_err(map_surreal_error)?;
         let _: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
         Ok(())
     }
 
-    /// Load archive body by composite ref.
+    /// Load archive body by composite ref, scoped to the reading principal.
+    ///
+    /// [`ProvenanceReadPrincipal::Agent`] only resolves bodies the reader owns;
+    /// [`ProvenanceReadPrincipal::Operator`] resolves any body in the context.
     pub async fn archive_get_body(
         &self,
         context_id: &ContextId,
         archive_ref: ShortRef,
+        principal: &ProvenanceReadPrincipal,
     ) -> Result<Option<ArchiveEntry>> {
         let ctx = context_id.as_str();
-        let q = format!(
-            "SELECT entry FROM {TBL_ARCHIVE_BODY} \
-             WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc LIMIT 1"
-        );
-        let response = self
+        let q = match principal {
+            ProvenanceReadPrincipal::Agent(_) => {
+                format!(
+                    "SELECT entry FROM {TBL_ARCHIVE_BODY} \
+                     WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc \
+                     AND agent_id = $aid LIMIT 1"
+                )
+            }
+            ProvenanceReadPrincipal::Operator => {
+                format!(
+                    "SELECT entry FROM {TBL_ARCHIVE_BODY} \
+                     WHERE context_id = $ctx AND archive_prefix = $pfx AND archive_local = $loc LIMIT 1"
+                )
+            }
+        };
+        let mut query = self
             .db()
             .query(&q)
             .bind(("ctx", ctx.to_string()))
             .bind(("pfx", archive_ref.prefix))
-            .bind(("loc", archive_ref.local))
-            .await
-            .map_err(map_surreal_error)?;
+            .bind(("loc", archive_ref.local));
+        if let ProvenanceReadPrincipal::Agent(agent_id) = principal {
+            query = query.bind(("aid", agent_id.as_str().to_string()));
+        }
+        let response = query.await.map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
         let Some(row) = rows.first() else {
             return Ok(None);

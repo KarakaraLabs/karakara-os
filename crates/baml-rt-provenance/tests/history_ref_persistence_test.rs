@@ -5,7 +5,10 @@
 //! Durable `#N` history refs survive store rebuild (graph-backed ref cutover).
 
 use baml_rt_core::ids::{ContextId, ExternalId, MessageId};
-use baml_rt_provenance::{ProvEvent, ProvenanceContextReader, ProvenanceWriter, hydrate_ref_table};
+use baml_rt_provenance::{
+    ProvEvent, ProvenanceContextReader, ProvenanceReadPrincipal, ProvenanceWriter,
+    hydrate_ref_table,
+};
 use baml_rt_tools::{
     archive_read::HistoryRef,
     citations::{CitationKind, ParsedCitation, ResolvedCitation},
@@ -50,17 +53,27 @@ async fn history_ref_registry_survives_hydrate_after_drop_cache() {
         .await
         .expect("ensure");
 
-    let table_a = hydrate_ref_table(&store, &context_id, &std::collections::HashMap::new())
-        .await
-        .expect("hydrate a");
+    let table_a = hydrate_ref_table(
+        &store,
+        &context_id,
+        &ProvenanceReadPrincipal::Operator,
+        &std::collections::HashMap::new(),
+    )
+    .await
+    .expect("hydrate a");
     let parsed = ParsedCitation::parse(&format!("#{n1}")).expect("parse");
     let resolved_a = ResolvedCitation::resolve(&parsed, &table_a).expect("resolve a");
     assert!(matches!(resolved_a.kind, CitationKind::History));
     assert_eq!(resolved_a.n, n1);
 
-    let table_b = hydrate_ref_table(&store, &context_id, &std::collections::HashMap::new())
-        .await
-        .expect("hydrate b");
+    let table_b = hydrate_ref_table(
+        &store,
+        &context_id,
+        &ProvenanceReadPrincipal::Operator,
+        &std::collections::HashMap::new(),
+    )
+    .await
+    .expect("hydrate b");
     let resolved_b = ResolvedCitation::resolve(&parsed, &table_b).expect("resolve b");
     assert_eq!(resolved_b.n, n1);
 

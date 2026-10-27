@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -33,12 +34,13 @@ use baml_rt_core::{BamlFunctionId, BamlPromptName, BamlRtError, Result, VariantP
 use baml_rt_tools::{
     ToolName, ToolSlug, archive_refs::ArchiveReceipt,
     phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
+    prompt_projection::ProjectedConversationRow,
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::baml::{
-    BamlRuntimeManager, append_step_intra_deltas, read_provider_conversation_after_hop,
+    BamlRuntimeManager, append_step_intra_deltas, read_provider_conversation_rows_after_hop,
 };
 
 /// FSM status extracted from a tool session plan execution result.
@@ -293,6 +295,58 @@ fn receipt_from_result(result: &Value) -> Option<ArchiveReceipt> {
         .get("receipt")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn step_op(result: &Value) -> Option<&str> {
+    result.get("op").and_then(Value::as_str).or_else(|| {
+        result
+            .get("step")
+            .and_then(|step| step.get("op"))
+            .and_then(Value::as_str)
+    })
+}
+
+// Archive reads reach this loop in two shapes. Direct plan values retain `op`, while
+// dispatched reads replace it with the rendered output and root-level pagination fields.
+fn is_archive_read_result(result: &Value) -> bool {
+    matches!(step_op(result), Some("SearchRead" | "PageRead")) || result.get("has_more").is_some()
+}
+
+/// True when this hop promises a visible transcript line: a non-empty archive read
+/// (`SearchRead` / `PageRead`) whose body must survive projection.
+///
+/// `Open` / `SendDone` / `Finish` / `Abort` and empty-args `Send` hops archive without
+/// mirroring a line, so an empty delta is legitimate for them. An archive read with a
+/// non-empty body is the one hop whose content *must* appear; if the delta stays empty,
+/// a content-bearing row was silently lost.
+fn hop_promises_visible_read(result: &Value) -> bool {
+    is_archive_read_result(result)
+        && result
+            .get("output")
+            .and_then(Value::as_str)
+            .is_some_and(|output| !output.trim().is_empty())
+}
+
+/// True when an archive read returns exactly the output a prior read already produced.
+///
+/// Repeated successful reads add no information and let a model spend the whole step
+/// budget re-reading the same `@N`. Treating that as terminal consumes the receipt
+/// instead of surfacing `max_steps_exhausted`.
+fn is_repeated_archive_read_output(result: &Value, steps: &[Value]) -> bool {
+    if !is_archive_read_result(result) {
+        return false;
+    }
+    let Some(current_output) = result
+        .get("output")
+        .and_then(Value::as_str)
+        .filter(|output| !output.is_empty())
+    else {
+        return false;
+    };
+    steps.iter().any(|step| {
+        is_archive_read_result(step)
+            && step.get("output").and_then(Value::as_str) == Some(current_output)
+    })
 }
 
 fn infer_last_step_context(
@@ -553,10 +607,10 @@ pub async fn run_step_executor_loop(
     let mut step_intra_supplement: Vec<Value> = Vec::new();
     let mut last_step_context = LastStepContext::default();
     let mut archive_ledger: Vec<ArchiveLedgerEntry> = Vec::new();
-    // Carries the prior hop's terminal provider snapshot so we do not re-read the graph
+    // Carries the prior hop's terminal projected rows so we do not re-read the graph
     // at the start of the next hop. A fresh read can race async provenance / projection
-    // and disagree with the previous hop's `p_after`, breaking strict prefix extension.
-    let mut prev_hop_graph_lines: Option<Vec<Value>> = None;
+    // and disagree with the previous hop's snapshot.
+    let mut prev_hop_graph_rows: Option<Vec<ProjectedConversationRow>> = None;
 
     for hop_idx in 0..max_steps {
         if matches!(phase, Phase::Terminal(_)) {
@@ -599,12 +653,12 @@ pub async fn run_step_executor_loop(
             "step_executor_loop: starting hop"
         );
 
-        let p_before = if let Some(lines) = prev_hop_graph_lines.take() {
-            lines
+        let p_before = if let Some(rows) = prev_hop_graph_rows.take() {
+            rows
         } else {
             let guard = manager.read().await;
             guard
-                .read_provider_conversation_array(scope, &current_function)
+                .read_provider_conversation_rows(scope, &current_function)
                 .await?
         };
 
@@ -664,46 +718,48 @@ pub async fn run_step_executor_loop(
             None
         };
 
-        let p_after = if status == StepStatus::Open {
-            // Open is an acknowledged FSM transition, not a content-bearing result the
-            // next hop needs from graph-backed conversation history. The local FSM has
-            // the authoritative session/tool binding, so do not pay the strict-growth
-            // timeout when Open is not projected into conversation_context.
-            let guard = manager.read().await;
-            guard
-                .read_provider_conversation_array(scope, &current_function)
-                .await?
-        } else {
-            read_provider_conversation_after_hop(manager, scope, &p_before, &function_id).await?
-        };
-        if status == StepStatus::Open {
-            if let Err(err) = append_step_intra_deltas(
-                &mut step_intra_supplement,
-                &p_before,
-                &p_after,
-                &function_id,
-            ) {
-                tracing::debug!(
+        let p_after =
+            read_provider_conversation_rows_after_hop(manager, scope, &current_function).await?;
+        let appended = append_step_intra_deltas(&mut step_intra_supplement, &p_before, &p_after);
+        if hop_promises_visible_read(&result) && appended.is_empty() {
+            tracing::warn!(
+                hop = hop_idx,
+                function = %current_function,
+                visible_rows_before = p_before.len(),
+                visible_rows_after = p_after.len(),
+                "step_executor_loop: archive read promised a visible body but no new projected row appeared"
+            );
+        }
+
+        // Content-loss signal: a visible row left the agent view between snapshots.
+        // With the uncapped identity-based read this is rare (delegation dedup or an
+        // explicit removal); log it instead of failing the hop.
+        {
+            use std::collections::HashSet;
+            let after_anchors: HashSet<&str> = p_after
+                .iter()
+                .map(|row| row.activity_anchor.as_str())
+                .collect();
+            let evicted: Vec<&str> = p_before
+                .iter()
+                .map(|row| row.activity_anchor.as_str())
+                .filter(|anchor| !after_anchors.contains(anchor))
+                .collect();
+            if !evicted.is_empty() {
+                tracing::warn!(
                     hop = hop_idx,
                     function = %current_function,
-                    error = %err,
-                    "step_executor_loop: ignoring non-strict provider delta after Open"
+                    evicted_anchors = ?evicted,
+                    "step_executor_loop: visible row evicted from the agent view between snapshots"
                 );
             }
-        } else {
-            append_step_intra_deltas(
-                &mut step_intra_supplement,
-                &p_before,
-                &p_after,
-                &function_id,
-            )?;
         }
-        prev_hop_graph_lines = Some(p_after);
+        prev_hop_graph_rows = Some(p_after);
 
         if let Some(archive_ref) = consumed_receipt_ref {
             let guard = manager.read().await;
             guard
-                .mark_archive_send_consumed(scope.context_id(), archive_ref)
+                .mark_archive_send_consumed(scope.context_id(), scope.agent_id(), archive_ref)
                 .await?;
         }
 
@@ -741,6 +797,19 @@ pub async fn run_step_executor_loop(
             if next_step_context.completion.is_none() {
                 next_step_context.completion = last_step_context.completion.clone();
             }
+        }
+
+        if status == StepStatus::Done
+            && is_repeated_archive_read_output(&result, &steps[..steps.len() - 1])
+        {
+            tracing::warn!(
+                hop = hop_idx,
+                function = %current_function,
+                "step_executor_loop: repeated archive read returned no new output; terminating with last result"
+            );
+            last_step_context = next_step_context;
+            phase = Phase::Terminal(TerminalReason::Finished);
+            break;
         }
 
         update_archive_ledger(&mut archive_ledger, &next_step_context);
@@ -983,5 +1052,86 @@ mod session_context_wire_tests {
             v["archives"][0]["header"],
             "mcp/grafana/query_prometheus:Send(expr=\"up\")"
         );
+    }
+
+    #[test]
+    fn repeated_archive_read_output_is_terminal() {
+        use super::is_repeated_archive_read_output;
+
+        // Dispatched reads no longer retain the plan's `op`; they expose their archive-read
+        // identity through pagination fields. This is the shape returned during a real turn.
+        let prior = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "next_offset": 2,
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+        let repeat = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "next_offset": 2,
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+        let advanced = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "next_offset": 3,
+            "output": "@1 · discover_agents ...\n  - name: notion-agent",
+        });
+        let send = serde_json::json!({
+            "op": "Send",
+            "input": {"query": "clickup"},
+            "status": "done",
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+
+        assert!(is_repeated_archive_read_output(
+            &repeat,
+            std::slice::from_ref(&prior)
+        ));
+        assert!(!is_repeated_archive_read_output(
+            &advanced,
+            std::slice::from_ref(&prior)
+        ));
+        assert!(!is_repeated_archive_read_output(
+            &send,
+            std::slice::from_ref(&prior)
+        ));
+    }
+
+    #[test]
+    fn archive_read_hop_promises_visible_completion() {
+        use super::hop_promises_visible_read;
+
+        let read = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "next_offset": 2,
+            "output": "cat -n @1\n  - name: clickup-agent"
+        });
+        let empty_read = serde_json::json!({
+            "status": "done",
+            "has_more": false,
+            "output": ""
+        });
+        let empty_args_send = serde_json::json!({
+            "op": "Send",
+            "input": {},
+            "status": "done",
+            "archive_ref": "@1",
+            "output": "@1 · \"teams\" · 3L · 40B"
+        });
+        let open = serde_json::json!({ "op": "Open", "status": "open" });
+
+        assert!(hop_promises_visible_read(&read));
+        assert!(
+            !hop_promises_visible_read(&empty_read),
+            "an empty read body promises no visible line"
+        );
+        assert!(
+            !hop_promises_visible_read(&empty_args_send),
+            "an empty-args Send archives without mirroring a line"
+        );
+        assert!(!hop_promises_visible_read(&open));
     }
 }

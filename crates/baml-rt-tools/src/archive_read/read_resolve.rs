@@ -30,17 +30,19 @@ impl ResolvedArchiveRead {
     }
 }
 
-/// Prefer a live ref table row for `context_id` when present and `archive_ref` resolves; otherwise
-/// use `virtual_fallback` (e.g. episode replay [`RefTable`](crate::archive_refs::RefTable)).
+/// Prefer the reader's live ref table row for `context_id` when present and `archive_ref`
+/// resolves; otherwise use `virtual_fallback` (e.g. episode replay
+/// [`RefTable`](crate::archive_refs::RefTable)).
 #[must_use]
 pub fn resolve_archive_for_read(
     tables: Option<&ContextRefTables>,
     context_id: &str,
+    agent_id: &str,
     archive_ref: ShortRef,
     virtual_fallback: Option<&dyn VirtualArchiveSource>,
 ) -> Option<ResolvedArchiveRead> {
     if let Some(tables) = tables
-        && let Some(table) = get_ref_table(tables, context_id)
+        && let Some(table) = get_ref_table(tables, context_id, agent_id)
         && let Some(entry) = table.get(archive_ref)
     {
         return Some(ResolvedArchiveRead {
@@ -82,17 +84,29 @@ mod tests {
         let tables = ContextRefTables::new();
         let vt = RefTable::new();
         vt.insert_virtual_archive(1, sample_entry());
-        let r = resolve_archive_for_read(Some(&tables), "ctx-unknown", ShortRef::new(1), Some(&vt));
+        let r = resolve_archive_for_read(
+            Some(&tables),
+            "ctx-unknown",
+            "agent-1",
+            ShortRef::new(1),
+            Some(&vt),
+        );
         assert!(r.is_some());
     }
 
     #[test]
     fn virtual_when_live_table_misses_ref() {
         let tables = ContextRefTables::new();
-        let _ = crate::archive_refs::get_or_create_ref_table(&tables, "ctx-1");
+        let _ = crate::archive_refs::get_or_create_ref_table(&tables, "ctx-1", "agent-1");
         let vt = RefTable::new();
         vt.insert_virtual_archive(2, sample_entry());
-        let r = resolve_archive_for_read(Some(&tables), "ctx-1", ShortRef::new(2), Some(&vt));
+        let r = resolve_archive_for_read(
+            Some(&tables),
+            "ctx-1",
+            "agent-1",
+            ShortRef::new(2),
+            Some(&vt),
+        );
         assert!(r.is_some());
         assert!(r.unwrap().header_line().contains("@2"));
     }
@@ -100,7 +114,7 @@ mod tests {
     #[test]
     fn live_wins_when_ref_present() {
         let tables = ContextRefTables::new();
-        let live = crate::archive_refs::get_or_create_ref_table(&tables, "ctx-1");
+        let live = crate::archive_refs::get_or_create_ref_table(&tables, "ctx-1", "agent-1");
         let inserted = live.insert(sample_entry());
         assert_eq!(inserted.as_u32(), 1);
         let vt = RefTable::new();
@@ -114,7 +128,13 @@ mod tests {
                 "tool_result".into(),
             ),
         );
-        let r = resolve_archive_for_read(Some(&tables), "ctx-1", ShortRef::new(1), Some(&vt));
+        let r = resolve_archive_for_read(
+            Some(&tables),
+            "ctx-1",
+            "agent-1",
+            ShortRef::new(1),
+            Some(&vt),
+        );
         let resolved = r.expect("resolve");
         let h = resolved.header_line();
         assert!(h.starts_with("@1"));

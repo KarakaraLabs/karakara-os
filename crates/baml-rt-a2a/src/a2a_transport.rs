@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -377,6 +378,14 @@ impl ProvenanceWriter for SurrealRuntimeStore {
     ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
         self.provenance.add_event(event).await
     }
+
+    async fn add_event_fenced(
+        &self,
+        event: ProvEvent,
+        fence: baml_rt_provenance::ContextAgentFence,
+    ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
+        self.provenance.add_event_fenced(event, fence).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +657,22 @@ impl A2aAgent {
             .open_session_count_for_scope(context_id, task_id)
             .await
             > 0
+    }
+
+    /// True when any execution session for this context is still open.
+    ///
+    /// This includes idle live-stream sessions waiting on input and open host
+    /// tool sessions. Routing uses it to decide when a pair lease can be
+    /// released instead of holding ownership after the conversation drained.
+    pub async fn has_open_session_for_context(&self, context_id: &ContextId) -> bool {
+        {
+            let sessions = self.stream_sessions.lock().await;
+            if sessions.keys().any(|key| key.is_for_context(context_id)) {
+                return true;
+            }
+        }
+        let runtime = self.runtime.read().await;
+        runtime.open_session_count_for_context(context_id).await > 0
     }
 
     /// True when this agent has any active turn across all sessions,

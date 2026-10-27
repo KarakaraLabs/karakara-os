@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -49,7 +50,7 @@ pub mod time;
 pub mod types;
 
 pub use a2a_handler::{
-    A2aJsChatHost, A2aRequestHandler, collect_a2a_stream_one_shot,
+    A2aJsChatHost, A2aRequestHandler, DelegationCallContext, collect_a2a_stream_one_shot,
     collect_a2a_stream_until_one_shot,
 };
 pub use a2a_sse::{A2aSseDecoder, A2aSseParseError, parse_a2a_sse_json_rpc_chunks};
@@ -93,8 +94,9 @@ pub use dispatch_ingress::{
     dispatch_unit_runtime_scope, dispatch_unit_task_id, format_unit_ingress_body,
 };
 pub use error::{
-    BamlRtError, ClassifiedToolError, HeartbeatErrorKind, Result, SessionLifecycleError,
-    baml_error_disposition, retryability_for_a2a,
+    BamlRtError, ClassifiedToolError, ContextBindingConflict, ContextsPinnedToRevision,
+    HeartbeatErrorKind, Result, SessionLifecycleError, baml_error_disposition,
+    retryability_for_a2a,
 };
 pub use event_delivery::{
     AgentDispatchPort, DiscoveryPublishClient, HostPublishClient, HostPublishService,

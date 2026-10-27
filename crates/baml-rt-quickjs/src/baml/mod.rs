@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -31,7 +32,7 @@ pub(crate) mod tool_extraction;
 mod builder;
 mod constructor;
 mod intra_turn;
-pub(crate) use intra_turn::{append_step_intra_deltas, read_provider_conversation_after_hop};
+pub(crate) use intra_turn::{append_step_intra_deltas, read_provider_conversation_rows_after_hop};
 mod manager_prelude;
 mod manager_traits;
 mod open_input;

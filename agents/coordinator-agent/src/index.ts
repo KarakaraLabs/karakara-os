@@ -7,13 +7,16 @@
  * Flow:
  *   1. ClassifyCoordinatorTurn — tagged union: ready | clarify | meta
  *      Loop with awaitInput until Ready (with delegatable inferred_intent), MetaOnly, or clarified.
- *   2. GetDiscoverAgentsPlan — **only if** step 1 chose a delegatable task (skip for greetings/meta).
- *   3. MakeStructuredPlan — LLM plans from history; returns plan_steps or []
+ *   2. system/discover_agents — deterministic registry lookup for delegatable work.
+ *   3. MakeStructuredPlan — LLM plans from the explicit discovered-agent list.
  *   4a. FormatCapabilities — if no steps: capability summary (StructuredReply)
  *   4b. One delegation — host forwards its terminal structured reply; multiple delegations use the FSM
  *   5. CoordinatorSynthesizeReply — only for multi-agent plans
  */
 import type {
+  A2aExecutionSessionExecutable,
+  AgentCardDto,
+  CoordinatorAgentCandidate,
   RunContext,
   SessionResult,
   StandardStructuredPlan,
@@ -62,6 +65,60 @@ function isUsableReadyIntent(raw: string): boolean {
   if (s.length < 8) return false;
   if (/^(hi|hello|hey|thanks|thank you)\b/i.test(s)) return false;
   return true;
+}
+
+async function discoverAgents(query: string): Promise<CoordinatorAgentCandidate[]> {
+  const session = await openToolSession("system/discover_agents", {
+    reason: "Discover available specialist agents for coordinator routing",
+  });
+  const agents = new Map<string, AgentCardDto>();
+  let finished = false;
+
+  try {
+    await session.send({ query, limit: 100, offset: 0 });
+
+    for (let stepIndex = 0; stepIndex < 16; stepIndex++) {
+      const step = await session.continue();
+      if (step.status === "error") {
+        throw new Error(step.error.message || "Agent discovery failed.");
+      }
+
+      const output = step.output;
+      if (output && Array.isArray(output.agents)) {
+        for (const agent of output.agents) {
+          if (agent.agentPackage && agent.agentPackage !== "coordinator-agent") {
+            agents.set(agent.agentPackage, agent);
+          }
+        }
+      }
+
+      if (step.status === "done") {
+        await session.finish();
+        finished = true;
+        return [...agents.values()].map((agent) => ({
+          agent_package: agent.agentPackage,
+          name: agent.name,
+          description: agent.description ?? null,
+          capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+          tools: Array.isArray(agent.tools) ? agent.tools : [],
+        }));
+      }
+
+      if (step.status === "suspended") {
+        throw new Error("Agent discovery suspended before returning a complete registry result.");
+      }
+    }
+
+    throw new Error("Agent discovery did not complete within 16 continuation steps.");
+  } finally {
+    if (!finished) {
+      try {
+        await session.abort("agent discovery did not complete");
+      } catch {
+        // Best effort. Preserve the original discovery failure.
+      }
+    }
+  }
 }
 
 function delegatedReplyFromOutput(output: unknown): StructuredReply | null {
@@ -211,8 +268,9 @@ __chat_register({
       continue;
     }
 
-    let discoveryError: string | null = null;
+    let availableAgents: CoordinatorAgentCandidate[] = [];
     if (runDiscovery) {
+      let discoveryExecutable: A2aExecutionSessionExecutable | null = null;
       try {
         const discoverySession = typeof openA2aExecutionSession === "function"
           ? await openA2aExecutionSession("coordinator-discover-" + Date.now())
@@ -223,7 +281,7 @@ __chat_register({
               description: intentText,
             })
           : null;
-        const discoveryExecutable = discoveryIntentPhase
+        discoveryExecutable = discoveryIntentPhase
           ? await discoveryIntentPhase.submitPlan({
               intentId: "intent-" + slug(intentText, "coord"),
               planId: "plan-discover-" + slug(intentText, "coord"),
@@ -232,29 +290,41 @@ __chat_register({
           : null;
 
         await discoveryExecutable?.startStep("step-discover");
-        const discoverRun = await runGeneratedStepExecutor(
-          "GetDiscoverAgentsPlan",
-          { inferred_intent: intentText },
-          { max_steps: 8 },
-        );
-        if (discoverRun.outcome !== "completed") {
-          throw new Error(
-            discoverRun.outcome === "fatal"
-              ? discoverRun.message
-              : `[${discoverRun.recovery.code}] ${discoverRun.recovery.mistake}`,
-          );
+        availableAgents = await discoverAgents(text);
+        if (availableAgents.length === 0) {
+          throw new Error("No specialist agents matched this request.");
         }
         await discoveryExecutable?.completeStep("step-discover");
         await discoveryExecutable?.finish();
       } catch (e) {
-        discoveryError = e instanceof Error ? e.message : String(e);
-        ctx.emit.message(`[discovery failed: ${discoveryError}]`);
+        const message = e instanceof Error ? e.message : String(e);
+        try {
+          await discoveryExecutable?.abort(message);
+        } catch {
+          // Best effort. Preserve the original discovery failure.
+        }
+        ctx.emit.message(`[discovery failed: ${message}]`);
+        return { error: message };
       }
     }
 
     try {
-      const plan = await MakeStructuredPlan({ user_message: text }) as StandardStructuredPlan;
+      const plan = await MakeStructuredPlan({
+        user_message: text,
+        available_agents: availableAgents,
+      }) as StandardStructuredPlan;
       const steps = Array.isArray(plan?.plan_steps) ? plan.plan_steps : [];
+      if (runDiscovery && steps.length === 0) {
+        throw new Error("Routing planner returned no delegation steps for a specialist request.");
+      }
+
+      const discoveredPackages = new Set(availableAgents.map((agent) => agent.agent_package));
+      for (const step of steps) {
+        const agentPackage = String(step.agent_package ?? "");
+        if (!agentPackage || !discoveredPackages.has(agentPackage)) {
+          throw new Error(`Routing planner selected undiscovered agent package "${agentPackage}".`);
+        }
+      }
       const objective = String(plan?.objective ?? text);
       const planIntentId = "intent-" + slug(plan?.intent_description ?? objective, "plan");
       const planId = "plan-" + slug(objective, "plan");

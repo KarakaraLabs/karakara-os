@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -42,6 +43,10 @@ pub enum GraphNodeLabel {
     ContextCompaction,
     /// Summary text entity emitted by compaction.
     CompactionSummary,
+    /// Typed delegation lineage entity (parent/child task, caller, target, session).
+    Delegation,
+    /// Operator-only record of an execution-ownership or binding decision.
+    AuditDecision,
 }
 
 impl GraphNodeLabel {
@@ -72,6 +77,8 @@ impl GraphNodeLabel {
             Self::SessionStep => "SessionStep",
             Self::ContextCompaction => "ContextCompaction",
             Self::CompactionSummary => "CompactionSummary",
+            Self::Delegation => "Delegation",
+            Self::AuditDecision => "AuditDecision",
         }
     }
 
@@ -102,6 +109,8 @@ impl GraphNodeLabel {
             "SessionStep" => Some(Self::SessionStep),
             "ContextCompaction" => Some(Self::ContextCompaction),
             "CompactionSummary" => Some(Self::CompactionSummary),
+            "Delegation" => Some(Self::Delegation),
+            "AuditDecision" => Some(Self::AuditDecision),
             _ => None,
         }
     }
@@ -167,9 +176,11 @@ pub enum EventGraphKind {
     HostDispatchAccepted,
     HostDispatchRejected,
     ContextCompactionRecorded,
+    DelegationLinked,
+    AuditDecision,
 }
 
-pub const ALL_EVENT_KINDS: [EventGraphKind; 24] = [
+pub const ALL_EVENT_KINDS: [EventGraphKind; 26] = [
     EventGraphKind::IntentResolved,
     EventGraphKind::PlanGenerated,
     EventGraphKind::PlanStepStatusChanged,
@@ -194,6 +205,8 @@ pub const ALL_EVENT_KINDS: [EventGraphKind; 24] = [
     EventGraphKind::HostDispatchAccepted,
     EventGraphKind::HostDispatchRejected,
     EventGraphKind::ContextCompactionRecorded,
+    EventGraphKind::DelegationLinked,
+    EventGraphKind::AuditDecision,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -414,6 +427,26 @@ const MAPPING_CALLBACK_DISPATCH_CONTEXTS_LINKED: EventGraphMapping = EventGraphM
     required_properties: &[a2a::TASK_ID, a2a::CONTEXT_ID],
 };
 
+/// Typed delegation lineage: one `Delegation` entity per delegated tool session.
+const MAPPING_DELEGATION_LINKED: EventGraphMapping = EventGraphMapping {
+    kind: EventGraphKind::DelegationLinked,
+    primary_node: GraphNodeLabel::Delegation,
+    expected_edges: &[
+        a2a_relations::DELEGATION_PARENT,
+        a2a_relations::DELEGATION_CHILD,
+        a2a_relations::DELEGATION_CALLER,
+        a2a_relations::DELEGATION_TARGET_AGENT,
+    ],
+    required_properties: &[
+        a2a::CONTEXT_ID,
+        a2a::DELEGATION_ID,
+        a2a::DELEGATION_PARENT_TASK_ID,
+        a2a::DELEGATION_TOOL_SESSION_ID,
+        a2a::DELEGATION_CALLER_NAME,
+        a2a::DELEGATION_TARGET_NAME,
+    ],
+};
+
 const MAPPING_HOST_SOURCE_POLL_RECORDED: EventGraphMapping = EventGraphMapping {
     kind: EventGraphKind::HostSourcePollRecorded,
     primary_node: GraphNodeLabel::Message,
@@ -463,6 +496,15 @@ const MAPPING_CONTEXT_COMPACTION_RECORDED: EventGraphMapping = EventGraphMapping
     required_properties: &[a2a::CONTEXT_ID, a2a::SUMMARY_TEXT],
 };
 
+/// Operator-only ownership or binding decision. No edges: the row itself is
+/// the explanation, and an edge would put it in agent-visible traversals.
+const MAPPING_AUDIT_DECISION: EventGraphMapping = EventGraphMapping {
+    kind: EventGraphKind::AuditDecision,
+    primary_node: GraphNodeLabel::AuditDecision,
+    expected_edges: &[],
+    required_properties: &[a2a::CONTEXT_ID, a2a::AGENT_ID],
+};
+
 pub fn event_kind_from_data(data: &ProvEventData) -> EventGraphKind {
     match data {
         ProvEventData::IntentResolved { .. } => EventGraphKind::IntentResolved,
@@ -487,12 +529,14 @@ pub fn event_kind_from_data(data: &ProvEventData) -> EventGraphKind {
         ProvEventData::CallbackDispatchContextsLinked { .. } => {
             EventGraphKind::CallbackDispatchContextsLinked
         }
+        ProvEventData::DelegationLinked { .. } => EventGraphKind::DelegationLinked,
         ProvEventData::HostSourcePollRecorded { .. } => EventGraphKind::HostSourcePollRecorded,
         ProvEventData::HostDispatchAccepted { .. } => EventGraphKind::HostDispatchAccepted,
         ProvEventData::HostDispatchRejected { .. } => EventGraphKind::HostDispatchRejected,
         ProvEventData::ContextCompactionRecorded { .. } => {
             EventGraphKind::ContextCompactionRecorded
         }
+        ProvEventData::AuditDecision { .. } => EventGraphKind::AuditDecision,
     }
 }
 
@@ -524,6 +568,8 @@ pub fn mapping_for_event_kind(kind: EventGraphKind) -> &'static EventGraphMappin
         EventGraphKind::HostDispatchAccepted => &MAPPING_HOST_DISPATCH_ACCEPTED,
         EventGraphKind::HostDispatchRejected => &MAPPING_HOST_DISPATCH_REJECTED,
         EventGraphKind::ContextCompactionRecorded => &MAPPING_CONTEXT_COMPACTION_RECORDED,
+        EventGraphKind::DelegationLinked => &MAPPING_DELEGATION_LINKED,
+        EventGraphKind::AuditDecision => &MAPPING_AUDIT_DECISION,
     }
 }
 

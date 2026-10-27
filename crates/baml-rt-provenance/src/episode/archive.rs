@@ -384,6 +384,7 @@ mod tests {
         let merged = vec![
             TimelineKind::Conv(
                 ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: 1,
                     activity_anchor: ActivityAnchorId::from("sd1"),
                     role: "tool".into(),
@@ -406,6 +407,7 @@ mod tests {
             ),
             TimelineKind::Conv(
                 ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: 2,
                     activity_anchor: ActivityAnchorId::from("tr-other"),
                     role: "tool".into(),
@@ -538,6 +540,7 @@ mod tests {
         let merged = vec![
             TimelineKind::Conv(
                 ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: 1,
                     activity_anchor: ActivityAnchorId::from("sd1"),
                     role: "tool".into(),
@@ -560,6 +563,7 @@ mod tests {
             ),
             TimelineKind::Conv(
                 ProvenanceConversationContextItem {
+                    attribution: None,
                     timestamp_ms: 2,
                     activity_anchor: ActivityAnchorId::from("tr-other"),
                     role: "tool".into(),

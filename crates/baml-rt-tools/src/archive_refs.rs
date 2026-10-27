@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -563,15 +564,56 @@ impl RefTable {
         self.history.insert(n, entry);
         self.next.fetch_max(n.saturating_add(1), Ordering::Relaxed);
     }
+
+    /// Merge a freshly-hydrated projection snapshot into this table in place.
+    ///
+    /// This replaces the previous wholesale publish (`DashMap::insert` of a brand-new
+    /// `Arc<RefTable>`), which could discard a pending Send receipt that a concurrent same-agent
+    /// operation `insert_at`'d after the snapshot's DB read. The step executor locks the manager
+    /// per hop with a shared read lock, so same-agent operations can interleave. Merging into the
+    /// existing table — with existing entries winning — keeps duplicate suppression intact and
+    /// never resurrects a consumed Send.
+    ///
+    /// Archive entries are immutable once written (only `pending_send` toggles, in place via
+    /// [`Self::mark_send_consumed`]), so filling gaps with `or_insert` is sufficient and safe.
+    pub fn merge_hydrated_snapshot(&self, snapshot: &RefTable) {
+        for entry in snapshot.entries.iter() {
+            let key = *entry.key();
+            self.entries
+                .entry(key)
+                .or_insert_with(|| entry.value().clone());
+        }
+
+        for entry in snapshot.history.iter() {
+            let n = *entry.key();
+            let history = entry.value().clone();
+            let stable_key = history_stable_key(&history);
+            self.history.entry(n).or_insert_with(|| history.clone());
+            self.history_stable_key_to_n.entry(stable_key).or_insert(n);
+        }
+
+        // Prompt-visible text is refreshed on every projection; adopt the snapshot's text for
+        // anchors it covers and leave anchors the snapshot no longer covers untouched.
+        for entry in snapshot.history_text_by_activity.iter() {
+            self.history_text_by_activity
+                .insert(entry.key().clone(), Arc::clone(entry.value()));
+        }
+
+        // Never let a fresh snapshot's (potentially lower) allocator rewind this table's counter.
+        self.next
+            .fetch_max(snapshot.next.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
-/// Convenience: shared `RefTable` per context, created on first use.
+/// Convenience: one agent-scoped `RefTable` per `(context_id, agent_id)` pair, created on first
+/// use. The map key is [`ref_table_cache_key`].
 ///
 /// Each BAML runtime manager (QuickJS host) normally holds its own `Arc<ContextRefTables>`.
 /// For multiple managers that share one provenance `context_id` (e.g. coordinator and
 /// internal-A2A callee **in the same OS process**), use one [`SharedContextRefStore`] and inject
-/// the same `Arc` into every manager so archive refs resolve across those managers without
-/// hitting the database on every read.
+/// the same `Arc` into every manager so each agent's archive refs resolve across those managers
+/// without hitting the database on every read. Sibling agents share the backing store but never
+/// the same table contents.
 pub type ContextRefTables = DashMap<String, Arc<RefTable>>;
 
 /// Process-scoped [`ContextRefTables`] shared across several BAML runtime manager instances for
@@ -609,22 +651,51 @@ impl Default for SharedContextRefStore {
     }
 }
 
-/// Get or create the `RefTable` for a context ID.
-pub fn get_or_create_ref_table(tables: &ContextRefTables, context_id: &str) -> Arc<RefTable> {
+/// Stable cache key for one agent's execution ref table in a context.
+///
+/// The `\0` separator keeps a context id from colliding with an agent id prefix (neither id
+/// carries `\0`).
+#[must_use]
+pub fn ref_table_cache_key(context_id: &str, agent_id: &str) -> String {
+    format!("{context_id}\0{agent_id}")
+}
+
+/// Get or create the agent-scoped `RefTable` for a context.
+pub fn get_or_create_ref_table(
+    tables: &ContextRefTables,
+    context_id: &str,
+    agent_id: &str,
+) -> Arc<RefTable> {
+    let key = ref_table_cache_key(context_id, agent_id);
     tables
-        .entry(context_id.to_string())
+        .entry(key)
         .or_insert_with(|| Arc::new(RefTable::new()))
         .clone()
 }
 
-/// Get the `RefTable` for a context ID if it exists; returns `None` if not yet created.
-pub fn get_ref_table(tables: &ContextRefTables, context_id: &str) -> Option<Arc<RefTable>> {
-    tables.get(context_id).map(|r| r.clone())
+/// Get the agent-scoped `RefTable` for a context if it exists; `None` if not yet created.
+pub fn get_ref_table(
+    tables: &ContextRefTables,
+    context_id: &str,
+    agent_id: &str,
+) -> Option<Arc<RefTable>> {
+    tables
+        .get(&ref_table_cache_key(context_id, agent_id))
+        .map(|r| r.clone())
 }
 
-/// Drop the in-process cache for a context (call after provenance writes that may change refs).
-pub fn invalidate_ref_table(tables: &ContextRefTables, context_id: &str) {
-    tables.remove(context_id);
+/// Drop one agent's in-process cache for a context (call after that agent writes provenance).
+pub fn invalidate_ref_table(tables: &ContextRefTables, context_id: &str, agent_id: &str) {
+    tables.remove(&ref_table_cache_key(context_id, agent_id));
+}
+
+/// Drop every agent-scoped cache for a context.
+///
+/// Used when a write cannot be attributed to a single agent (e.g. an operator or host event).
+/// This is conservative: it removes only this context's entries, never a sibling context.
+pub fn invalidate_ref_tables_for_context(tables: &ContextRefTables, context_id: &str) {
+    let prefix = format!("{context_id}\0");
+    tables.retain(|key, _| !key.starts_with(&prefix));
 }
 
 #[cfg(test)]
@@ -719,6 +790,28 @@ mod tests {
             .expect("signature lookup");
         assert_eq!(found.0, r);
         assert!(found.1.contains("Send(expr=\"up\")"));
+    }
+
+    #[test]
+    fn sibling_agents_do_not_suppress_each_others_sends() {
+        let tables = ContextRefTables::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        let owner = get_or_create_ref_table(&tables, "ctx-1", "clickup-agent");
+        let sibling = get_or_create_ref_table(&tables, "ctx-1", "notion-agent");
+
+        owner.insert(
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        assert!(
+            owner.find_by_send_signature(signature).is_some(),
+            "the owner suppresses its own immediate repeat"
+        );
+        assert!(
+            sibling.find_by_send_signature(signature).is_none(),
+            "a sibling agent's table must not see another agent's pending Send"
+        );
     }
 
     #[test]
@@ -828,13 +921,15 @@ mod tests {
     }
 
     #[test]
-    fn context_ref_tables() {
+    fn context_ref_tables_are_scoped_by_context_and_agent() {
         let tables = ContextRefTables::new();
-        let t1 = get_or_create_ref_table(&tables, "ctx-1");
-        let t2 = get_or_create_ref_table(&tables, "ctx-1");
-        let t3 = get_or_create_ref_table(&tables, "ctx-2");
-        assert!(Arc::ptr_eq(&t1, &t2));
-        assert!(!Arc::ptr_eq(&t1, &t3));
+        let t1 = get_or_create_ref_table(&tables, "ctx-1", "agent-a");
+        let t2 = get_or_create_ref_table(&tables, "ctx-1", "agent-a");
+        let t3 = get_or_create_ref_table(&tables, "ctx-2", "agent-a");
+        let t4 = get_or_create_ref_table(&tables, "ctx-1", "agent-b");
+        assert!(Arc::ptr_eq(&t1, &t2), "same context + agent shares a table");
+        assert!(!Arc::ptr_eq(&t1, &t3), "different context separates tables");
+        assert!(!Arc::ptr_eq(&t1, &t4), "different agent separates tables");
     }
 
     #[test]
@@ -896,6 +991,71 @@ mod tests {
             h.as_u32(),
             1,
             "composite replay namespaces must not consume flat @N/#N slots"
+        );
+    }
+
+    #[test]
+    fn merge_hydrated_snapshot_preserves_pending_receipt_and_fills_gaps() {
+        let table = RefTable::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        // A pending Send receipt recorded in RAM after a concurrent snapshot's DB read.
+        let receipt_ref = ShortRef::new(7);
+        table.insert_at(
+            receipt_ref,
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        // The stale snapshot lacks the pending receipt and carries an unrelated archive.
+        let snapshot = RefTable::new();
+        snapshot.insert_at(ShortRef::new(3), make_entry("support/notion", "read page"));
+
+        table.merge_hydrated_snapshot(&snapshot);
+
+        assert!(
+            table
+                .get(receipt_ref)
+                .is_some_and(|e| e.value().pending_send),
+            "pending receipt must survive a merge with a stale snapshot"
+        );
+        assert_eq!(
+            table
+                .find_by_send_signature(signature)
+                .expect("duplicate suppression still works after merge")
+                .0,
+            receipt_ref
+        );
+        assert!(
+            table.get(ShortRef::new(3)).is_some(),
+            "snapshot entries not yet present must be merged in"
+        );
+    }
+
+    #[test]
+    fn merge_hydrated_snapshot_does_not_resurrect_consumed_send() {
+        let table = RefTable::new();
+        let signature = "support/clickup\0{\"op\":\"list_tasks\"}";
+        let r = table.insert(
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+        table.mark_send_consumed(r);
+        assert!(!table.get(r).expect("entry").value().pending_send);
+
+        // A snapshot taken before consumption still marks the Send pending. Merging it must not
+        // flip the in-RAM pending flag back on.
+        let snapshot = RefTable::new();
+        snapshot.insert_at(
+            r,
+            make_entry("support/clickup", "listed tasks")
+                .with_send_signature(Some(signature.to_string())),
+        );
+
+        table.merge_hydrated_snapshot(&snapshot);
+
+        assert!(
+            !table.get(r).expect("entry").value().pending_send,
+            "consumed Send must stay consumed after a merge"
         );
     }
 }

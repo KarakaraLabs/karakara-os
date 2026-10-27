@@ -7,7 +7,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use baml_rt_conversation::view::{ConversationItemContent, ProvenanceConversationContextItem};
-use baml_rt_core::ids::ContextId;
+use baml_rt_core::ids::{AgentId, ContextId};
 use baml_rt_tools::{
     archive_read::ShortRef,
     archive_refs::{HistoryEntry, RefTable},
@@ -15,12 +15,20 @@ use baml_rt_tools::{
 };
 
 use super::SurrealProvenanceStore;
-use crate::{error::Result, store::ProvenanceContextReader, surreal_tables::TBL_ARCHIVE_BODY};
+use crate::{
+    error::Result,
+    store::{ProvenanceContextReader, ProvenanceReadPrincipal},
+    surreal_tables::TBL_ARCHIVE_BODY,
+};
 
-/// Load all archive bodies for a context into `table`.
+/// Load archive bodies for a context into `table`, scoped to an owner when `agent_id` is set.
+///
+/// `None` loads every body (operator hydration). A sibling body is never loaded into an agent's
+/// execution ref table.
 async fn hydrate_archive_bodies(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    agent_id: Option<&AgentId>,
     table: &RefTable,
 ) -> Result<()> {
     use serde_json::Value;
@@ -31,16 +39,21 @@ async fn hydrate_archive_bodies(
     };
 
     let ctx = context_id.as_str();
-    let q = format!(
-        "SELECT archive_prefix, archive_local, entry FROM {TBL_ARCHIVE_BODY} \
-         WHERE context_id = $ctx"
-    );
-    let response = store
-        .db()
-        .query(&q)
-        .bind(("ctx", ctx.to_string()))
-        .await
-        .map_err(map_surreal_error)?;
+    let q = match agent_id {
+        Some(_) => format!(
+            "SELECT archive_prefix, archive_local, entry FROM {TBL_ARCHIVE_BODY} \
+             WHERE context_id = $ctx AND agent_id = $aid"
+        ),
+        None => format!(
+            "SELECT archive_prefix, archive_local, entry FROM {TBL_ARCHIVE_BODY} \
+             WHERE context_id = $ctx"
+        ),
+    };
+    let mut query = store.db().query(&q).bind(("ctx", ctx.to_string()));
+    if let Some(agent_id) = agent_id {
+        query = query.bind(("aid", agent_id.as_str().to_string()));
+    }
+    let response = query.await.map_err(map_surreal_error)?;
     let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
     for row in rows {
         let prefix = row
@@ -70,52 +83,70 @@ async fn hydrate_archive_bodies(
 /// Rebuild [`RefTable`] from Surreal history registry + archive bodies.
 ///
 /// `known_text` maps `activity_anchor -> text` for anchors the caller already has
-/// in hand (the prompt projection it just built). Only registry anchors **absent**
-/// from `known_text` — history that fell outside the projection cap — force a
-/// conversation re-read. In the common case (conversation within the cap) the read
-/// is skipped entirely. Pass `&HashMap::new()` for a cold rebuild (e.g. restart),
-/// which falls back to reading the full conversation once.
+/// in hand (the prompt projection it just built).
+///
+/// - [`ProvenanceReadPrincipal::Agent`] hydrates only the reader's archive bodies and only the
+///   `#N` rows whose anchors are in the reader's projection. Sibling bodies and sibling history
+///   refs never enter the table.
+/// - [`ProvenanceReadPrincipal::Operator`] hydrates every body and every `#N` row, falling back
+///   to a full conversation read for anchors outside the projection cap.
 pub async fn hydrate_ref_table(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     known_text: &HashMap<String, String>,
 ) -> Result<Arc<RefTable>> {
     let table = Arc::new(RefTable::new());
     let rows = store.history_ref_list_for_context(context_id).await?;
 
-    // The caller already fetched text for every in-projection anchor. Only read
-    // the conversation when some registry anchor is *not* covered — i.e. history
-    // beyond the projection cap. When everything is covered, skip the (O(N), and
-    // growing) read altogether. When a read is needed it is a single indexed pass
-    // (first-wins on duplicate anchors), never one-read-per-row (was O(N²)).
-    let needs_read = rows
-        .iter()
-        .any(|(anchor, _, _)| !known_text.contains_key(anchor.as_str()));
+    match principal {
+        ProvenanceReadPrincipal::Operator => {
+            // Only registry anchors absent from `known_text` — history beyond the projection cap —
+            // force a conversation re-read. In the common case the read is skipped entirely.
+            let needs_read = rows
+                .iter()
+                .any(|(anchor, _, _)| !known_text.contains_key(anchor.as_str()));
 
-    let fallback_text: HashMap<String, String> = if needs_read {
-        let items = store.conversation_context(context_id, None).await?;
-        let mut map: HashMap<String, String> = HashMap::with_capacity(items.len());
-        for item in &items {
-            if let Some(text) = conversation_item_history_text(item) {
-                map.entry(item.activity_anchor.as_str().to_owned())
-                    .or_insert(text);
+            let fallback_text: HashMap<String, String> = if needs_read {
+                let items = store.conversation_context(context_id, None).await?;
+                let mut map: HashMap<String, String> = HashMap::with_capacity(items.len());
+                for item in &items {
+                    if let Some(text) = conversation_item_history_text(item) {
+                        map.entry(item.activity_anchor.as_str().to_owned())
+                            .or_insert(text);
+                    }
+                }
+                map
+            } else {
+                HashMap::new()
+            };
+
+            for (anchor, source, n) in rows {
+                let text = known_text
+                    .get(anchor.as_str())
+                    .or_else(|| fallback_text.get(anchor.as_str()))
+                    .cloned()
+                    .unwrap_or_default();
+                table.insert_virtual_history(n, HistoryEntry::new(anchor, source), text);
             }
+            hydrate_archive_bodies(store, context_id, None, table.as_ref()).await?;
         }
-        map
-    } else {
-        HashMap::new()
-    };
-
-    for (anchor, source, n) in rows {
-        let text = known_text
-            .get(anchor.as_str())
-            .or_else(|| fallback_text.get(anchor.as_str()))
-            .cloned()
-            .unwrap_or_default();
-        table.insert_virtual_history(n, HistoryEntry::new(anchor, source), text);
+        ProvenanceReadPrincipal::Agent(agent_id) => {
+            // A prompt only shows the reader's window, so the reader can only cite `#N` values
+            // whose anchors are in `known_text`. Sibling anchors are dropped, giving sparse `#N`
+            // values without a schema change.
+            for (anchor, source, n) in rows {
+                if let Some(text) = known_text.get(anchor.as_str()) {
+                    table.insert_virtual_history(
+                        n,
+                        HistoryEntry::new(anchor, source),
+                        text.clone(),
+                    );
+                }
+            }
+            hydrate_archive_bodies(store, context_id, Some(agent_id), table.as_ref()).await?;
+        }
     }
-
-    hydrate_archive_bodies(store, context_id, table.as_ref()).await?;
     Ok(table)
 }
 
@@ -135,9 +166,13 @@ fn conversation_item_history_text(item: &ProvenanceConversationContextItem) -> O
 }
 
 /// DB-first ref table for prompt projection: sync `#N` registry, hydrate cache, overlay live text.
+///
+/// The `principal` scopes archive-body and history-ref hydration. Agent projections hydrate only
+/// the reader's own rows; operator projections hydrate the full context.
 pub async fn prepare_ref_table_for_projection(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     projection_items: &[PromptProjectionItem],
     registry: &baml_rt_tools::tools::ToolRegistry,
 ) -> Result<Arc<RefTable>> {
@@ -208,7 +243,7 @@ pub async fn prepare_ref_table_for_projection(
         .map(|(anchor, _source, content)| (anchor.as_str().to_owned(), content.clone()))
         .collect();
 
-    let table = hydrate_ref_table(store, context_id, &known_text).await?;
+    let table = hydrate_ref_table(store, context_id, principal, &known_text).await?;
     for (anchor, source, content) in history_entries {
         let n = store
             .history_ref_ensure(context_id, anchor.as_str(), source.as_str())

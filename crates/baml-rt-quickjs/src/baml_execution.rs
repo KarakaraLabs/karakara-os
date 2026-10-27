@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -228,6 +229,36 @@ pub trait ConversationContextProvider: Send + Sync {
         function_name: &str,
     ) -> Result<Option<Value>> {
         self.conversation_history_json(scope, function_name).await
+    }
+
+    /// Read the complete (uncapped) projected agent view with durable row identities,
+    /// for the identity-based step-executor intra-turn delta.
+    ///
+    /// The provenance-backed provider overrides this with real `activity_anchor` /
+    /// `event_order` identities. The default derives synthetic identities from the
+    /// projected JSON lines so simple providers keep working.
+    async fn conversation_history_rows_for_delta(
+        &self,
+        scope: &context::RuntimeScope,
+        function_name: &str,
+    ) -> Result<Vec<baml_rt_tools::prompt_projection::ProjectedConversationRow>> {
+        let Some(payload) = self
+            .conversation_history_json_for_intra_dedup(scope, function_name)
+            .await?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(extract_conversation_array_from_payload(&payload)
+            .into_iter()
+            .enumerate()
+            .map(
+                |(index, line)| baml_rt_tools::prompt_projection::ProjectedConversationRow {
+                    activity_anchor: format!("synthetic-delta-{index}"),
+                    event_order: index as u64,
+                    line,
+                },
+            )
+            .collect())
     }
 }
 
@@ -787,22 +818,18 @@ impl BamlExecutor {
         Ok(extract_conversation_array_from_payload(&payload))
     }
 
-    /// Full projected line list for step-executor `p_before` / `p_after` prefix checks (uncapped).
-    pub(crate) async fn provider_conversation_history_lines_for_intra_dedup(
+    /// Complete projected row list with durable identities for the step-executor delta.
+    pub(crate) async fn provider_conversation_history_rows_for_delta(
         &self,
         scope: &context::RuntimeScope,
         function_name: &str,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<baml_rt_tools::prompt_projection::ProjectedConversationRow>> {
         let Some(provider) = self.conversation_context_provider.as_ref() else {
             return Ok(vec![]);
         };
-        let Some(payload) = provider
-            .conversation_history_json_for_intra_dedup(scope, function_name)
-            .await?
-        else {
-            return Ok(vec![]);
-        };
-        Ok(extract_conversation_array_from_payload(&payload))
+        provider
+            .conversation_history_rows_for_delta(scope, function_name)
+            .await
     }
 
     /// Build `ctx.tags` from a merged projected line list (transcript only — canonical BAML history).

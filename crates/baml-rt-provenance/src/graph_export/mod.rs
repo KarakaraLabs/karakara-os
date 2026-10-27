@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -824,6 +825,16 @@ fn derive_display_name(label: &str, props: &HashMap<String, serde_json::Value>) 
             let summary = prop_str("summary_text").unwrap_or_default();
             let preview: String = summary.chars().take(48).collect();
             format!("📋 Compaction summary {preview}")
+        }
+        Some(GraphNodeLabel::Delegation) => {
+            let caller = prop_str(a2a::DELEGATION_CALLER_NAME).unwrap_or_default();
+            let target = prop_str(a2a::DELEGATION_TARGET_NAME).unwrap_or_default();
+            format!("🔀 Delegation {caller} → {target}")
+        }
+        Some(GraphNodeLabel::AuditDecision) => {
+            let kind = prop_str("audit_decision_kind").unwrap_or_default();
+            let agent = prop_str(a2a::AGENT_ID).unwrap_or_default();
+            format!("🗂️ Audit {kind} {agent}")
         }
         None => label.to_string(),
     }

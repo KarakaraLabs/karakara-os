@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,6 +10,7 @@ use serde_json::Value;
 
 use super::{SurrealProvenanceStore, payload::payload_records_from_event};
 use crate::{
+    context_agent_leases::ContextAgentFence,
     error::{ProvenanceError, Result},
     events::ProvEventData,
     normalizer::{NormalizeContext, validate_event},
@@ -19,9 +21,12 @@ use crate::{
     task_agent_binding::event_local_executing_agent_id,
 };
 
-#[async_trait]
-impl ProvenanceWriter for SurrealProvenanceStore {
-    async fn add_event(&self, event: crate::events::ProvEvent) -> Result<()> {
+impl SurrealProvenanceStore {
+    async fn write_event(
+        &self,
+        event: crate::events::ProvEvent,
+        fence: Option<&ContextAgentFence>,
+    ) -> Result<()> {
         validate_event(&event)?;
         self.enforce_message_activity_anchor_invariant(&event)
             .await?;
@@ -130,6 +135,7 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             context_id_opt.as_deref(),
             &payload_records,
             &blob_bodies,
+            &self.write_coalesce,
         );
         let total_stmts: usize = plans.iter().map(|p| p.statement_count).sum();
         let total_binds: usize = plans.iter().map(|p| p.binds.len()).sum();
@@ -145,7 +151,19 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             "provenance add_event write txn"
         );
         for plan in plans {
-            self.run_event_write_plan(plan).await?;
+            let plan = match fence {
+                Some(fence) => plan.with_fence_guard(fence),
+                None => plan,
+            };
+            if plan.shared {
+                self.run_shared_event_write(context_id_opt.as_deref(), plan)
+                    .await?;
+            } else {
+                self.run_event_write_plan(plan).await?;
+            }
+        }
+        if let Some(fence) = fence {
+            self.ensure_context_agent_fence(fence).await?;
         }
 
         self.update_context_picker_index(&event).await?;
@@ -159,8 +177,40 @@ impl ProvenanceWriter for SurrealProvenanceStore {
             && let Ok(guard) = self.ref_table_cache.read()
             && let Some(tables) = guard.as_ref()
         {
-            baml_rt_tools::archive_refs::invalidate_ref_table(tables, ctx);
+            // Narrow invalidation to the agents this write touches. A sibling agent's ref table
+            // (including its in-memory pending receipts) survives an unrelated write.
+            let mut affected_agents: Vec<String> = Vec::new();
+            if let Some(agent) = context.task_agent_id.as_ref() {
+                affected_agents.push(agent.as_str().to_string());
+            }
+            if let Some(agent) = event.message_agent_id() {
+                affected_agents.push(agent.as_str().to_string());
+            }
+            affected_agents.sort();
+            affected_agents.dedup();
+            if affected_agents.is_empty() {
+                baml_rt_tools::archive_refs::invalidate_ref_tables_for_context(tables, ctx);
+            } else {
+                for agent in &affected_agents {
+                    baml_rt_tools::archive_refs::invalidate_ref_table(tables, ctx, agent);
+                }
+            }
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ProvenanceWriter for SurrealProvenanceStore {
+    async fn add_event(&self, event: crate::events::ProvEvent) -> Result<()> {
+        self.write_event(event, None).await
+    }
+
+    async fn add_event_fenced(
+        &self,
+        event: crate::events::ProvEvent,
+        fence: ContextAgentFence,
+    ) -> Result<()> {
+        self.write_event(event, Some(&fence)).await
     }
 }

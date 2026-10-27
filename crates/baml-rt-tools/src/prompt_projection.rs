@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -347,6 +348,46 @@ pub fn project_prompt_context(
         }
     }
     Value::Array(history)
+}
+
+/// One projected conversation line plus its durable provenance identity.
+///
+/// Used by the step-executor delta so rows can be compared by identity
+/// (`activity_anchor`) instead of raw JSON value equality, and ordered by
+/// `event_order`. The store read sorts raw rows by the durable key
+/// `(event_order, node_id)`; projection preserves that order verbatim (it
+/// never re-sorts) and drops `node_id` because `event_order` is the per-event
+/// monotonic counter and `activity_anchor` is the unique identity the delta
+/// compares. `node_id` stays a read-layer SQL tiebreaker only.
+#[derive(Debug, Clone)]
+pub struct ProjectedConversationRow {
+    pub activity_anchor: String,
+    pub event_order: u64,
+    pub line: Value,
+}
+
+/// Same as [`project_prompt_context`], but each rendered line keeps its
+/// `activity_anchor` and `event_order` for identity-based deltas.
+#[must_use]
+pub fn project_prompt_context_with_identity(
+    items: Vec<PromptProjectionItem>,
+    registry: &ToolRegistry,
+    ref_table: &RefTable,
+    archive_reader: Option<ArchiveReader<'_>>,
+) -> Vec<ProjectedConversationRow> {
+    let opts = ProjectionRenderOptions::default();
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        for row in project_projection_item_to_rows(&item, registry, ref_table, archive_reader, opts)
+        {
+            out.push(ProjectedConversationRow {
+                activity_anchor: item.activity_anchor.clone(),
+                event_order: item.timestamp_ms,
+                line: projected_history_row_to_json(&row),
+            });
+        }
+    }
+    out
 }
 
 /// Same rules as [`project_prompt_context`], as `(role, content)` pairs for one item. Message

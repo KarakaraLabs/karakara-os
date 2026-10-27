@@ -12,7 +12,7 @@ tool system/discover_agents
   operations: SystemDiscoverAgentsOpenStep | SystemDiscoverAgentsSendStep | SystemDiscoverAgentsSearchReadStep | SystemDiscoverAgentsPageReadStep | SystemDiscoverAgentsFinishStep | SystemDiscoverAgentsAbortStep
 
 tool system/extrospection
-  purpose: Queries provenance rows across contexts and agents with compact token-aware output. Open session, send filters/grouping, then read() returns one result page.
+  purpose: Queries provenance rows across contexts and agents with compact token-aware output, or pages one agent's context history with resource `context_history`. Open session, send filters/grouping or a history cursor, then read() returns one result page.
   open: ProvenanceQueryOpenInput
   send: ProvenanceQuerySendInput
   capability: Streaming
@@ -69,7 +69,7 @@ type ProvenanceQueryOpenInput = {
 
 type ProvenanceQuerySendInput = {
   read?: SessionReadEnvelope
-  resource: string
+  resource: string @description("What to read. Ops resources: llm_calls, tool_calls, messages, aggregates. `context_history` pages the caller-scoped conversation history the prompt itself was built from, oldest-ward, with the same visibility and delegation dedup. It always spans the context like the prompt does, so taskId does not filter it.")
   contextId?: string
   taskId?: string
   agentId?: string
@@ -83,7 +83,7 @@ type ProvenanceQuerySendInput = {
   sortDir?: string
   outcome?: string
   pageSize?: int
-  cursor?: string
+  cursor?: string @description("Opaque cursor from a previous context_history page. Omit for the newest window. Malformed or stale cursors are rejected; an empty items array means the history is exhausted.")
   topK?: int
 }
 

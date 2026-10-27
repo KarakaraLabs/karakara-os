@@ -533,6 +533,9 @@ pub struct ProvenanceQuerySendInput {
     /// When set, the tool resolves it and ignores resource/filter fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read: Option<SessionReadEnvelope>,
+    #[baml(
+        description = "What to read. Ops resources: llm_calls, tool_calls, messages, aggregates. `context_history` pages the caller-scoped conversation history the prompt itself was built from, oldest-ward, with the same visibility and delegation dedup. It always spans the context like the prompt does, so taskId does not filter it."
+    )]
     pub resource: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_id: Option<ContextId>,
@@ -560,6 +563,9 @@ pub struct ProvenanceQuerySendInput {
     pub outcome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u32>,
+    #[baml(
+        description = "Opaque cursor from a previous context_history page. Omit for the newest window. Malformed or stale cursors are rejected; an empty items array means the history is exhausted."
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -579,6 +585,10 @@ pub struct ProvenanceQueryNextOutput {
     pub payload_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_result: Option<SessionReadResultDto>,
+    /// Present when `resource` is `context_history`. An empty `items` array is
+    /// terminal: it means no older visible rows remain, not a missing answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_history: Option<ProvenanceContextHistoryPageDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieval_budget: Option<ProvenanceRetrievalBudgetDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -586,6 +596,58 @@ pub struct ProvenanceQueryNextOutput {
     pub done: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_context: Option<HistoryContextV1>,
+}
+
+/// One page of the agent-scoped context history view.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvenanceContextHistoryPageDto {
+    /// Oldest-first rows, exactly the rows the prompt projection would render.
+    pub items: Vec<ProvenanceContextHistoryRowDto>,
+    /// Opaque cursor for paging older-ward. Absent only when the page is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// True when older visible rows remain outside this page. Resolves the
+    /// ambiguity of a full-length page without spending another call.
+    pub has_more: bool,
+}
+
+/// One projected history row with the attribution the prompt had for it.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvenanceContextHistoryRowDto {
+    pub activity_anchor: String,
+    pub role: String,
+    pub timestamp_ms: u64,
+    /// Stored event kind: ingress_signal, emitted_signal, tool_operation,
+    /// prompt_invocation, model_result, delegation, task_state, or audit_decision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_kind: Option<String>,
+    /// Agent that performed or emitted the event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ProvenanceAgentRefDto>,
+    /// Agent the event was addressed to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<ProvenanceAgentRefDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
+    /// Projected row content. `kind` selects the shape: message (text,
+    /// citations), tool_call (tool_name, args), tool_result or tool_error
+    /// (tool_name, result/error), session_step (tool_name, op), planning
+    /// (event_kind, summary, ...), or compaction_summary (summary, range).
+    pub content: OpaqueJson,
+}
+
+/// Stable agent reference carried by an attributed history row.
+#[derive(Debug, Clone, Serialize, Deserialize, BamlType)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvenanceAgentRefDto {
+    pub agent_id: String,
+    /// Package name at event time, when the row recorded one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, BamlType)]

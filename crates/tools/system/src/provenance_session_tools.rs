@@ -11,34 +11,44 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
+use baml_rt_conversation::{
+    projection::agent_view_projection_item,
+    view::{AgentRef, ProvenanceConversationContextItem},
+};
 use baml_rt_core::{BamlRtError, Result};
 use baml_rt_provenance::{
-    ProvenanceArchivePayload, ProvenanceArchiveRecord, ProvenanceOpsFilters, ProvenanceOpsQuery,
-    ProvenanceOpsQueryRequest, ProvenanceOpsResource, ProvenanceOutcomeSegment,
+    ContextHistoryCursor, ProvenanceArchivePayload, ProvenanceArchiveRecord, ProvenanceOpsFilters,
+    ProvenanceOpsQuery, ProvenanceOpsQueryRequest, ProvenanceOpsResource, ProvenanceOutcomeSegment,
     ProvenanceResponseProfile,
 };
 use baml_rt_tools::{
     OpaqueJson, ToolFailure, ToolHandler, ToolSession, ToolSessionError, ToolStep,
     opaque_json_map_from_object,
+    prompt_projection::{PromptProjectionContent, PromptProjectionItem, SessionStepProjection},
     tools::{
         HistoryContextSessionOp, HistoryContextStatus, HistoryContextV1, SessionReadMode,
         ToolFunctionMetadata, ToolSessionContext,
     },
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     metadata::{system_extrospection_metadata, system_introspection_metadata},
     tools::{
-        ProvenanceArchivePayloadDto, ProvenanceArchiveRecordDto, ProvenanceArchiveSummaryDto,
-        ProvenancePayloadLlmCallDto, ProvenancePayloadLlmResultDto, ProvenancePayloadToolCallDto,
-        ProvenancePayloadToolResultDto, ProvenanceQueryNextOutput, ProvenanceQueryOpenInput,
-        ProvenanceQuerySendInput, ProvenanceReadProjectionDto, ProvenanceRetrievalBudgetDto,
-        SessionReadResultDto,
+        ProvenanceAgentRefDto, ProvenanceArchivePayloadDto, ProvenanceArchiveRecordDto,
+        ProvenanceArchiveSummaryDto, ProvenanceContextHistoryPageDto,
+        ProvenanceContextHistoryRowDto, ProvenancePayloadLlmCallDto, ProvenancePayloadLlmResultDto,
+        ProvenancePayloadToolCallDto, ProvenancePayloadToolResultDto, ProvenanceQueryNextOutput,
+        ProvenanceQueryOpenInput, ProvenanceQuerySendInput, ProvenanceReadProjectionDto,
+        ProvenanceRetrievalBudgetDto, SessionReadResultDto,
     },
 };
 
 const RETRIEVAL_CALLS_CAP: u32 = 8;
+/// Bound on store pages skipped because the window was chosen before dedup
+/// elided its rows. Realistic contexts need one; the bound keeps a pathological
+/// run of elided-only windows from spinning.
+const CONTEXT_HISTORY_MAX_EMPTY_PAGES: u32 = 8;
 const RETRIEVAL_BYTES_CAP: u32 = 64 * 1024;
 const RETRIEVAL_ITEMS_CAP: u32 = 64;
 
@@ -203,13 +213,226 @@ fn summarize_record(record: &ProvenanceArchiveRecordDto) -> ProvenanceArchiveSum
     }
 }
 
-fn parse_resource(raw: &str) -> ProvenanceOpsResource {
-    match raw.to_ascii_lowercase().as_str() {
-        "tool_calls" => ProvenanceOpsResource::ToolCalls,
-        "messages" => ProvenanceOpsResource::Messages,
-        "aggregates" => ProvenanceOpsResource::Aggregates,
-        _ => ProvenanceOpsResource::LlmCalls,
+/// Resource selected by one retrieval `Send`.
+///
+/// Ops resources return provenance records and payload DTOs. `context_history` returns the
+/// prompt-facing view rows instead, because those are the rows the model was shown and the
+/// only rows it may page back in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProvenanceQueryResource {
+    Ops(ProvenanceOpsResource),
+    ContextHistory,
+}
+
+fn parse_resource(raw: &str) -> ProvenanceQueryResource {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "context_history" => ProvenanceQueryResource::ContextHistory,
+        "tool_calls" => ProvenanceQueryResource::Ops(ProvenanceOpsResource::ToolCalls),
+        "messages" => ProvenanceQueryResource::Ops(ProvenanceOpsResource::Messages),
+        "aggregates" => ProvenanceQueryResource::Ops(ProvenanceOpsResource::Aggregates),
+        _ => ProvenanceQueryResource::Ops(ProvenanceOpsResource::LlmCalls),
     }
+}
+
+/// Scope-bound cursor prefix. The store cursor only orders rows; binding it to
+/// the read scope is what lets the tool reject a cursor minted for another
+/// context or agent instead of silently paging a foreign window.
+const CONTEXT_HISTORY_CURSOR_PREFIX: &str = "ch1";
+
+fn encode_context_history_cursor(
+    context_id: &baml_rt_core::ids::ContextId,
+    agent_id: &baml_rt_core::ids::AgentId,
+    inner: &str,
+) -> String {
+    format!(
+        "{CONTEXT_HISTORY_CURSOR_PREFIX}:{}:{}:{}{}{inner}",
+        context_id.as_str().len(),
+        agent_id.as_str().len(),
+        context_id.as_str(),
+        agent_id.as_str(),
+    )
+}
+
+fn malformed_cursor(reason: &str) -> ToolSessionError {
+    ToolSessionError::Tool(ToolFailure::invalid_input(format!(
+        "invalid context_history cursor ({reason}); omit the cursor to start again from the newest window"
+    )))
+}
+
+fn decode_context_history_cursor(
+    raw: &str,
+    context_id: &baml_rt_core::ids::ContextId,
+    agent_id: &baml_rt_core::ids::AgentId,
+) -> std::result::Result<ContextHistoryCursor, ToolSessionError> {
+    let Some(rest) = raw.strip_prefix(CONTEXT_HISTORY_CURSOR_PREFIX) else {
+        return Err(malformed_cursor("unrecognized cursor version"));
+    };
+    let Some(rest) = rest.strip_prefix(':') else {
+        return Err(malformed_cursor("missing context length"));
+    };
+    let (ctx_len, rest) = rest
+        .split_once(':')
+        .ok_or_else(|| malformed_cursor("missing agent length"))?;
+    let (agent_len, rest) = rest
+        .split_once(':')
+        .ok_or_else(|| malformed_cursor("missing cursor body"))?;
+    let ctx_len = ctx_len
+        .parse::<usize>()
+        .map_err(|_| malformed_cursor("non-numeric context length"))?;
+    let agent_len = agent_len
+        .parse::<usize>()
+        .map_err(|_| malformed_cursor("non-numeric agent length"))?;
+    let (bound_context, rest) = rest
+        .split_at_checked(ctx_len)
+        .ok_or_else(|| malformed_cursor("truncated context binding"))?;
+    let (bound_agent, inner) = rest
+        .split_at_checked(agent_len)
+        .ok_or_else(|| malformed_cursor("truncated agent binding"))?;
+    if bound_context != context_id.as_str() || bound_agent != agent_id.as_str() {
+        return Err(ToolSessionError::Tool(ToolFailure::invalid_input(
+            "stale context_history cursor: it was minted for a different context or agent; \
+             omit the cursor to start again from the newest window"
+                .to_string(),
+        )));
+    }
+    ContextHistoryCursor::decode(inner).ok_or_else(|| malformed_cursor("undecodable ordering key"))
+}
+
+fn agent_ref_dto(reference: &AgentRef) -> ProvenanceAgentRefDto {
+    ProvenanceAgentRefDto {
+        agent_id: reference.agent_id.as_str().to_string(),
+        name: reference.name.clone(),
+    }
+}
+
+/// Serialize the prompt projection of one row without its replay-only payloads.
+fn projection_content_to_value(content: PromptProjectionContent) -> Value {
+    match content {
+        PromptProjectionContent::Message { text, citations } => json!({
+            "kind": "message",
+            "text": text,
+            "citations": citations,
+        }),
+        PromptProjectionContent::ToolCall { tool_name, args } => json!({
+            "kind": "tool_call",
+            "tool_name": tool_name,
+            "args": args,
+        }),
+        PromptProjectionContent::ToolResult { tool_name, result } => json!({
+            "kind": "tool_result",
+            "tool_name": tool_name,
+            "result": result,
+        }),
+        PromptProjectionContent::ToolError { tool_name, error } => json!({
+            "kind": "tool_error",
+            "tool_name": tool_name,
+            "error": error,
+        }),
+        PromptProjectionContent::SessionStep(step) => {
+            let mut value = json!({
+                "kind": "session_step",
+                "tool_name": step.tool_name,
+            });
+            let op = match step.op {
+                SessionStepProjection::Open => json!({ "op": "open" }),
+                SessionStepProjection::SendDone {
+                    archive_ref,
+                    header,
+                } => json!({
+                    "op": "send_done",
+                    "archive_ref": archive_ref,
+                    "header": header,
+                }),
+                SessionStepProjection::SearchRead {
+                    archive_ref,
+                    grep,
+                    offset,
+                    limit,
+                } => json!({
+                    "op": "search_read",
+                    "archive_ref": archive_ref,
+                    "grep": grep,
+                    "offset": offset,
+                    "limit": limit,
+                }),
+                SessionStepProjection::PageRead {
+                    archive_ref,
+                    offset,
+                    limit,
+                } => json!({
+                    "op": "page_read",
+                    "archive_ref": archive_ref,
+                    "offset": offset,
+                    "limit": limit,
+                }),
+            };
+            if let (Some(target), Some(source)) = (value.as_object_mut(), op.as_object()) {
+                for (key, item) in source {
+                    target.insert(key.clone(), item.clone());
+                }
+            }
+            value
+        }
+        PromptProjectionContent::Planning(plan) => json!({
+            "kind": "planning",
+            "event_kind": plan.kind.as_wire_str(),
+            "summary": plan.summary,
+            "detail": plan.detail,
+            "intent_id": plan.intent_id,
+            "plan_id": plan.plan_id,
+            "step_id": plan.step_id,
+            "old_status": plan.old_status,
+            "new_status": plan.new_status,
+        }),
+        PromptProjectionContent::CompactionSummary {
+            summary,
+            covered_event_order_start,
+            covered_event_order_end,
+        } => json!({
+            "kind": "compaction_summary",
+            "summary": summary,
+            "covered_event_order_start": covered_event_order_start,
+            "covered_event_order_end": covered_event_order_end,
+        }),
+    }
+}
+
+/// Project one stored row exactly as the prompt does, then carry the row's
+/// attribution alongside so a paged row is as interpretable as a streamed one.
+fn context_history_row(
+    item: ProvenanceConversationContextItem,
+    reader_agent_id: &baml_rt_core::ids::AgentId,
+) -> Option<ProvenanceContextHistoryRowDto> {
+    let attribution = item.attribution.clone();
+    let projected = agent_view_projection_item(item, reader_agent_id)?;
+    let PromptProjectionItem {
+        timestamp_ms,
+        activity_anchor,
+        role,
+        content,
+    } = projected;
+    let attribution = attribution.as_deref();
+    Some(ProvenanceContextHistoryRowDto {
+        activity_anchor,
+        role,
+        timestamp_ms,
+        event_kind: attribution.and_then(|a| {
+            serde_json::to_value(a.event_kind)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+        }),
+        actor: attribution
+            .and_then(|a| a.actor.as_ref())
+            .map(agent_ref_dto),
+        target: attribution
+            .and_then(|a| a.target.as_ref())
+            .map(agent_ref_dto),
+        task_id: attribution
+            .and_then(|a| a.task_id.as_ref())
+            .map(|t| t.as_str().to_string()),
+        source_identity: attribution.and_then(|a| a.source_identity.clone()),
+        content: OpaqueJson::from(projection_content_to_value(content)),
+    })
 }
 
 fn parse_outcome(raw: Option<&str>) -> ProvenanceOutcomeSegment {
@@ -247,10 +470,148 @@ impl ProvenanceQuerySession {
         ProvenanceQueryNextOutput {
             payload_json: None,
             read_result: None,
+            context_history: None,
             retrieval_budget: Some(self.retrieval_budget()),
             budget_exhausted: Some(true),
             done: true,
             history_context: None,
+        }
+    }
+
+    /// Page one window of the prompt-facing context history view.
+    ///
+    /// The view is always read across tasks because that is what the prompt does; a task
+    /// filter here would hide rows the prompt showed. The existing retrieval budget is the
+    /// ceiling: one page may not exceed the items or bytes left in it.
+    async fn send_context_history(
+        &mut self,
+        send: &ProvenanceQuerySendInput,
+    ) -> std::result::Result<(), ToolSessionError> {
+        if self.retrieval_calls_used >= RETRIEVAL_CALLS_CAP
+            || self.retrieval_bytes_used >= RETRIEVAL_BYTES_CAP
+            || self.retrieval_items_used >= RETRIEVAL_ITEMS_CAP
+        {
+            self.pending = Some(
+                serde_json::to_value(self.budget_exhausted_output()).map_err(|e| {
+                    ToolSessionError::Tool(ToolFailure::from_error(&BamlRtError::Json(e)))
+                })?,
+            );
+            return Ok(());
+        }
+
+        // Context and agent come from the host-bound scope, never from model input.
+        let context_id = if self.scoped_to_context {
+            self.ctx.context_id.clone()
+        } else {
+            send.context_id
+                .clone()
+                .unwrap_or_else(|| self.ctx.context_id.clone())
+        };
+        let agent_id = if self.scoped_to_context {
+            self.ctx.agent_id.clone()
+        } else {
+            send.agent_id
+                .clone()
+                .unwrap_or_else(|| self.ctx.agent_id.clone())
+        };
+        // A malformed or foreign cursor is rejected before the read. The store
+        // cannot distinguish an unknown context from a known context with no
+        // visible rows, so an empty first page stays the terminal answer; a
+        // cursor that does not belong to this scope is the stale case we can
+        // prove, and it must never collapse into that empty page.
+        let cursor = match send
+            .cursor
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+        {
+            Some(raw) => Some(decode_context_history_cursor(raw, &context_id, &agent_id)?),
+            None => None,
+        };
+
+        let remaining_items = RETRIEVAL_ITEMS_CAP
+            .saturating_sub(self.retrieval_items_used)
+            .max(1);
+        let requested = send.page_size.unwrap_or(remaining_items).max(1);
+        let mut window = requested.min(remaining_items) as usize;
+        let remaining_bytes = RETRIEVAL_BYTES_CAP.saturating_sub(self.retrieval_bytes_used);
+        let mut fetch_cursor = cursor;
+        let mut skipped_empty_pages = 0u32;
+
+        loop {
+            let fetched = self
+                .query
+                .context_history_view(
+                    &context_id,
+                    &agent_id,
+                    Some(window),
+                    fetch_cursor.as_ref(),
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    ToolSessionError::Tool(ToolFailure::from_error(
+                        &BamlRtError::ProvenanceContextRead {
+                            source: Box::new(e),
+                        },
+                    ))
+                })?;
+            let has_more = fetched.truncated;
+            let fetched_cursor = fetched.cursor;
+            let items = fetched
+                .items
+                .into_iter()
+                .filter_map(|item| context_history_row(item, &agent_id))
+                .collect::<Vec<_>>();
+            // The store selects the window before dedup elides rows, so a
+            // window can project to nothing while older rows remain. Advance
+            // until the page says something or the history is exhausted, so an
+            // empty `items` array only ever means "nothing older to read".
+            if items.is_empty()
+                && has_more
+                && skipped_empty_pages < CONTEXT_HISTORY_MAX_EMPTY_PAGES
+                && let Some(next) = fetched_cursor
+                    .as_deref()
+                    .and_then(ContextHistoryCursor::decode)
+            {
+                fetch_cursor = Some(next);
+                skipped_empty_pages = skipped_empty_pages.saturating_add(1);
+                continue;
+            }
+            let next_cursor = fetched_cursor
+                .map(|inner| encode_context_history_cursor(&context_id, &agent_id, &inner));
+            let page = ProvenanceContextHistoryPageDto {
+                items,
+                cursor: next_cursor,
+                has_more,
+            };
+            let bytes = serde_json::to_vec(&page)
+                .map(|buf| u32::try_from(buf.len()).unwrap_or(u32::MAX))
+                .unwrap_or(u32::MAX);
+            // Half the window until the page fits the remaining byte budget. Re-reading from
+            // the same cursor can only shrink the same newest tail, so no row is skipped.
+            if bytes > remaining_bytes && window > 1 {
+                window = (window / 2).max(1);
+                continue;
+            }
+            self.retrieval_calls_used = self.retrieval_calls_used.saturating_add(1);
+            self.retrieval_items_used = self
+                .retrieval_items_used
+                .saturating_add(u32::try_from(page.items.len()).unwrap_or(u32::MAX));
+            self.retrieval_bytes_used = self.retrieval_bytes_used.saturating_add(bytes);
+            let output = ProvenanceQueryNextOutput {
+                payload_json: None,
+                read_result: None,
+                context_history: Some(page),
+                retrieval_budget: Some(self.retrieval_budget()),
+                budget_exhausted: Some(false),
+                done: true,
+                history_context: None,
+            };
+            self.pending = Some(serde_json::to_value(output).map_err(|e| {
+                ToolSessionError::Tool(ToolFailure::from_error(&BamlRtError::Json(e)))
+            })?);
+            return Ok(());
         }
     }
 }
@@ -282,22 +643,33 @@ fn attach_history_context(value: &mut Value, hop: u32) {
     if output.get("historyContext").is_some() {
         return;
     }
+    let context_history_page = output.get("contextHistory").and_then(Value::as_object);
     let payload = history_payload_from_provenance_output(output);
-    let cursor = payload
-        .as_ref()
-        .and_then(|obj| obj.get("cursor"))
-        .and_then(|value| value.as_value().as_str())
-        .map(ToString::to_string);
-    let payload_json_len = payload
-        .as_ref()
-        .and_then(|p| serde_json::to_string(p).ok())
-        .map(|s| s.len())
-        .unwrap_or(0usize);
+    let cursor = context_history_page
+        .and_then(|page| page.get("cursor"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            payload
+                .as_ref()
+                .and_then(|obj| obj.get("cursor"))
+                .and_then(|value| value.as_value().as_str())
+                .map(ToString::to_string)
+        });
+    let truncated = context_history_page
+        .and_then(|page| page.get("hasMore"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            payload
+                .as_ref()
+                .and_then(|p| serde_json::to_string(p).ok())
+                .is_some_and(|json| json.len() > 2048)
+        });
     let history = HistoryContextV1 {
         hop,
         op: HistoryContextSessionOp::PageRead,
         status: HistoryContextStatus::Done,
-        truncated: payload_json_len > 2048,
+        truncated,
         cursor,
         payload,
     };
@@ -387,6 +759,7 @@ impl ToolSession for ProvenanceQuerySession {
                         }
                     },
                 }),
+                context_history: None,
                 retrieval_budget: Some(self.retrieval_budget()),
                 budget_exhausted: Some(false),
                 done: true,
@@ -397,6 +770,12 @@ impl ToolSession for ProvenanceQuerySession {
             })?);
             return Ok(());
         }
+        let resource = match parse_resource(&send.resource) {
+            ProvenanceQueryResource::ContextHistory => {
+                return self.send_context_history(&send).await;
+            }
+            ProvenanceQueryResource::Ops(resource) => resource,
+        };
         let context_id = if self.scoped_to_context {
             Some(self.ctx.context_id.clone())
         } else {
@@ -416,7 +795,7 @@ impl ToolSession for ProvenanceQuerySession {
             Some(send.agent_id.unwrap_or_else(|| self.ctx.agent_id.clone()))
         };
         let request = ProvenanceOpsQueryRequest {
-            resource: parse_resource(&send.resource),
+            resource,
             filters: ProvenanceOpsFilters {
                 context_id,
                 task_id,
@@ -451,6 +830,7 @@ impl ToolSession for ProvenanceQuerySession {
                 ToolSessionError::Tool(ToolFailure::from_error(&BamlRtError::Json(e)))
             })?),
             read_result: None,
+            context_history: None,
             retrieval_budget: Some(self.retrieval_budget()),
             budget_exhausted: Some(false),
             done: true,

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -18,8 +19,10 @@ use baml_rt_api::{
 };
 use baml_rt_core::{
     AgentRouteKey, ArtifactHash, BamlRtError, DeploymentContentHash, HeartbeatErrorKind,
+    ids::{AgentId, UuidId},
 };
 use baml_rt_observability::UNKNOWN_SERVICE_INSTANCE_ID;
+use baml_rt_provenance::ContextAgentLease;
 use surrealdb::{Surreal, engine::any::Any};
 
 use crate::routing::{ClusterEndpointResolver, Placement};
@@ -160,8 +163,33 @@ impl PlacementResolver {
 #[async_trait]
 impl ClusterEndpointResolver for PlacementResolver {
     async fn resolve(&self, key: &AgentRouteKey) -> baml_rt_core::Result<Option<Placement>> {
+        self.resolve_placement(key, None).await
+    }
+
+    async fn resolve_for_owner(
+        &self,
+        key: &AgentRouteKey,
+        owner: &ContextAgentLease,
+    ) -> baml_rt_core::Result<Option<Placement>> {
+        self.resolve_placement(key, Some(owner)).await
+    }
+}
+
+impl PlacementResolver {
+    /// Resolve one placement. With an owner hint, only that runner's placement
+    /// is eligible; falling through to another runner would defeat the lease.
+    async fn resolve_placement(
+        &self,
+        key: &AgentRouteKey,
+        owner: Option<&ContextAgentLease>,
+    ) -> baml_rt_core::Result<Option<Placement>> {
         let pkg = key.agent_package.as_str();
         let ttl = self.placement_ttl_ms as i64;
+        let owner_filter = if owner.is_some() {
+            " AND runner_id = $owner_runner AND runner_endpoint = $owner_endpoint"
+        } else {
+            ""
+        };
         // Two-stage lookup: fetch the placement, then the serving runner's
         // `service_instance_id`. A correlated sub-select on `cluster_runners`
         // inside the projection of the first query does not resolve
@@ -174,24 +202,34 @@ impl ClusterEndpointResolver for PlacementResolver {
         // operators upgrade one pod, traffic shifts to it as soon as the
         // refreshed placement row lands. The alphabetical secondary sort
         // keeps the choice deterministic across calls when timestamps tie.
-        let result: Result<Vec<serde_json::Value>, _> = self
+        let sql = format!(
+            "SELECT * FROM cluster_agent_placements \
+             WHERE agent_package = $pkg \
+             AND status = 'active' \
+             AND agent_id IS NOT NONE \
+             AND artifact_hash IS NOT NONE \
+             AND runner_id IN (\
+               SELECT VALUE runner_id FROM cluster_runners \
+               WHERE last_heartbeat_ms > (time::millis(time::now()) - $ttl)\
+             ){owner_filter} \
+             ORDER BY updated_at_ms DESC, runner_endpoint ASC \
+             LIMIT 1"
+        );
+        let mut query = self
             .db
-            .query(
-                "SELECT * FROM cluster_agent_placements \
-                 WHERE agent_package = $pkg \
-                 AND status = 'active' \
-                 AND artifact_hash IS NOT NONE \
-                 AND runner_id IN (\
-                   SELECT VALUE runner_id FROM cluster_runners \
-                   WHERE last_heartbeat_ms > (time::millis(time::now()) - $ttl)\
-                 ) \
-                 ORDER BY updated_at_ms DESC, runner_endpoint ASC \
-                 LIMIT 1",
-            )
+            .query(sql)
             .bind(("pkg", pkg.to_string()))
-            .bind(("ttl", ttl))
-            .await
-            .and_then(|mut r| r.take(0));
+            .bind(("ttl", ttl));
+        if let Some(owner) = owner {
+            let Some(owner_endpoint) = owner.endpoint.as_deref() else {
+                return Ok(None);
+            };
+            let owner_runner = owner.runner_id.as_str();
+            query = query
+                .bind(("owner_endpoint", owner_endpoint.to_string()))
+                .bind(("owner_runner", owner_runner.to_string()));
+        }
+        let result: Result<Vec<serde_json::Value>, _> = query.await.and_then(|mut r| r.take(0));
 
         let row = match result {
             Ok(rows) => rows.into_iter().next(),
@@ -243,6 +281,22 @@ impl ClusterEndpointResolver for PlacementResolver {
             None => UNKNOWN_SERVICE_INSTANCE_ID.to_string(),
         };
 
+        let agent_id = row
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                BamlRtError::Io(std::io::Error::other(format!(
+                    "placement for {pkg} on runner {runner_id} has no agent_id"
+                )))
+            })
+            .and_then(|raw| {
+                UuidId::parse_str(raw).map(AgentId::from_uuid).map_err(|e| {
+                    BamlRtError::Io(std::io::Error::other(format!(
+                        "placement for {pkg} on runner {runner_id} has invalid agent_id: {e}"
+                    )))
+                })
+            })?;
+
         let artifact_hash = row
             .get("artifact_hash")
             .and_then(|v| v.as_str())
@@ -261,6 +315,7 @@ impl ClusterEndpointResolver for PlacementResolver {
         Ok(Some(Placement {
             endpoint: endpoint.to_string(),
             service_instance_id,
+            agent_id,
             artifact_hash,
         }))
     }
@@ -403,16 +458,23 @@ impl ClusterManager {
         content_hash: &DeploymentContentHash,
     ) -> Result<(), BamlRtError> {
         let artifact_hash = ArtifactHash::from_bytes(b"test placement artifact");
-        self.record_placement_with_artifact(key, content_hash, Some(&artifact_hash))
-            .await
+        let agent_id = test_placement_agent_id();
+        self.record_placement_with_artifact(
+            key,
+            content_hash,
+            Some(&artifact_hash),
+            Some(&agent_id),
+        )
+        .await
     }
 
-    /// Record a placement with the exact package hash used for the boot.
+    /// Record a placement with the exact package identity used for the boot.
     pub(crate) async fn record_placement_with_artifact(
         &self,
         key: &AgentRouteKey,
         content_hash: &DeploymentContentHash,
         artifact_hash: Option<&ArtifactHash>,
+        agent_id: Option<&AgentId>,
     ) -> Result<(), BamlRtError> {
         // `/` is rejected by both ID validators and `runner_id` is a UUID,
         // so the pair round-trips unambiguously.
@@ -428,6 +490,7 @@ impl ClusterManager {
                  agent_package = $pkg, \
                  content_hash = $hash, \
                  artifact_hash = $artifact_hash, \
+                 agent_id = $agent_id, \
                  runner_id = $runner_id, \
                  runner_endpoint = $endpoint, \
                  status = 'active', \
@@ -440,6 +503,7 @@ impl ClusterManager {
                 "artifact_hash",
                 artifact_hash.map(|hash| hash.as_str().to_string()),
             ))
+            .bind(("agent_id", agent_id.map(|id| id.as_str().to_string())))
             .bind(("runner_id", self.identity.runner_id.to_string()))
             .bind(("endpoint", self.identity.endpoint.clone()))
             .await
@@ -478,6 +542,16 @@ impl ClusterManager {
             )))
         })?;
         Ok(())
+    }
+
+    /// Stable cluster runner identity for operational lease rows.
+    pub(crate) fn runner_id(&self) -> &str {
+        self.identity.runner_id.as_str()
+    }
+
+    /// Routable HTTP endpoint for this runner.
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.identity.endpoint
     }
 
     /// Build a `PlacementResolver` that shares this manager's DB connection.
@@ -556,6 +630,13 @@ impl ClusterManager {
 /// future soft-delete flow (writing some non-`"active"` status) excludes
 /// those rows without changing the read path again.
 const PLACEMENT_STATUS_ACTIVE: &str = "active";
+
+#[cfg(test)]
+fn test_placement_agent_id() -> AgentId {
+    AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-0000000000c1").expect("test placement agent id"),
+    )
+}
 
 /// Resolve a `service_instance_id` from a `cluster_runners` row with the
 /// rollout-safe fallback used by both the placement resolver and the
@@ -1136,12 +1217,12 @@ mod tests {
                service_instance_id = $sid_b, pod_name = $sid_b, \
                last_heartbeat_ms = time::millis(time::now());\
              CREATE type::record('cluster_agent_placements', $key_a) SET \
-               agent_package = $pkg, \
+               agent_package = $pkg, agent_id = $agent_id, \
                content_hash = $hash, artifact_hash = $artifact_hash, runner_id = $rid_a, \
                runner_endpoint = $endpoint_a, status = $status, \
                updated_at_ms = $ts_a;\
              CREATE type::record('cluster_agent_placements', $key_b) SET \
-               agent_package = $pkg, \
+               agent_package = $pkg, agent_id = $agent_id, \
                content_hash = $hash, artifact_hash = $artifact_hash, runner_id = $rid_b, \
                runner_endpoint = $endpoint_b, status = $status, \
                updated_at_ms = $ts_b",
@@ -1157,6 +1238,7 @@ mod tests {
         .bind(("pkg", pkg.to_string()))
         .bind(("hash", hash))
         .bind(("artifact_hash", artifact_hash))
+        .bind(("agent_id", test_placement_agent_id().as_str().to_string()))
         .bind(("status", PLACEMENT_STATUS_ACTIVE.to_string()))
         .bind(("ts_a", ts_a))
         .bind(("ts_b", ts_b))

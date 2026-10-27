@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -43,6 +44,7 @@ pub fn build_compaction_record(
     record.post_prompt_bytes = summary_text.len() as u64;
     ProvEvent::context_compaction_recorded_global(
         record.context_id,
+        record.agent_id,
         record.task_id,
         record.covered_event_order_start,
         record.covered_event_order_end,

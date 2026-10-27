@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -109,6 +110,11 @@ pub struct DeployResponseDto {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct UndeployRequestDto {
     pub hash: String,
+    /// Explicit operator override for an undeploy that would remove a revision
+    /// still pinned by recently active contexts. The rationale is recorded in
+    /// provenance; omitting it makes such an undeploy fail with a 409.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_rationale: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]

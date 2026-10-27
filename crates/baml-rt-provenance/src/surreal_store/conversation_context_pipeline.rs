@@ -167,6 +167,7 @@ mod tests {
         let anchor = ActivityAnchorId::from("sess-tool-anchor");
         let items = vec![
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 1,
                 activity_anchor: anchor.clone(),
                 role: "tool".into(),
@@ -178,6 +179,7 @@ mod tests {
                 user_speaker_kind: None,
             },
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 2,
                 activity_anchor: anchor.clone(),
                 role: "tool".into(),
@@ -189,6 +191,7 @@ mod tests {
                 user_speaker_kind: None,
             },
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 3,
                 activity_anchor: ActivityAnchorId::from("step-node"),
                 role: "tool".into(),
@@ -216,6 +219,7 @@ mod tests {
         let anchor = ActivityAnchorId::from("execute-only");
         let items = vec![
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 1,
                 activity_anchor: anchor.clone(),
                 role: "tool".into(),
@@ -227,6 +231,7 @@ mod tests {
                 user_speaker_kind: None,
             },
             ProvenanceConversationContextItem {
+                attribution: None,
                 timestamp_ms: 2,
                 activity_anchor: anchor.clone(),
                 role: "tool".into(),

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -59,6 +60,8 @@ node_label_ty!(FailureClassificationActivity => FailureClassificationActivity);
 node_label_ty!(FailureClassification => FailureClassification);
 node_label_ty!(SessionStep => SessionStep);
 node_label_ty!(ContextCompaction => ContextCompaction);
+node_label_ty!(Delegation => Delegation);
+node_label_ty!(AuditDecision => AuditDecision);
 
 #[cfg(test)]
 mod tests {

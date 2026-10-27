@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -31,6 +32,11 @@ pub struct CompactionPrefixInput {
 }
 
 /// Latest compaction head for a context (optionally task-scoped).
+///
+/// `agent_id` partitions the two compaction contracts: `Some(agent)` is an
+/// agent-prompt summary derived from exactly that agent's view; `None` is an
+/// operator/audit summary derived from the complete context and must never
+/// satisfy an agent-visible read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionHead {
     pub activity_anchor: ActivityAnchorId,
@@ -41,12 +47,16 @@ pub struct ContextCompactionHead {
     pub event_order: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_entity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<AgentId>,
 }
 
 /// Inputs collected before writing a compaction provenance event.
 #[derive(Debug, Clone)]
 pub struct ContextCompactionRecord {
     pub context_id: ContextId,
+    /// `Some(agent)` for agent-prompt compaction; `None` for operator/audit compaction.
+    pub agent_id: Option<AgentId>,
     pub task_id: Option<TaskId>,
     pub covered_event_order_start: u64,
     pub covered_event_order_end: u64,

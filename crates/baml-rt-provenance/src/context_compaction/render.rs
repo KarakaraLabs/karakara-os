@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,7 +16,8 @@ use baml_rt_tools::{
 };
 
 use crate::{
-    error::Result, prepare_ref_table_for_projection, surreal_store::SurrealProvenanceStore,
+    error::Result, prepare_ref_table_for_projection, store::ProvenanceReadPrincipal,
+    surreal_store::SurrealProvenanceStore,
 };
 
 /// One hydrated rendering context for a stable item set.
@@ -76,11 +78,12 @@ fn compaction_operational_line(item: &ProvenanceConversationContextItem) -> Opti
 pub async fn render_items_for_context(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<String> {
     let Some(render_context) =
-        prepare_render_context(store, context_id, items, tool_registry).await?
+        prepare_render_context(store, context_id, principal, items, tool_registry).await?
     else {
         return Ok(String::new());
     };
@@ -91,6 +94,7 @@ pub async fn render_items_for_context(
 pub async fn estimate_compaction_prompt_bytes(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<u64> {
@@ -98,7 +102,7 @@ pub async fn estimate_compaction_prompt_bytes(
         return Ok(0);
     }
     let Some(render_context) =
-        prepare_render_context(store, context_id, items, tool_registry).await?
+        prepare_render_context(store, context_id, principal, items, tool_registry).await?
     else {
         return Ok(0);
     };
@@ -106,9 +110,14 @@ pub async fn estimate_compaction_prompt_bytes(
 }
 
 /// Hydrate the ref table once for a stable item set and reuse it for full/prefix/tail renders.
+///
+/// The `principal` scopes archive/citation hydration to the same reader the summary is for:
+/// agent-prompt compaction uses [`ProvenanceReadPrincipal::Agent`], operator/audit uses
+/// [`ProvenanceReadPrincipal::Operator`].
 pub async fn prepare_render_context(
     store: &SurrealProvenanceStore,
     context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
     items: &[ProvenanceConversationContextItem],
     tool_registry: &ToolRegistry,
 ) -> Result<Option<CompactionRenderContext>> {
@@ -122,8 +131,14 @@ pub async fn prepare_render_context(
     let ref_table = if projection_items.is_empty() {
         Arc::new(RefTable::new())
     } else {
-        prepare_ref_table_for_projection(store, context_id, &projection_items, tool_registry)
-            .await?
+        prepare_ref_table_for_projection(
+            store,
+            context_id,
+            principal,
+            &projection_items,
+            tool_registry,
+        )
+        .await?
     };
     Ok(Some(CompactionRenderContext { ref_table }))
 }

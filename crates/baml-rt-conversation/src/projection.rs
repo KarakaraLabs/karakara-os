@@ -137,6 +137,42 @@ pub fn provenance_item_to_projection_item(
     })
 }
 
+/// Render one stored row for the prompt of `reader_agent_id`.
+///
+/// Drops rows that belong only to another agent as defence in depth on top of the
+/// agent-scoped read, so a projection bug cannot leak a sibling agent's internals
+/// into a prompt.
+pub fn agent_view_projection_item(
+    item: ProvenanceConversationContextItem,
+    reader_agent_id: &baml_rt_core::ids::AgentId,
+) -> Option<PromptProjectionItem> {
+    if !item.is_visible_to_agent(reader_agent_id) {
+        return None;
+    }
+    provenance_item_to_projection_item(item)
+}
+
+/// Explicit marker for a truncated automatic window.
+///
+/// A silent item cap reads to the model as "this is everything that happened".
+/// The marker names the omission so the model can page older events back instead
+/// of assuming the window is complete.
+#[must_use]
+pub fn truncation_marker(older_rows_omitted: usize) -> PromptProjectionItem {
+    PromptProjectionItem {
+        timestamp_ms: 0,
+        activity_anchor: String::new(),
+        role: "system".to_string(),
+        content: PromptProjectionContent::Message {
+            text: format!(
+                "[{older_rows_omitted} older event(s) are outside this window. \
+                 They are retained and retrievable; this window is not the full history.]"
+            ),
+            citations: Vec::new(),
+        },
+    }
+}
+
 /// Line pairs `(role, content)` before wire citation prefixing, matching
 /// [`baml_rt_tools::prompt_projection::project_projection_item_to_rows`]. Message `citations` are
 /// not returned; use
@@ -171,6 +207,7 @@ mod tests {
         use serde_json::json;
 
         let item = ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from_counter(1),
             role: "tool".into(),
@@ -188,6 +225,7 @@ mod tests {
     fn message_maps_citations_into_projection() {
         let c = Citation::try_new("#1").expect("citation");
         let item = ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from_counter(1),
             role: "assistant".into(),
@@ -214,6 +252,7 @@ mod tests {
         use crate::planning::{PlanningEventContent, PlanningEventKind};
 
         let item = ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 1,
             activity_anchor: ActivityAnchorId::from_counter(1),
             role: "system".into(),
@@ -245,6 +284,7 @@ mod tests {
         use baml_rt_tools::prompt_projection::PromptProjectionContent;
 
         let item = ProvenanceConversationContextItem {
+            attribution: None,
             timestamp_ms: 100,
             activity_anchor: ActivityAnchorId::from_counter(99),
             role: "system".into(),

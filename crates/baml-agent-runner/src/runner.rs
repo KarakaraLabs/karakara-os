@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,8 +7,10 @@
 
 use std::{
     collections::HashMap,
+    pin::Pin,
     str::FromStr as _,
     sync::{Arc, RwLock, atomic::AtomicU8},
+    task::{Context as TaskContext, Poll},
 };
 
 use async_trait::async_trait;
@@ -25,7 +28,10 @@ use baml_rt_core::{
 };
 use baml_rt_hash::AgentIdentityDigest;
 use baml_rt_observability::spans;
-use baml_rt_provenance::{ProvEvent, ProvenanceWriter};
+use baml_rt_provenance::{
+    ContextAgentFence, ContextAgentLease, ContextAgentLeaseRequest, LeaseAcquisition, ProvEvent,
+    ProvenanceWriter, SurrealProvenanceStore,
+};
 use baml_rt_repository::{ContentHash, RepositoryService, manifest_package_name_from_tar_gz};
 use baml_rt_tools::{SharedContextRefStore, ToolAccessPolicy};
 use serde_json::Value;
@@ -37,7 +43,9 @@ use crate::{
         SnapshotAgentLister,
     },
     config::ProvenanceConfig,
-    routing::{InternalA2aRouter, LiveAgentLister, ScopedInternalA2aRouter, scope_from_request},
+    routing::{
+        InternalA2aRouter, LiveAgentLister, ScopedInternalA2aRouter, scope_and_context_from_request,
+    },
     stdio::{
         is_a2a_method, map_a2a_error, select_implicit_stdio_agent, serialize_a2a_response,
         split_agent_method, strip_stream_suffix, unix_timestamp_secs, wrap_plaintext_message,
@@ -192,8 +200,178 @@ impl AgentRunner {
         self.stream_idle_secs
     }
 
+    /// Stable operational identity for lease rows and owner preference.
+    ///
+    /// Cluster mode uses the cluster runner id and routable endpoint. Standalone
+    /// mode still gets a stable per-process identity so lease fencing works.
+    pub(crate) fn lease_runner_identity(&self) -> (String, Option<String>) {
+        match self.cluster_manager.get() {
+            Some(manager) => (
+                manager.runner_id().to_string(),
+                Some(manager.endpoint().to_string()),
+            ),
+            None => (
+                baml_rt_observability::service_instance_id().to_string(),
+                None,
+            ),
+        }
+    }
+
     pub(crate) fn internal_a2a_router(&self) -> &Arc<InternalA2aRouter> {
         &self.internal_a2a_router
+    }
+
+    /// Admit one turn against the context route binding before dispatch.
+    ///
+    /// The ordinary deployment resolves the route to a pair. If the context
+    /// already pinned a different pair (a deploy moved the route between two
+    /// turns), the turn is refused instead of executing under another revision.
+    ///
+    /// Ephemeral boots carry no artifact hash, so they have no exact package to
+    /// pin and skip the admission check (development and test agents only).
+    pub(crate) async fn admit_context_route_binding(
+        &self,
+        key: &AgentRouteKey,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+    ) -> Result<()> {
+        let artifact_hash = {
+            let agents = self.agents.read().expect("RwLock poison");
+            agents
+                .get(key.agent_package.as_str())
+                .and_then(|booted| booted.artifact_hash().cloned())
+        };
+        let Some(artifact_hash) = artifact_hash else {
+            return Ok(());
+        };
+        self.admit_context_route_binding_resolved(key, context_id, agent_id, &artifact_hash)
+            .await
+    }
+
+    /// Admit a turn against a binding using an already-resolved remote pair.
+    ///
+    /// Cluster placement carries the target's stable `AgentId` and exact
+    /// artifact, so a remote target is admitted before forwarding instead of
+    /// after the receiving runner has already been chosen.
+    pub(crate) async fn admit_context_route_binding_resolved(
+        &self,
+        key: &AgentRouteKey,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        artifact_hash: &ArtifactHash,
+    ) -> Result<()> {
+        let request = baml_rt_provenance::ContextRouteBindingRequest::new(
+            context_id.clone(),
+            key.agent_package.as_str(),
+            agent_id.clone(),
+            artifact_hash.clone(),
+        );
+        match self
+            .provenance_config
+            .store()
+            .resolve_context_route_binding(request)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(baml_rt_provenance::ProvenanceError::ContextRouteBindingConflict(conflict)) => {
+                Err(BamlRtError::ContextBindingConflict(Box::new(
+                    baml_rt_core::ContextBindingConflict {
+                        context_id: conflict.context_id,
+                        package_name: conflict.package_name,
+                        pinned_agent_id: conflict.pinned_agent_id,
+                        pinned_artifact_hash: conflict.pinned_artifact_hash,
+                        resolved_agent_id: conflict.resolved_agent_id,
+                        resolved_artifact_hash: conflict.resolved_artifact_hash,
+                    },
+                )))
+            }
+            Err(error) => Err(BamlRtError::Io(std::io::Error::other(format!(
+                "context route binding resolution failed for {} in {context_id}: {error}",
+                key.agent_package.as_str()
+            )))),
+        }
+    }
+
+    /// Claim or confirm this boot's lease for the target pair.
+    ///
+    /// `NotApplicable` means the request shape or local boot metadata does not
+    /// carry a context-agent pair (for example an unparseable test request).
+    pub(crate) async fn claim_local_pair_lease(
+        &self,
+        key: &AgentRouteKey,
+        routed_agent: &baml_rt_a2a::A2aAgent,
+        context_id: Option<baml_rt_core::ids::ContextId>,
+    ) -> Result<PairLeaseClaim> {
+        let Some(context_id) = context_id else {
+            return Ok(PairLeaseClaim::NotApplicable);
+        };
+        let booted = {
+            let agents = self.agents.read().expect("RwLock poison");
+            agents.get(key.agent_package.as_str()).cloned()
+        };
+        let Some(booted) = booted else {
+            return Ok(PairLeaseClaim::NotApplicable);
+        };
+
+        let (runner_id, endpoint) = self.lease_runner_identity();
+        let mut request = ContextAgentLeaseRequest::new(
+            context_id.clone(),
+            routed_agent.agent_id().clone(),
+            booted.boot_event_id.clone(),
+            runner_id,
+            baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT),
+        );
+        if let Some(endpoint) = endpoint {
+            request = request.with_endpoint(endpoint);
+        }
+        if let Some(artifact_hash) = booted.artifact_hash() {
+            request = request.with_artifact_hash(artifact_hash.clone());
+        }
+
+        match self
+            .provenance_config
+            .store()
+            .acquire_context_agent_lease(request)
+            .await
+        {
+            Ok(LeaseAcquisition::Acquired { lease, .. }) => Ok(PairLeaseClaim::Owned {
+                context_id,
+                fence: lease.fence(),
+            }),
+            Ok(LeaseAcquisition::HeldByOther { lease }) => Ok(PairLeaseClaim::HeldElsewhere(lease)),
+            Err(baml_rt_provenance::ProvenanceError::LeaseArtifactMismatch {
+                held_artifact_hash,
+                requested_artifact_hash,
+                ..
+            }) => Err(BamlRtError::Conflict(format!(
+                "context {context_id} agent {} is owned by artifact {held_artifact_hash};                  this boot runs {requested_artifact_hash}",
+                routed_agent.agent_id().as_str()
+            ))),
+            Err(error) => Err(BamlRtError::Io(std::io::Error::other(format!(
+                "context-agent lease acquisition failed for {} in {context_id}: {error}",
+                routed_agent.agent_id().as_str()
+            )))),
+        }
+    }
+
+    /// Wrap a local A2A stream so the pair lease is released once no session
+    /// for the context remains open.
+    pub(crate) fn release_pair_lease_when_idle(
+        &self,
+        stream: BusStream<A2aStreamChunk>,
+        routed_agent: baml_rt_a2a::A2aAgent,
+        context_id: baml_rt_core::ids::ContextId,
+        fence: ContextAgentFence,
+    ) -> BusStream<A2aStreamChunk> {
+        Box::pin(LeaseReleaseStream {
+            inner: stream,
+            release: Some(ReleaseOnIdle {
+                store: self.provenance_config.store().clone(),
+                agent: routed_agent,
+                context_id,
+                fence,
+            }),
+        })
     }
 
     pub(crate) async fn requesting_task_still_in_flight(
@@ -492,6 +670,7 @@ impl AgentRunner {
         let route_key = AgentRouteKey::new(package_name);
         let scoped_router: Arc<dyn A2aRequestHandler> = Arc::new(ScopedInternalA2aRouter::new(
             route_key.clone(),
+            agent_id.clone(),
             self.internal_a2a_router().clone(),
         ));
         let catalogue: Arc<dyn AgentLister> =
@@ -641,16 +820,21 @@ impl AgentRunner {
         key: &AgentRouteKey,
         request: A2aWireRequest,
     ) -> Result<BusStream<A2aStreamChunk>> {
-        self.handle_a2a_by_key_with_precondition(key, request, None)
+        self.handle_a2a_by_key_with_precondition(key, request, None, None)
             .await
     }
 
-    /// Resolve the route and verify an optional expected artifact hash against the exact
+    /// Resolve the route and verify optional expected identity against the exact
     /// booted agent selected for dispatch, before any task or provenance write.
+    ///
+    /// The receiver checks both the stable `AgentId` and the exact artifact hash:
+    /// two artifacts can share one `AgentId`, so an ID-only check would accept a
+    /// runner carrying different bytes.
     pub(crate) async fn handle_a2a_by_key_with_precondition(
         &self,
         key: &AgentRouteKey,
         request: A2aWireRequest,
+        expected_agent_id: Option<&AgentId>,
         expected_artifact_hash: Option<&ArtifactHash>,
     ) -> Result<BusStream<A2aStreamChunk>> {
         // Check drain state and resolve route atomically so requests cannot
@@ -663,6 +847,15 @@ impl AgentRunner {
                     return Err(BamlRtError::AgentDraining(format!(
                         "Agent {agent} is draining (undeploy in progress)",
                     )));
+                }
+                if let Some(expected) = expected_agent_id {
+                    let actual = booted.agent.agent_id();
+                    if actual != expected {
+                        return Err(BamlRtError::InvalidArgument(format!(
+                            "agent precondition failed for {}: expected {expected}, serving {actual}",
+                            key.agent_package.as_str()
+                        )));
+                    }
                 }
                 if let Some(expected) = expected_artifact_hash {
                     let actual = booted.artifact_hash().ok_or_else(|| {
@@ -683,25 +876,90 @@ impl AgentRunner {
             routed_agents.get(key).cloned()
         };
 
-        // Local fast path: agent is on this runner.
+        // Local fast path: agent is on this runner. Ownership is checked before
+        // execution so a stale or secondary boot never writes the pair.
         if let Some(routed_agent) = routed_agent {
-            let scope = scope_from_request(request.as_ref(), routed_agent.agent_id().clone());
-            return context::with_scope(scope.as_scope().clone(), async move {
-                routed_agent.handle_a2a_stream(request).await
-            })
-            .await;
+            let (scope, context_id) =
+                scope_and_context_from_request(request.as_ref(), routed_agent.agent_id().clone());
+            if let Some(context_id) = context_id.as_ref() {
+                self.admit_context_route_binding(key, context_id, routed_agent.agent_id())
+                    .await?;
+            }
+            match self
+                .claim_local_pair_lease(key, &routed_agent, context_id)
+                .await?
+            {
+                PairLeaseClaim::Owned { context_id, fence } => {
+                    let agent_for_stream = routed_agent.clone();
+                    let stream = context::with_scope(scope.as_scope().clone(), async move {
+                        agent_for_stream.handle_a2a_stream(request).await
+                    })
+                    .await?;
+                    return Ok(self.release_pair_lease_when_idle(
+                        stream,
+                        routed_agent,
+                        context_id,
+                        fence,
+                    ));
+                }
+                PairLeaseClaim::HeldElsewhere(owner) => {
+                    return self
+                        .internal_a2a_router
+                        .forward_to_lease_owner(key, &owner, request)
+                        .await;
+                }
+                PairLeaseClaim::NotApplicable => {
+                    return context::with_scope(scope.as_scope().clone(), async move {
+                        routed_agent.handle_a2a_stream(request).await
+                    })
+                    .await;
+                }
+            }
         }
 
         // Cluster fallback: forward to the remote runner hosting this agent.
         if let Some(resolver) = self.internal_a2a_router.cluster_resolver() {
             match resolver.resolve(key).await {
                 Ok(Some(placement)) => {
+                    let (_, context_id) = scope_and_context_from_request(
+                        request.as_ref(),
+                        placement.agent_id.clone(),
+                    );
+                    if let Some(context_id) = context_id.as_ref() {
+                        self.admit_context_route_binding_resolved(
+                            key,
+                            context_id,
+                            &placement.agent_id,
+                            &placement.artifact_hash,
+                        )
+                        .await?;
+                    }
                     tracing::info!(
                         agent = %key.agent_package.as_str(),
                         endpoint = %placement.endpoint,
                         target_service_instance_id = %placement.service_instance_id,
+                        agent_id = %placement.agent_id.as_str(),
+                        artifact_hash = %placement.artifact_hash.as_str(),
                         "forwarding external A2A request to remote runner"
                     );
+                    if let Some(context_id) = context_id.as_ref()
+                        && let Some(owner) = self
+                            .provenance_config
+                            .store()
+                            .read_context_agent_lease(context_id, &placement.agent_id)
+                            .await
+                            .map_err(|error| {
+                                BamlRtError::Io(std::io::Error::other(format!(
+                                    "context-agent lease read failed for {} in {context_id}: {error}",
+                                    key.agent_package.as_str()
+                                )))
+                            })?
+                    {
+                        return self
+                            .internal_a2a_router
+                            .forward_to_lease_owner(key, &owner, request)
+                            .await;
+                    }
                     return self
                         .internal_a2a_router
                         .forward_to_runner(&placement, key, request)
@@ -1059,7 +1317,7 @@ impl AgentRunner {
                 new_content_hash = %content_hash.as_str(),
                 "superseding deployment: draining prior revision before boot (up to 30s if traffic in flight)"
             );
-            self.undeploy_by_hash(old_hash).await?;
+            self.undeploy_by_hash(old_hash, None).await?;
         }
 
         let (name, route_key, booted) = self
@@ -1081,6 +1339,7 @@ impl AgentRunner {
                 "Artifact integrity failure: booted package recorded {booted_artifact_hash}, expected {artifact_hash}"
             )));
         }
+        let booted_agent_id = booted.agent.agent_id().clone();
 
         {
             let mut agents = self.agents.write().expect("RwLock poison");
@@ -1146,7 +1405,6 @@ impl AgentRunner {
             content_hash = %content_hash.as_str(),
             "deployment record persisted; POST /deploy completing"
         );
-
         // Record agent placement in cluster registry (if cluster mode is active).
         if let Some(cluster_mgr) = self.cluster_manager.get()
             && let Err(e) = cluster_mgr
@@ -1154,6 +1412,7 @@ impl AgentRunner {
                     &route_key,
                     content_hash,
                     Some(&booted_artifact_hash),
+                    Some(&booted_agent_id),
                 )
                 .await
         {
@@ -1182,8 +1441,11 @@ impl DeploymentManager for AgentRunner {
     async fn undeploy_by_hash(
         &self,
         content_hash: &DeploymentContentHash,
+        override_rationale: Option<&str>,
     ) -> Result<UndeployResult> {
-        // 1. Find the agent and mark as draining (stop accepting new requests).
+        // 1. Find the agent. Do not mark it draining until the deploy guard has
+        //    admitted the removal: a refused undeploy must leave the agent
+        //    serving.
         let (target_name, booted) = {
             let agents = self.agents.read().expect("RwLock poison");
             let entry = agents
@@ -1192,9 +1454,62 @@ impl DeploymentManager for AgentRunner {
             let Some((name, agent)) = entry else {
                 return Ok(UndeployResult { removed: false });
             };
-            agent.set_draining();
             (name.clone(), agent.clone())
         };
+
+        // 1a. Refuse to remove a revision recently active contexts still pin,
+        //     unless the operator recorded an explicit override.
+        let package = AgentPackageName::parse(&target_name);
+        let artifact_hash = booted.artifact_hash().cloned();
+        if let (Some(package), Some(artifact_hash)) = (package, artifact_hash) {
+            let store = self.provenance_config.store();
+            let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+            let active_since_ms =
+                now_ms.saturating_sub(baml_rt_provenance::DEFAULT_CONTEXT_ACTIVITY_RETENTION_MS);
+            let pinned = store
+                .list_pinned_context_activity(package.as_str(), &artifact_hash, active_since_ms)
+                .await
+                .map_err(|error| {
+                    BamlRtError::Io(std::io::Error::other(format!(
+                        "undeploy could not read pinned contexts for {}: {error}",
+                        package.as_str()
+                    )))
+                })?;
+            if !pinned.is_empty() {
+                let contexts: Vec<ContextId> =
+                    pinned.iter().map(|row| row.context_id.clone()).collect();
+                let Some(rationale) = override_rationale.filter(|value| !value.trim().is_empty())
+                else {
+                    return Err(BamlRtError::ContextsPinnedToRevision(Box::new(
+                        baml_rt_core::ContextsPinnedToRevision {
+                            package_name: package.as_str().to_string(),
+                            artifact_hash: artifact_hash.as_str().to_string(),
+                            contexts: contexts
+                                .iter()
+                                .map(|context| context.as_str().to_string())
+                                .collect(),
+                        },
+                    )));
+                };
+                store
+                    .record_undeploy_override(
+                        package.as_str(),
+                        booted.agent.agent_id(),
+                        &artifact_hash,
+                        &contexts,
+                        rationale,
+                        None,
+                    )
+                    .await
+                    .map_err(|error| {
+                        BamlRtError::Io(std::io::Error::other(format!(
+                            "undeploy override audit write failed for {}: {error}",
+                            package.as_str()
+                        )))
+                    })?;
+            }
+        }
+        booted.set_draining();
 
         tracing::info!(
             agent = %target_name,
@@ -1219,6 +1534,22 @@ impl DeploymentManager for AgentRunner {
         }
 
         tracing::info!(agent = %target_name, "undeploy: drain finished; removing from routing");
+
+        if let Err(error) = self
+            .provenance_config
+            .store()
+            .release_context_agent_leases_for_boot(
+                &booted.boot_event_id,
+                baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT),
+            )
+            .await
+        {
+            tracing::warn!(
+                agent = %target_name,
+                error = %error,
+                "failed to release context-agent leases during undeploy"
+            );
+        }
 
         // 3. Remove from both maps atomically to prevent dispatch to a
         //    destroyed agent between the two removals.
@@ -1284,6 +1615,81 @@ impl DeploymentManager for AgentRunner {
 
     async fn list_deployments(&self) -> Result<Vec<DeploymentRecord>> {
         self.deployment_state.list_deployments().await
+    }
+}
+
+/// Result of claiming execution ownership for a local target.
+pub(crate) enum PairLeaseClaim {
+    Owned {
+        context_id: baml_rt_core::ids::ContextId,
+        fence: ContextAgentFence,
+    },
+    HeldElsewhere(ContextAgentLease),
+    NotApplicable,
+}
+
+struct LeaseReleaseStream {
+    inner: BusStream<A2aStreamChunk>,
+    release: Option<ReleaseOnIdle>,
+}
+
+impl LeaseReleaseStream {
+    fn release_when_idle(&mut self) {
+        if let Some(release) = self.release.take() {
+            tokio::spawn(async move {
+                release.release_if_idle().await;
+            });
+        }
+    }
+}
+
+impl futures_util::Stream for LeaseReleaseStream {
+    type Item = A2aStreamChunk;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        let polled = self.inner.as_mut().poll_next(cx);
+        if matches!(polled, Poll::Ready(None)) {
+            self.release_when_idle();
+        }
+        polled
+    }
+}
+
+impl Drop for LeaseReleaseStream {
+    fn drop(&mut self) {
+        self.release_when_idle();
+    }
+}
+
+struct ReleaseOnIdle {
+    store: Arc<SurrealProvenanceStore>,
+    agent: baml_rt_a2a::A2aAgent,
+    context_id: baml_rt_core::ids::ContextId,
+    fence: ContextAgentFence,
+}
+
+impl ReleaseOnIdle {
+    async fn release_if_idle(self) {
+        if self
+            .agent
+            .has_open_session_for_context(&self.context_id)
+            .await
+        {
+            return;
+        }
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        if let Err(error) = self
+            .store
+            .release_context_agent_lease(&self.fence, now_ms)
+            .await
+        {
+            tracing::warn!(
+                context_id = %self.context_id,
+                agent_id = %self.fence.agent_id,
+                error = %error,
+                "failed to release context-agent lease after stream ended"
+            );
+        }
     }
 }
 

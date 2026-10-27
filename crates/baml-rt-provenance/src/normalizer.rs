@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,7 +22,7 @@ use serde_json::Value;
 use crate::{
     document::ProvDocument,
     error::{ProvenanceError, Result},
-    events::{CallScope, ProvEvent, ProvEventData, ToolSessionStepOpKind},
+    events::{AuditDecision, CallScope, ProvEvent, ProvEventData, ToolSessionStepOpKind},
     graph_model::GraphNodeLabel,
     host_ingress_identity::host_ingress_message_id,
     host_ingress_types::{HostDispatchFailureKind, HostIngressKind},
@@ -29,15 +30,16 @@ use crate::{
         AgentArtifactEntityId, AgentArtifactEntityInput, AgentBootActivityId,
         AgentBootActivityInput, AgentNodeId, AgentNodeInput, AgentStopActivityId,
         AgentStopActivityInput, ArtifactByActivityAnchorEntityId,
-        ArtifactByActivityAnchorEntityInput, DelegationTargetEntityId, DelegationTargetEntityInput,
-        FailureClassificationActivityId, FailureClassificationActivityInput,
-        FailureClassificationEntityId, FailureClassificationEntityInput, IntentEntityId,
-        IntentEntityInput, LlmCallActivityId, LlmCallActivityInput, LlmPromptEntityId,
-        LlmPromptEntityInput, MessageEntityId, MessageEntityInput, MessageProcessingActivityId,
-        MessageProcessingActivityInput, PlanEntityId, PlanEntityInput, PlanStepEntityId,
-        PlanStepEntityInput, PromptRejectedActivityId, PromptRejectedActivityInput,
-        RunnerRuntimeInstanceId, SessionStepEntityId, SessionStepEntityInput, TaskEntityId,
-        TaskEntityInput, TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
+        ArtifactByActivityAnchorEntityInput, DelegationEntityId, DelegationEntityInput,
+        DelegationTargetEntityId, DelegationTargetEntityInput, FailureClassificationActivityId,
+        FailureClassificationActivityInput, FailureClassificationEntityId,
+        FailureClassificationEntityInput, IntentEntityId, IntentEntityInput, LlmCallActivityId,
+        LlmCallActivityInput, LlmPromptEntityId, LlmPromptEntityInput, MessageEntityId,
+        MessageEntityInput, MessageProcessingActivityId, MessageProcessingActivityInput,
+        PlanEntityId, PlanEntityInput, PlanStepEntityId, PlanStepEntityInput,
+        PromptRejectedActivityId, PromptRejectedActivityInput, RunnerRuntimeInstanceId,
+        SessionStepEntityId, SessionStepEntityInput, TaskEntityId, TaskEntityInput,
+        TaskExecutionActivityId, TaskExecutionActivityInput, TaskStateEntityId,
         TaskStateEntityInput, ToolArgsEntityId, ToolArgsEntityInput, ToolCallActivityId,
         ToolCallActivityInput,
     },
@@ -317,6 +319,14 @@ pub enum A2aRelationType {
     ArtifactRealizesAgent,
     /// A task execution ran under this event-owned process lifetime.
     TaskExecutionExecutedUnderBoot,
+    /// Typed delegation lineage: `Delegation` entity → parent task that opened it.
+    DelegationParent,
+    /// Typed delegation lineage: `Delegation` entity → delegated child task.
+    DelegationChild,
+    /// Typed delegation lineage: `Delegation` entity → caller stable Agent.
+    DelegationCaller,
+    /// Typed delegation lineage: `Delegation` entity → target stable Agent.
+    DelegationTargetAgent,
 }
 
 impl A2aRelationType {
@@ -353,6 +363,10 @@ impl A2aRelationType {
             A2aRelationType::HostDispatchTarget => a2a_relations::HOST_DISPATCH_TARGET,
             A2aRelationType::ArtifactRealizesAgent => "REALIZES",
             A2aRelationType::TaskExecutionExecutedUnderBoot => "EXECUTED_UNDER_BOOT",
+            A2aRelationType::DelegationParent => a2a_relations::DELEGATION_PARENT,
+            A2aRelationType::DelegationChild => a2a_relations::DELEGATION_CHILD,
+            A2aRelationType::DelegationCaller => a2a_relations::DELEGATION_CALLER,
+            A2aRelationType::DelegationTargetAgent => a2a_relations::DELEGATION_TARGET_AGENT,
         }
     }
 }
@@ -2443,6 +2457,99 @@ fn normalize_event_with_registry(
                 "callback_dispatch_contexts_linked",
             )?;
         }
+        ProvEventData::DelegationLinked {
+            delegation_id,
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            caller_name,
+            target_name,
+            tool_session_id,
+        } => {
+            // Typed lineage: one `Delegation` entity owns the parent/child task
+            // link, the caller and target stable agents, and the tool session.
+            // Callers query this instead of parsing an `a2a:` context prefix or
+            // inferring a target from `message.metadata.kind`.
+            let context_id = event.context_id();
+            let child_entity = ensure_task_entity(&mut doc, child_task_id);
+            let parent_entity = ensure_task_entity(&mut doc, parent_task_id);
+            let caller_node = get_agent_node(&doc, caller_agent_id, &mut agent_labels)?;
+            let target_node = get_agent_node(&doc, target_agent_id, &mut agent_labels)?;
+            let delegation_entity = delegation_entity_id(context_id, delegation_id);
+
+            let mut attrs = base_attrs(event);
+            attrs.insert(
+                a2a::TASK_ID.to_string(),
+                Value::String(child_task_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(caller_agent_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_ID.to_string(),
+                Value::String(delegation_id.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_PARENT_TASK_ID.to_string(),
+                Value::String(parent_task_id.as_str().to_string()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_TOOL_SESSION_ID.to_string(),
+                Value::String(tool_session_id.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_CALLER_NAME.to_string(),
+                Value::String(caller_name.clone()),
+            );
+            attrs.insert(
+                a2a::DELEGATION_TARGET_NAME.to_string(),
+                Value::String(target_name.clone()),
+            );
+            doc.insert_entity(
+                delegation_entity.clone(),
+                Entity {
+                    prov_type: Some(prov_type::<DelegationEntityId>()),
+                    attributes: attrs,
+                },
+            );
+
+            let mut edge_attrs = derived_attrs(event);
+            edge_attrs.insert(
+                a2a::DELEGATION_ID.to_string(),
+                Value::String(delegation_id.clone()),
+            );
+            edge_attrs.insert(
+                a2a::DELEGATION_TOOL_SESSION_ID.to_string(),
+                Value::String(tool_session_id.clone()),
+            );
+            for (relation, to) in [
+                (
+                    A2aRelationType::DelegationParent,
+                    ProvNodeRef::Entity(parent_entity),
+                ),
+                (
+                    A2aRelationType::DelegationChild,
+                    ProvNodeRef::Entity(child_entity),
+                ),
+                (
+                    A2aRelationType::DelegationCaller,
+                    ProvNodeRef::Agent(caller_node),
+                ),
+                (
+                    A2aRelationType::DelegationTargetAgent,
+                    ProvNodeRef::Agent(target_node),
+                ),
+            ] {
+                derived_relations.push(A2aDerivedRelation {
+                    relation,
+                    from: ProvNodeRef::Entity(delegation_entity.clone()),
+                    to,
+                    attributes: edge_attrs.clone(),
+                });
+            }
+        }
         ProvEventData::HostSourcePollRecorded {
             source_kind,
             source_key,
@@ -2629,7 +2736,234 @@ fn normalize_event_with_registry(
                 )?;
             }
         }
+        ProvEventData::AuditDecision { decision } => {
+            use crate::types::ProvEntityId;
+
+            let context_id =
+                event
+                    .context_id_opt()
+                    .ok_or_else(|| ProvenanceError::InvalidEvent {
+                        activity_anchor: event.id().as_str().to_string(),
+                        reason: "audit decision must carry context_id".to_string(),
+                    })?;
+            let node_id = ProvEntityId::from_write_time_node_id(format!(
+                "audit-decision:{}:{}",
+                context_id.as_str(),
+                decision.identity_key()
+            ));
+            let mut attrs = base_attrs(event);
+            attrs.insert(
+                a2a::AGENT_ID.to_string(),
+                Value::String(decision.agent_id().as_str().to_string()),
+            );
+            attrs.insert(
+                "audit_decision_kind".to_string(),
+                Value::String(decision.kind().to_string()),
+            );
+            match decision {
+                AuditDecision::OwnershipAcquired {
+                    boot_event_id,
+                    runner_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_boot_event_id".to_string(),
+                        Value::String(boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_runner_id".to_string(),
+                        Value::String(runner_id.clone()),
+                    );
+                }
+                AuditDecision::OwnershipHandedOff {
+                    from_boot_event_id,
+                    to_boot_event_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_from_boot_event_id".to_string(),
+                        Value::String(from_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_boot_event_id".to_string(),
+                        Value::String(to_boot_event_id.as_str().to_string()),
+                    );
+                }
+                AuditDecision::OwnershipTakenOver {
+                    from_boot_event_id,
+                    to_boot_event_id,
+                    reason,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_from_boot_event_id".to_string(),
+                        Value::String(from_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_boot_event_id".to_string(),
+                        Value::String(to_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(reason.clone()));
+                }
+                AuditDecision::PairServedElsewhere {
+                    owner_boot_event_id,
+                    requesting_boot_event_id,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_owner_boot_event_id".to_string(),
+                        Value::String(owner_boot_event_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_requesting_boot_event_id".to_string(),
+                        Value::String(requesting_boot_event_id.as_str().to_string()),
+                    );
+                }
+                AuditDecision::BindingCreated {
+                    package_name,
+                    artifact_hash,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_artifact_hash".to_string(),
+                        Value::String(artifact_hash.as_str().to_string()),
+                    );
+                }
+                AuditDecision::RevisionRebound {
+                    package_name,
+                    from_agent_id,
+                    from_artifact_hash,
+                    to_agent_id,
+                    to_artifact_hash,
+                    rationale,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_from_agent_id".to_string(),
+                        Value::String(from_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_from_artifact_hash".to_string(),
+                        Value::String(from_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_agent_id".to_string(),
+                        Value::String(to_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_to_artifact_hash".to_string(),
+                        Value::String(to_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(rationale.clone()));
+                }
+                AuditDecision::PinnedRevisionMissing {
+                    package_name,
+                    pinned_agent_id,
+                    pinned_artifact_hash,
+                    resolved_agent_id,
+                    resolved_artifact_hash,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_agent_id".to_string(),
+                        Value::String(pinned_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_artifact_hash".to_string(),
+                        Value::String(pinned_artifact_hash.as_str().to_string()),
+                    );
+                    if let Some(resolved_agent_id) = resolved_agent_id {
+                        attrs.insert(
+                            "audit_resolved_agent_id".to_string(),
+                            Value::String(resolved_agent_id.as_str().to_string()),
+                        );
+                    }
+                    if let Some(resolved_artifact_hash) = resolved_artifact_hash {
+                        attrs.insert(
+                            "audit_resolved_artifact_hash".to_string(),
+                            Value::String(resolved_artifact_hash.as_str().to_string()),
+                        );
+                    }
+                }
+                AuditDecision::UndeployOverride {
+                    package_name,
+                    artifact_hash,
+                    contexts,
+                    rationale,
+                    ..
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_artifact_hash".to_string(),
+                        Value::String(artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_contexts".to_string(),
+                        Value::Array(
+                            contexts
+                                .iter()
+                                .map(|context| Value::String(context.clone()))
+                                .collect(),
+                        ),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(rationale.clone()));
+                }
+                AuditDecision::BindingConflict {
+                    package_name,
+                    pinned_agent_id,
+                    pinned_artifact_hash,
+                    resolved_agent_id,
+                    resolved_artifact_hash,
+                } => {
+                    attrs.insert(
+                        "audit_package_name".to_string(),
+                        Value::String(package_name.clone()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_agent_id".to_string(),
+                        Value::String(pinned_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_pinned_artifact_hash".to_string(),
+                        Value::String(pinned_artifact_hash.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_resolved_agent_id".to_string(),
+                        Value::String(resolved_agent_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "audit_resolved_artifact_hash".to_string(),
+                        Value::String(resolved_artifact_hash.as_str().to_string()),
+                    );
+                }
+            }
+            attrs.insert(
+                prov::LABEL.to_string(),
+                Value::String(GraphNodeLabel::AuditDecision.as_str().to_string()),
+            );
+            doc.insert_entity(
+                node_id,
+                Entity {
+                    prov_type: Some(GraphNodeLabel::AuditDecision.as_str().to_string()),
+                    attributes: attrs,
+                },
+            );
+        }
         ProvEventData::ContextCompactionRecorded {
+            agent_id,
             covered_event_order_start,
             covered_event_order_end,
             covered_node_ids,
@@ -2654,6 +2988,12 @@ fn normalize_event_with_registry(
                 event.id().as_str()
             ));
             let mut activity_attrs = base_attrs(event);
+            if let Some(agent_id) = agent_id {
+                activity_attrs.insert(
+                    "agent_id".to_string(),
+                    Value::String(agent_id.as_str().to_string()),
+                );
+            }
             activity_attrs.insert(
                 "covered_event_order_start".to_string(),
                 Value::Number((*covered_event_order_start).into()),
@@ -2829,6 +3169,49 @@ pub fn validate_event(event: &ProvEvent) -> Result<()> {
             });
         }
         ProvEventData::CallbackDispatchContextsLinked { .. } => {}
+        ProvEventData::DelegationLinked {
+            parent_task_id,
+            child_task_id,
+            caller_agent_id,
+            target_agent_id,
+            delegation_id,
+            tool_session_id,
+            caller_name,
+            target_name,
+        } => {
+            if event.context_id_opt().is_none() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage must carry context_id".to_string(),
+                });
+            }
+            if delegation_id.trim().is_empty() || tool_session_id.trim().is_empty() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires delegation_id and tool_session_id"
+                        .to_string(),
+                });
+            }
+            if caller_name.trim().is_empty() || target_name.trim().is_empty() {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires caller and target package names"
+                        .to_string(),
+                });
+            }
+            if caller_agent_id == target_agent_id {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage caller and target must differ".to_string(),
+                });
+            }
+            if parent_task_id == child_task_id {
+                return Err(ProvenanceError::InvalidEvent {
+                    activity_anchor: event.id().as_str().to_string(),
+                    reason: "delegation lineage requires a fresh child task".to_string(),
+                });
+            }
+        }
         ProvEventData::HostSourcePollRecorded { .. }
         | ProvEventData::HostDispatchAccepted { .. }
         | ProvEventData::HostDispatchRejected { .. }
@@ -2853,6 +3236,13 @@ pub fn validate_event(event: &ProvEvent) -> Result<()> {
                 });
             }
         }
+        ProvEventData::AuditDecision { .. } if event.context_id_opt().is_none() => {
+            return Err(ProvenanceError::InvalidEvent {
+                activity_anchor: event.id().as_str().to_string(),
+                reason: "audit decision must carry context_id".to_string(),
+            });
+        }
+        ProvEventData::AuditDecision { .. } => {}
         _ => {}
     }
     Ok(())
@@ -3337,6 +3727,15 @@ fn delegation_target_entity_id(scope_key: &str, ordinal: u64) -> ProvEntityId {
 /// Task entity id: derived from `TaskId` to provide stable task identity.
 fn task_entity_id(task_id: &TaskId) -> ProvEntityId {
     ProvEntityId::derived::<TaskEntityId>(TaskEntityInput { task_id })
+}
+
+/// Delegation lineage entity: one per `(context, delegation_id)`, so a retried
+/// delegation write re-links the same node instead of appending a duplicate.
+fn delegation_entity_id(context_id: &ContextId, delegation_id: &str) -> ProvEntityId {
+    ProvEntityId::derived::<DelegationEntityId>(DelegationEntityInput {
+        context_id,
+        delegation_id,
+    })
 }
 
 /// Public helper so the store can build the task entity id string for graph lookups.

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,10 +12,10 @@ use crate::{
     error::Result,
     surreal_tables::{
         TBL_AGENT_ARTIFACT_REGISTRY, TBL_AGENT_IDENTITY_REGISTRY, TBL_ARCHIVE_BODY,
-        TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_COMPACTION_INDEX,
-        TBL_CONTEXT_PICKER_INDEX, TBL_CONTEXT_PLANNING_INDEX, TBL_CONTEXT_TRANSCRIPT_INDEX,
-        TBL_EDGE, TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD, TBL_PAYLOAD_BLOB,
-        TBL_SESSION_REF_COUNTER,
+        TBL_ARCHIVE_LOCAL_COUNTER, TBL_ARCHIVE_PREFIX_REGISTRY, TBL_CONTEXT_AGENT_LEASES,
+        TBL_CONTEXT_COMPACTION_INDEX, TBL_CONTEXT_PICKER_INDEX, TBL_CONTEXT_PLANNING_INDEX,
+        TBL_CONTEXT_ROUTE_BINDINGS, TBL_CONTEXT_TRANSCRIPT_INDEX, TBL_EDGE,
+        TBL_HISTORY_REF_REGISTRY, TBL_NODE, TBL_PAYLOAD, TBL_PAYLOAD_BLOB, TBL_SESSION_REF_COUNTER,
     },
 };
 
@@ -130,11 +131,31 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
             "DEFINE INDEX IF NOT EXISTS idx_context_planning_ctx_order ON {TBL_CONTEXT_PLANNING_INDEX} FIELDS context_id, latest_planning_event_order"
         ),
         format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_COMPACTION_INDEX}"),
+        // The compaction head is keyed by (context, agent, task): agent-prompt summaries are
+        // per-agent, and an operator/audit summary is the agent_id = NONE slot. The old
+        // (context, task) unique index let two agents collide on the same task.
         format!(
-            "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_task ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, task_entity_id UNIQUE"
+            "REMOVE INDEX IF EXISTS idx_context_compaction_ctx_task ON {TBL_CONTEXT_COMPACTION_INDEX}"
+        ),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_agent_task ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, agent_id, task_entity_id UNIQUE"
         ),
         format!(
             "DEFINE INDEX IF NOT EXISTS idx_context_compaction_ctx_order ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS context_id, event_order"
+        ),
+        // Operational ownership row. No node/edge, no transcript index: the
+        // lease is only mutable current state and must never reach an agent
+        // view. The unique pair index makes first acquisition a CAS.
+        format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_AGENT_LEASES}"),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_context_agent_lease_pair ON {TBL_CONTEXT_AGENT_LEASES} FIELDS context_id, agent_id UNIQUE"
+        ),
+        // Operational route binding row. No node/edge, no transcript index: the
+        // pinned revision is mutable current state that must never reach an
+        // agent view. The unique key index makes first participation a CAS.
+        format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_ROUTE_BINDINGS}"),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_context_route_binding_key ON {TBL_CONTEXT_ROUTE_BINDINGS} FIELDS context_id, package_name UNIQUE"
         ),
         // Full-text search on denormalized search_text (blob-backed bodies are not indexed in-table)
         "DEFINE ANALYZER IF NOT EXISTS payload_analyzer TOKENIZERS blank, class FILTERS snowball(english)".to_string(),

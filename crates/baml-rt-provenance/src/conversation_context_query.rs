@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -16,3 +17,11 @@
 /// fetch when assembling LLM-visible `conversation_history` (A2A `ProjectingConversationContextProvider`
 /// and similar). Truncation at this cap is recorded with a debug log in the store reader.
 pub const DEFAULT_LLM_CONTEXT_ITEM_CAP: usize = 40;
+
+/// Explicit upper bound for the step-executor intra-turn delta read.
+///
+/// The delta must see the *complete* agent view rather than the prompt window: a sliding cap can
+/// evict a visible row between snapshots and break identity-based deltas. This is a practical
+/// bridge until [`crate::store::AgentHistoryRead`] replaces the numeric limit with explicit
+/// window / after-cursor / replay modes.
+pub const STEP_EXECUTOR_DELTA_ROW_CAP: usize = 4096;

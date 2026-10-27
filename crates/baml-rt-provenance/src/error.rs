@@ -1,9 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
 use baml_rt_core::ids::TaskId;
 use thiserror::Error;
+
+/// A turn resolved to a different agent and artifact than the context pinned.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error(
+    "context route binding conflict for context {context_id}, package {package_name}: \
+     pinned agent {pinned_agent_id} artifact {pinned_artifact_hash}, \
+     resolved agent {resolved_agent_id} artifact {resolved_artifact_hash}"
+)]
+pub struct ContextRouteBindingConflict {
+    pub context_id: String,
+    pub package_name: String,
+    pub pinned_agent_id: String,
+    pub pinned_artifact_hash: String,
+    pub resolved_agent_id: String,
+    pub resolved_artifact_hash: String,
+}
 
 #[derive(Debug, Error)]
 pub enum ProvenanceError {
@@ -56,6 +73,31 @@ pub enum ProvenanceError {
     /// Head-pointer lookup timed out during episode assembly.
     #[error("task {task_id} executing-agent resolution timed out during episode assembly")]
     EpisodeAgentResolutionTimedOut { task_id: TaskId },
+    /// A write presented a fence older than the pair's current lease.
+    #[error(
+        "stale context-agent lease fence for context {context_id}, agent {agent_id} \
+         (boot {boot_event_id}, token {fencing_token})"
+    )]
+    StaleContextAgentLease {
+        context_id: String,
+        agent_id: String,
+        boot_event_id: String,
+        fencing_token: u64,
+    },
+    /// Automatic takeover would cross a revision boundary.
+    #[error(
+        "context-agent lease artifact mismatch for context {context_id}, agent {agent_id}: \
+         held {held_artifact_hash}, requested {requested_artifact_hash}"
+    )]
+    LeaseArtifactMismatch {
+        context_id: String,
+        agent_id: String,
+        held_artifact_hash: String,
+        requested_artifact_hash: String,
+    },
+    /// A turn resolved to a different agent and artifact than the context pinned.
+    #[error(transparent)]
+    ContextRouteBindingConflict(Box<ContextRouteBindingConflict>),
 }
 
 pub type Result<T> = std::result::Result<T, ProvenanceError>;

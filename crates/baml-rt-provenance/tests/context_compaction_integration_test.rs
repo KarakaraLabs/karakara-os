@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -100,14 +101,14 @@ async fn agent_prompt_read_keeps_the_latest_task_tail() {
             "ROLE_USER".into(),
             vec!["the newest task message".to_string()],
             None,
-            agent_id,
+            agent_id.clone(),
             1_800_000_100_000 + count as u64,
         ))
         .await
         .expect("newest task message");
 
     let items = store
-        .conversation_context_for_agent_prompt(&ctx, None, Some(&task_id))
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, Some(&task_id))
         .await
         .expect("task-scoped agent prompt");
 
@@ -149,7 +150,7 @@ async fn agent_prompt_read_keeps_latest_task_archive_read() {
         .expect("latest archive read");
 
     let items = store
-        .conversation_context_for_agent_prompt(&ctx, None, Some(&task_id))
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, Some(&task_id))
         .await
         .expect("task-scoped agent prompt");
 
@@ -179,14 +180,14 @@ async fn agent_prompt_read_keeps_the_latest_capped_tail() {
             "user".into(),
             vec!["the newest message".to_string()],
             None,
-            agent_id,
+            agent_id.clone(),
             1_800_000_000_000 + count as u64,
         ))
         .await
         .expect("newest message");
 
     let items = store
-        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, None)
         .await
         .expect("agent");
 
@@ -230,7 +231,7 @@ async fn agent_prompt_read_applies_compaction_head_after_write() {
 
     let full_before = store.conversation_context(&ctx, None).await.expect("full");
     let agent_before = store
-        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, None)
         .await
         .expect("agent");
     assert_eq!(
@@ -263,7 +264,7 @@ async fn agent_prompt_read_applies_compaction_head_after_write() {
         .await;
 
     let head = store
-        .latest_compaction_head(&ctx, None)
+        .latest_compaction_head(&ctx, Some(&agent_id), None)
         .await
         .expect("head")
         .expect("compaction head written");
@@ -278,7 +279,7 @@ async fn agent_prompt_read_applies_compaction_head_after_write() {
 
     let full_after = store.conversation_context(&ctx, None).await.expect("full");
     let agent_after = store
-        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, None)
         .await
         .expect("agent");
     let query_after = store
@@ -286,10 +287,17 @@ async fn agent_prompt_read_applies_compaction_head_after_write() {
         .await
         .expect("query");
 
+    assert!(
+        !query_after.iter().any(|item| matches!(
+            item.content,
+            ConversationItemContent::CompactionSummary { .. }
+        )),
+        "operator query must never carry an agent-prompt summary"
+    );
     assert_eq!(
-        agent_after.len(),
         query_after.len(),
-        "query API matches agent prompt read row count"
+        DEFAULT_LLM_CONTEXT_ITEM_CAP,
+        "operator query returns the bounded full-context tail, not the agent summary"
     );
     assert_eq!(
         full_after.len(),
@@ -379,7 +387,7 @@ async fn compaction_rejects_summary_citing_unresolved_ref() {
         .await;
 
     let head = store
-        .latest_compaction_head(&ctx, None)
+        .latest_compaction_head(&ctx, Some(&agent_id), None)
         .await
         .expect("head query");
     assert!(
@@ -464,7 +472,7 @@ async fn compaction_retries_on_next_settlement_after_validation_failure() {
         .await;
     assert!(
         store
-            .latest_compaction_head(&ctx, None)
+            .latest_compaction_head(&ctx, Some(&agent_id), None)
             .await
             .expect("head query")
             .is_none(),
@@ -476,7 +484,7 @@ async fn compaction_retries_on_next_settlement_after_validation_failure() {
         .evaluate_and_compact(&request, trigger, "default")
         .await;
     let head = store
-        .latest_compaction_head(&ctx, None)
+        .latest_compaction_head(&ctx, Some(&agent_id), None)
         .await
         .expect("head query")
         .expect("second settlement should compact after prior failure");
@@ -553,7 +561,7 @@ async fn compaction_recovers_within_settlement_when_retry_fixes_validation() {
         .await;
 
     let head = store
-        .latest_compaction_head(&ctx, None)
+        .latest_compaction_head(&ctx, Some(&agent_id), None)
         .await
         .expect("head query")
         .expect("in-trigger validation retry should compact on first settlement");
@@ -588,7 +596,7 @@ async fn pre_model_emergency_trigger_compacts_large_agent_prompt() {
     );
 
     let agent_before = store
-        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, None)
         .await
         .expect("agent");
     let bytes_before = projected_transcript_bytes(&agent_before);
@@ -611,7 +619,7 @@ async fn pre_model_emergency_trigger_compacts_large_agent_prompt() {
         context_id: ctx.clone(),
         agent_id: agent_id.clone(),
     };
-    let subscriber = compaction_subscriber(Arc::clone(&store), agent_id, &llm_config);
+    let subscriber = compaction_subscriber(Arc::clone(&store), agent_id.clone(), &llm_config);
     let projection_items: Vec<_> = agent_before
         .iter()
         .cloned()
@@ -625,13 +633,13 @@ async fn pre_model_emergency_trigger_compacts_large_agent_prompt() {
         .await;
 
     store
-        .latest_compaction_head(&ctx, None)
+        .latest_compaction_head(&ctx, Some(&agent_id), None)
         .await
         .expect("head")
         .expect("emergency compaction head");
 
     let agent_after = store
-        .conversation_context_for_agent_prompt(&ctx, None, None)
+        .conversation_context_for_agent_prompt(&ctx, &agent_id, None, None)
         .await
         .expect("agent");
     let bytes_after = projected_transcript_bytes(&agent_after);

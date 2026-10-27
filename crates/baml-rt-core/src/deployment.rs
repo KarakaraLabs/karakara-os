@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -93,9 +94,15 @@ pub trait DeploymentManager: Send + Sync {
     /// Same hash already running → [`DeployResult::already_deployed`] is true. Same package name
     /// with a different hash → that deployment is undeployed first, then this hash is booted.
     async fn deploy_by_hash(&self, content_hash: &DeploymentContentHash) -> Result<DeployResult>;
+    /// Drain and remove one deployment.
+    ///
+    /// `override_rationale` is how an operator explicitly accepts removing a
+    /// revision that recently active contexts still pin. Without it, such an
+    /// undeploy is refused with [`crate::ContextsPinnedToRevision`].
     async fn undeploy_by_hash(
         &self,
         content_hash: &DeploymentContentHash,
+        override_rationale: Option<&str>,
     ) -> Result<UndeployResult>;
     async fn list_deployments(&self) -> Result<Vec<DeploymentRecord>>;
 }

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,9 +20,7 @@ use super::{
         CompactionPrefixInput, CompactionRequest, ContextCompactionRecord, ContextCompactionTrigger,
     },
 };
-use crate::{
-    error::ProvenanceError, store::ProvenanceContextReader, surreal_store::SurrealProvenanceStore,
-};
+use crate::{error::ProvenanceError, surreal_store::SurrealProvenanceStore};
 
 /// Inputs ready for summarization and provenance record emission.
 pub struct PreparedCompaction {
@@ -47,7 +46,11 @@ pub async fn prepare_compaction(
     trigger: ContextCompactionTrigger,
 ) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
     let context_id = &request.context_id;
-    let items = store.conversation_context(context_id, None).await?;
+    // Agent-prompt compaction is derived from exactly this agent's own view:
+    // sibling rows must not change the covered prefix or the rendered summary.
+    let items = store
+        .conversation_context_for_agent(context_id, &request.agent_id, None)
+        .await?;
     let Some(range) = select_compactable_range(&items, policy) else {
         return Ok(None);
     };
@@ -57,8 +60,9 @@ pub async fn prepare_compaction(
         return Ok(None);
     }
 
+    let principal = crate::ProvenanceReadPrincipal::Agent(request.agent_id.clone());
     let Some(render_context) =
-        prepare_render_context(store, context_id, &items, tool_registry).await?
+        prepare_render_context(store, context_id, &principal, &items, tool_registry).await?
     else {
         return Ok(None);
     };
@@ -93,6 +97,7 @@ pub async fn prepare_compaction(
 
     let record = ContextCompactionRecord {
         context_id: context_id.clone(),
+        agent_id: Some(request.agent_id.clone()),
         task_id: None,
         covered_event_order_start: range.covered_event_order_start,
         covered_event_order_end: range.covered_event_order_end,

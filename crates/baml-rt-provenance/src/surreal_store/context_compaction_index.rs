@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,6 +20,9 @@ use crate::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct ContextCompactionIndexRow {
     pub context_id: String,
+    /// `Some(agent_id)` for an agent-prompt summary; `None` for an operator/audit summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_entity_id: Option<String>,
     pub activity_anchor: String,
@@ -32,6 +36,7 @@ pub struct ContextCompactionIndexRow {
 impl SurrealProvenanceStore {
     pub(crate) async fn upsert_context_compaction_index(&self, event: &ProvEvent) -> Result<()> {
         let ProvEventData::ContextCompactionRecorded {
+            agent_id,
             task_id,
             covered_event_order_start,
             covered_event_order_end,
@@ -47,6 +52,7 @@ impl SurrealProvenanceStore {
         };
         let row = ContextCompactionIndexRow {
             context_id: context_id.as_str().to_string(),
+            agent_id: agent_id.as_ref().map(|a| a.as_str().to_string()),
             task_entity_id: task_id.as_ref().map(|t| format!("task:{}", t.as_str())),
             activity_anchor: event.id().as_str().to_string(),
             covered_event_order_start: *covered_event_order_start,
@@ -55,9 +61,16 @@ impl SurrealProvenanceStore {
             trigger: trigger.as_wire_str().to_string(),
             event_order: event.timestamp_ms(),
         };
+        let agent_pred = if row.agent_id.is_some() { "=" } else { "IS" };
+        let task_pred = if row.task_entity_id.is_some() {
+            "="
+        } else {
+            "IS"
+        };
         let sql = format!(
             "UPSERT {TBL_CONTEXT_COMPACTION_INDEX} SET \
                context_id = $context_id, \
+               agent_id = $agent_id, \
                task_entity_id = $task_entity_id, \
                activity_anchor = $activity_anchor, \
                covered_event_order_start = $covered_event_order_start, \
@@ -66,16 +79,13 @@ impl SurrealProvenanceStore {
                trigger = $trigger, \
                event_order = $event_order \
              WHERE context_id = $context_id \
-               AND task_entity_id {} $task_entity_id",
-            if row.task_entity_id.is_some() {
-                "="
-            } else {
-                "IS"
-            }
+               AND agent_id {agent_pred} $agent_id \
+               AND task_entity_id {task_pred} $task_entity_id"
         );
         self.db()
             .query(&sql)
             .bind(("context_id", row.context_id.clone()))
+            .bind(("agent_id", row.agent_id.clone()))
             .bind(("task_entity_id", row.task_entity_id.clone()))
             .bind(("activity_anchor", row.activity_anchor.clone()))
             .bind(("covered_event_order_start", row.covered_event_order_start))
@@ -90,27 +100,32 @@ impl SurrealProvenanceStore {
         Ok(())
     }
 
+    /// Latest compaction head for one principal.
+    ///
+    /// Pass `Some(agent)` for an agent-prompt summary or `None` for the operator/audit summary.
+    /// The two contracts never satisfy each other's query.
     pub async fn latest_compaction_head(
         &self,
         context_id: &ContextId,
+        agent_id: Option<&baml_rt_core::ids::AgentId>,
         task_id: Option<&TaskId>,
     ) -> Result<Option<ContextCompactionHead>> {
         let ctx = context_id.as_str();
+        let agent = agent_id.map(|a| a.as_str().to_string());
         let task_entity = task_id.map(|t| format!("task:{}", t.as_str()));
-        let query = if task_entity.is_some() {
-            format!(
-                "SELECT * FROM {TBL_CONTEXT_COMPACTION_INDEX} \
-                 WHERE context_id = $ctx AND task_entity_id = $task \
-                 ORDER BY event_order DESC LIMIT 1"
-            )
-        } else {
-            format!(
-                "SELECT * FROM {TBL_CONTEXT_COMPACTION_INDEX} \
-                 WHERE context_id = $ctx AND task_entity_id IS NONE \
-                 ORDER BY event_order DESC LIMIT 1"
-            )
-        };
+        let agent_pred = if agent.is_some() { "=" } else { "IS" };
+        let task_pred = if task_entity.is_some() { "=" } else { "IS" };
+        let query = format!(
+            "SELECT * FROM {TBL_CONTEXT_COMPACTION_INDEX} \
+             WHERE context_id = $ctx \
+               AND agent_id {agent_pred} $agent \
+               AND task_entity_id {task_pred} $task \
+             ORDER BY event_order DESC LIMIT 1"
+        );
         let mut q = self.db().query(&query).bind(("ctx", ctx.to_string()));
+        if let Some(agent) = agent {
+            q = q.bind(("agent", agent));
+        }
         if let Some(task) = task_entity {
             q = q.bind(("task", task));
         }
@@ -128,6 +143,11 @@ impl SurrealProvenanceStore {
                     .get("task_entity_id")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                agent_id: row
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|raw| baml_rt_core::ids::UuidId::parse_str(raw).ok())
+                    .map(baml_rt_core::ids::AgentId::from_uuid),
             })
         }))
     }

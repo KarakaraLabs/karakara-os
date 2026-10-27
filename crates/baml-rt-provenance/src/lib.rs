@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -37,8 +38,10 @@
 pub mod builders;
 pub mod bus_subscriber;
 pub mod citation_queries;
+pub mod context_agent_leases;
 pub mod context_compaction;
 pub mod context_metrics_queries;
+pub mod context_route_bindings;
 /// Defaults for LLM conversation-context query limits.
 pub mod conversation_context_query;
 pub mod conversation_history_resume;
@@ -90,6 +93,10 @@ pub mod vocabulary;
 
 pub use baml_rt_conversation::provenance_item_to_projection_item;
 pub use bus_subscriber::ProvenanceBusSubscriber;
+pub use context_agent_leases::{
+    ContextAgentFence, ContextAgentLease, ContextAgentLeaseRequest,
+    DEFAULT_CONTEXT_AGENT_LEASE_STALE_AFTER_MS, LeaseAcquisition, LeaseTransition,
+};
 pub use context_compaction::{
     COMPACTION_VALIDATION_RETRY_LIMIT, CompactionDeferReason, CompactionPrefixInput,
     CompactionPrepareError, CompactionRenderContext, CompactionRequest, CompactionSafetySignals,
@@ -107,7 +114,11 @@ pub use context_compaction::{
     resolve_safety_signals, select_compactable_range, summarize_with_validation_retry,
     trigger_policy_from_budget, wire_history_byte_len,
 };
-pub use conversation_context_query::DEFAULT_LLM_CONTEXT_ITEM_CAP;
+pub use context_route_bindings::{
+    BindingResolution, ContextRouteBinding, ContextRouteBindingRequest, ContextRouteForkRequest,
+    ContextRouteRebindRequest, DEFAULT_CONTEXT_ACTIVITY_RETENTION_MS, PinnedContextActivity,
+};
+pub use conversation_context_query::{DEFAULT_LLM_CONTEXT_ITEM_CAP, STEP_EXECUTOR_DELTA_ROW_CAP};
 pub use conversation_history_resume::{ConversationResumeUiHints, resolve_resume_ui_hints};
 pub use effect_subscriber::ProvenanceEffectSubscriber;
 pub use episode::{
@@ -121,9 +132,9 @@ pub use episode::{
 };
 pub use error::ProvenanceError;
 pub use events::{
-    AgentBootedEvent, AgentStoppedEvent, AgentType, CallScope, GlobalEvent, LlmUsage, PlanStepSpec,
-    ProvEvent, ProvEventData, ReservedAnchor, TaskScopedEvent, ToolSessionStepOpKind,
-    allocate_activity_anchor, serialized_prompt_utf8_len,
+    AgentBootedEvent, AgentStoppedEvent, AgentType, AuditDecision, CallScope, DelegationLinkedSpec,
+    GlobalEvent, LlmUsage, PlanStepSpec, ProvEvent, ProvEventData, ReservedAnchor, TaskScopedEvent,
+    ToolSessionStepOpKind, allocate_activity_anchor, serialized_prompt_utf8_len,
 };
 pub use graph_export::{ExportScope, ExportedGraph, GraphExporter};
 pub use graph_model::{
@@ -157,12 +168,13 @@ pub use read::{
     TranscriptScopeWidening,
 };
 pub use store::{
-    ActivityRef, ArchiveRef, GateActivityQueryResult, PayloadRef, PlanningIntentRecord,
-    PlanningPlanRecord, PlanningPlanStepRecord, ProvenanceArchivePayload, ProvenanceArchiveRecord,
-    ProvenanceContextReader, ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
+    ActivityRef, ArchiveRef, ContextHistoryCursor, ContextHistoryPage, GateActivityQueryResult,
+    PayloadRef, PlanningIntentRecord, PlanningPlanRecord, PlanningPlanStepRecord,
+    ProvenanceArchivePayload, ProvenanceArchiveRecord, ProvenanceContextReader,
+    ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
     ProvenanceOpsQueryResponse, ProvenanceOpsResource, ProvenanceOutcomeSegment,
-    ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceResponseProfile,
-    ProvenanceWriter, TaskAgentResolution,
+    ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceReadPrincipal,
+    ProvenanceResponseProfile, ProvenanceWriter, TaskAgentResolution,
 };
 pub use surreal_config::SurrealStoreConfig;
 pub use surreal_store::{

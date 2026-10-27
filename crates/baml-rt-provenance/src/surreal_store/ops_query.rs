@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use baml_rt_conversation::view::ToolSessionPhase;
-use baml_rt_core::ids::ContextId;
+use baml_rt_core::ids::{AgentId, ContextId, TaskId};
 use serde_json::{Map, Value};
 
 use super::{
@@ -29,8 +29,9 @@ use crate::{
     observation::ops::build_ops_summary,
     ops_types::{ProvenanceOpsAppliedCaps, ProvenanceOpsHotspotGroup, ProvenanceOpsRow},
     store::{
-        ArchiveRef, ProvenanceArchiveRecord, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
-        ProvenanceOpsQueryResponse, ProvenanceOpsResource, ProvenanceResponseProfile,
+        ArchiveRef, ContextHistoryCursor, ContextHistoryPage, ProvenanceArchiveRecord,
+        ProvenanceOpsQuery, ProvenanceOpsQueryRequest, ProvenanceOpsQueryResponse,
+        ProvenanceOpsResource, ProvenanceResponseProfile,
     },
 };
 
@@ -1523,5 +1524,19 @@ impl ProvenanceOpsQuery for SurrealProvenanceStore {
                 }))
             }
         }
+    }
+
+    async fn context_history_view(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        window: Option<usize>,
+        cursor: Option<&ContextHistoryCursor>,
+        task_id: Option<&TaskId>,
+    ) -> Result<ContextHistoryPage> {
+        SurrealProvenanceStore::context_history_view(
+            self, context_id, agent_id, window, cursor, task_id,
+        )
+        .await
     }
 }

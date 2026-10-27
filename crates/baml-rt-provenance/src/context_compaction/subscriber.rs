@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -29,10 +30,7 @@ use super::{
     },
     types::{CompactionRequest, ContextCompactionTrigger},
 };
-use crate::{
-    store::{ProvenanceContextReader, ProvenanceWriter},
-    surreal_store::SurrealProvenanceStore,
-};
+use crate::{store::ProvenanceWriter, surreal_store::SurrealProvenanceStore};
 
 /// Background subscriber: after each history settlement, maybe compact sealed transcript prefix.
 #[derive(Clone)]
@@ -144,7 +142,7 @@ impl ContextCompactionSubscriber {
     pub async fn evaluate_manual(&self, request: &CompactionRequest, force: bool, in_flight: bool) {
         let item_count = self
             .store
-            .conversation_context(&request.context_id, None)
+            .conversation_context_for_agent(&request.context_id, &request.agent_id, None)
             .await
             .map(|items| items.len())
             .unwrap_or(0);
@@ -167,13 +165,14 @@ impl ContextCompactionSubscriber {
     pub async fn evaluate_post_turn(&self, request: &CompactionRequest, function_name: &str) {
         let items = self
             .store
-            .conversation_context(&request.context_id, None)
+            .conversation_context_for_agent(&request.context_id, &request.agent_id, None)
             .await
             .unwrap_or_default();
         let item_count = items.len();
         let prompt_bytes = estimate_compaction_prompt_bytes(
             self.store.as_ref(),
             &request.context_id,
+            &crate::ProvenanceReadPrincipal::Agent(request.agent_id.clone()),
             &items,
             self.tool_registry.as_ref(),
         )

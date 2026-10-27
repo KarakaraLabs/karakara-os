@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -127,6 +128,9 @@ impl ToolHandler for A2aSessionToolHandler {
             handler: self.handler.clone(),
             target: open.target,
             child_task_id: TaskId::for_delegated_child(UuidId::new(uuid::Uuid::new_v4())),
+            // One delegation identity per tool session: every send in this
+            // session re-links the same typed lineage record.
+            delegation_id: uuid::Uuid::new_v4().to_string(),
             queue: VecDeque::new(),
             output_rx: None,
             stream_handle: None,
@@ -145,6 +149,8 @@ struct A2aSession {
     target: InternalA2aTarget,
     /// Stable delegated child task id for this tool session; reused across send/resume turns.
     child_task_id: TaskId,
+    /// Host-generated delegation identity recorded as typed provenance lineage.
+    delegation_id: String,
     queue: VecDeque<InternalA2aNextOutput>,
     output_rx: Option<async_channel::Receiver<InternalA2aNextOutput>>,
     /// JoinHandle for the task that consumes the A2A stream. Aborted in Drop so the task
@@ -183,27 +189,6 @@ fn parse_send_input(raw: Value) -> std::result::Result<Vec<ConversationPart>, St
     }
 }
 
-/// Derive a child context id for inter-agent traffic so the called agent's
-/// inbound `Message` provenance does NOT land on the caller's user-facing
-/// conversation context. Stable across hops in the same delegated child task.
-///
-/// Format: `a2a:<caller_ctx>:<pkg>:<child_task_id>`. The `a2a:` prefix
-/// lets readers (UI picker, conversation projection) skip these contexts when
-/// surfacing human-visible chats. Including the child task id prevents
-/// concurrent delegated sessions to the same target from colliding on one
-/// responder-side stream key.
-fn derive_a2a_child_context_id(
-    caller_context_id: &baml_rt_core::ids::ContextId,
-    target: &InternalA2aTarget,
-    child_task_id: &TaskId,
-) -> baml_rt_core::ids::ContextId {
-    baml_rt_core::ids::ContextId::for_a2a_child(
-        caller_context_id,
-        &target.agent_package,
-        child_task_id,
-    )
-}
-
 fn build_send_stream_request(
     parts: Vec<ConversationPart>,
     target: &InternalA2aTarget,
@@ -214,7 +199,6 @@ fn build_send_stream_request(
     let reference_task_ids = parent_task_id
         .map(|task_id| vec![task_id.as_str().to_string()])
         .unwrap_or_default();
-    let child_context_id = derive_a2a_child_context_id(caller_context_id, target, child_task_id);
     serde_json::json!({
         "jsonrpc": "2.0",
         "method": "message.sendStream",
@@ -224,7 +208,7 @@ fn build_send_stream_request(
                 "messageId": format!("system-a2a-{id}", id = uuid::Uuid::new_v4()),
                 "role": "ROLE_USER",
                 "parts": parts,
-                "contextId": child_context_id.as_str(),
+                "contextId": caller_context_id.as_str(),
                 "taskId": child_task_id.as_str(),
                 "referenceTaskIds": reference_task_ids
             },
@@ -373,6 +357,51 @@ fn is_conversational_chunk(chunk: &ConversationChunk) -> bool {
     })
 }
 
+/// Child-internal refs the delegated agent emitted in a conversational reply.
+///
+/// The caller's ref table is scoped to `(context_id, caller_agent_id)` and cannot resolve the
+/// child's `#N` history refs or `@prefix/local` archive refs. Any such token in a child reply is a
+/// handoff gap: preserve the text for audit, deny resolution, and log a bounded diagnostic telling
+/// the child to materialize the referenced content in its reply instead of leaking an ambient ref.
+fn leaked_child_refs(parts: &[ConversationPart]) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for part in parts {
+        if let Some(text) = part.text.as_deref() {
+            found.extend(baml_rt_tools::citations::scan_wire_citations(text));
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// Log one bounded warning per chunk that leaks child-internal refs. Body text is never logged; only
+/// the offending ref tokens (capped) and the stable identities needed to correlate the turn are.
+fn warn_on_leaked_child_refs(
+    context_id: &baml_rt_core::ids::ContextId,
+    caller_agent_id: &baml_rt_core::ids::AgentId,
+    child_task_id: &TaskId,
+    target_name: &str,
+    chunk: &ConversationChunk,
+) {
+    let Some(ref message) = chunk.message else {
+        return;
+    };
+    let leaked = leaked_child_refs(&message.parts);
+    if leaked.is_empty() {
+        return;
+    }
+    const MAX_REFS_LOGGED: usize = 8;
+    let shown = &leaked[..leaked.len().min(MAX_REFS_LOGGED)];
+    tracing::warn!(
+        context_id = %context_id.as_str(),
+        caller_agent_id = %caller_agent_id.as_str(),
+        child_task_id = %child_task_id.as_str(),
+        target = %target_name,
+        leaked_ref_count = leaked.len(),
+        leaked_refs = ?shown,
+        "system/internal_a2a child reply carried internal refs; preserved for audit but denied resolution — child must materialize referenced content in its reply"
+    );
+}
+
 /// Priority for merging completions: failure states dominate, then user-action suspensions,
 /// then normal completion.
 fn terminal_priority(completion: &InternalA2aCompletion) -> u8 {
@@ -459,14 +488,44 @@ impl ToolSession for A2aSession {
             &self.child_task_id,
             parent_task_id.as_ref(),
         );
+        // Typed lineage is written by the trusted router from host-known values.
+        // Without a caller task scope there is no parent to link, so fall back to
+        // plain dispatch rather than inventing one.
+        let delegation = match parent_task_id {
+            Some(caller_task_id) => Some(baml_rt_core::DelegationCallContext {
+                delegation_id: self.delegation_id.clone(),
+                tool_session_id: self.ctx.session_id.to_string(),
+                caller_agent_id: self.ctx.agent_id.clone(),
+                caller_context_id: self.ctx.context_id.clone(),
+                caller_task_id: Some(caller_task_id),
+                child_task_id: self.child_task_id.clone(),
+                target_name: self.target.agent_package.clone(),
+            }),
+            None => None,
+        };
         let handler = self.handler.clone();
         let (tx, rx) = async_channel::unbounded::<InternalA2aNextOutput>();
         self.output_rx = Some(rx);
+        // Stable identities for the leaked-ref diagnostic, cloned before the spawned stream
+        // consumer outlives the borrow of `self`.
+        let caller_context_id = self.ctx.context_id.clone();
+        let caller_agent_id = self.ctx.agent_id.clone();
+        let child_task_id = self.child_task_id.clone();
+        let target_name = self.target.agent_package.clone();
         let handle = tokio::spawn(async move {
-            match handler
-                .handle_a2a_stream(A2aWireRequest::from(request))
-                .await
-            {
+            let result = match delegation {
+                Some(delegation) => {
+                    handler
+                        .handle_delegated_a2a_stream(A2aWireRequest::from(request), delegation)
+                        .await
+                }
+                None => {
+                    handler
+                        .handle_a2a_stream(A2aWireRequest::from(request))
+                        .await
+                }
+            };
+            match result {
                 Ok(stream) => {
                     futures_util::pin_mut!(stream);
                     while let Some(response) = stream.next().await {
@@ -497,6 +556,13 @@ impl ToolSession for A2aSession {
                                 }],
                             });
                         }
+                        warn_on_leaked_child_refs(
+                            &caller_context_id,
+                            &caller_agent_id,
+                            &child_task_id,
+                            &target_name,
+                            &conversational,
+                        );
                         let out = InternalA2aNextOutput {
                             chunks: vec![conversational],
                             completion,
@@ -770,6 +836,60 @@ mod tests {
     }
 
     #[test]
+    fn leaked_child_refs_scans_history_and_archive_refs_without_body_text() {
+        let parts = vec![
+            ConversationPart {
+                text: Some("see #7 and @2/5 for the task list".to_string()),
+                ..Default::default()
+            },
+            ConversationPart {
+                text: Some("plain text with no ref".to_string()),
+                ..Default::default()
+            },
+        ];
+        let refs = leaked_child_refs(&parts);
+        assert_eq!(refs, vec!["#7".to_string(), "@2/5".to_string()]);
+
+        let chunk = ConversationChunk {
+            message: Some(ConversationMessage {
+                role: None,
+                parts: vec![ConversationPart {
+                    text: Some("materialize the content, do not leak @3".to_string()),
+                    ..Default::default()
+                }],
+            }),
+            task: None,
+            status_update: None,
+            artifact_update: None,
+        };
+        let no_message = ConversationChunk {
+            message: None,
+            task: None,
+            status_update: None,
+            artifact_update: None,
+        };
+        // No panic and no body logging for status-only chunks.
+        warn_on_leaked_child_refs(
+            &ContextId::new(1, 1),
+            &baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(
+                uuid::Uuid::new_v4(),
+            )),
+            &TaskId::from_external(ExternalId::new("child")),
+            "clickup-agent",
+            &chunk,
+        );
+        warn_on_leaked_child_refs(
+            &ContextId::new(1, 1),
+            &baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(
+                uuid::Uuid::new_v4(),
+            )),
+            &TaskId::from_external(ExternalId::new("child")),
+            "clickup-agent",
+            &no_message,
+        );
+    }
+
+    #[test]
     fn conversation_chunk_preserves_structured_a2a_parts() {
         let chunk = to_conversation_chunk(serde_json::json!({
             "message": {
@@ -803,112 +923,59 @@ mod tests {
     }
 
     #[test]
-    fn build_send_stream_request_uses_stable_child_task_id() {
+    fn build_send_stream_request_preserves_context_and_child_task_identity() {
         let target = responder_target();
-        let context_id = ContextId::new(1, 1);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let parts = vec![ConversationPart {
-            text: Some("hello".to_string()),
-            ..Default::default()
-        }];
-
-        let first =
-            build_send_stream_request(parts.clone(), &target, &context_id, &child_task_id, None);
-        let second = build_send_stream_request(parts, &target, &context_id, &child_task_id, None);
-
-        assert_eq!(
-            first
-                .pointer("/params/message/taskId")
-                .and_then(serde_json::Value::as_str),
-            Some(child_task_id.as_str())
-        );
-        assert_eq!(
-            second
-                .pointer("/params/message/taskId")
-                .and_then(serde_json::Value::as_str),
-            Some(child_task_id.as_str())
-        );
-        assert_eq!(
-            first.pointer("/params/message/contextId"),
-            second.pointer("/params/message/contextId"),
-            "the same delegated child task must reuse the same child context across hops"
-        );
-    }
-
-    /// Regression for Bug B: inter-agent A2A sends MUST NOT propagate the caller's
-    /// user-facing context id, otherwise `system-a2a-<uuid>` rows leak onto the human
-    /// conversation as `direction=received` user turns.
-    #[test]
-    fn build_send_stream_request_isolates_inter_agent_context_id() {
-        let target = responder_target();
-        let caller_ctx = ContextId::new(1_700_000_000_000, 7);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child".to_string()));
+        let caller_context_id = ContextId::new(1_700_000_000_000, 7);
+        let parent_task_id = TaskId::from_external(ExternalId::new("parent-task".to_string()));
+        let first_child = TaskId::from_external(ExternalId::new("a2a-child-first".to_string()));
+        let second_child = TaskId::from_external(ExternalId::new("a2a-child-second".to_string()));
         let parts = vec![ConversationPart {
             text: Some("delegated query".to_string()),
             ..Default::default()
         }];
 
-        let req = build_send_stream_request(parts, &target, &caller_ctx, &child_task_id, None);
-
-        let wire_ctx = req
-            .pointer("/params/message/contextId")
-            .and_then(serde_json::Value::as_str)
-            .expect("contextId on wire");
-        assert_ne!(
-            wire_ctx,
-            caller_ctx.as_str(),
-            "inter-agent send must not reuse caller's user-facing contextId"
+        let first = build_send_stream_request(
+            parts.clone(),
+            &target,
+            &caller_context_id,
+            &first_child,
+            Some(&parent_task_id),
         );
-        assert!(
-            wire_ctx.starts_with("a2a:"),
-            "derived child context must use a2a: prefix so downstream readers can filter; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(caller_ctx.as_str()),
-            "derived context should embed caller for traceability; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(&target.agent_package),
-            "derived context should embed target package; got {wire_ctx}"
-        );
-        assert!(
-            wire_ctx.contains(child_task_id.as_str()),
-            "derived context should embed child task id to avoid parallel collisions; got {wire_ctx}"
+        let second = build_send_stream_request(
+            parts,
+            &target,
+            &caller_context_id,
+            &second_child,
+            Some(&parent_task_id),
         );
 
-        let kind = req
-            .pointer("/params/metadata/kind")
-            .and_then(serde_json::Value::as_str);
-        assert_eq!(kind, Some("agent-to-agent"));
-
-        let caller_meta = req
-            .pointer("/params/metadata/callerContextId")
-            .and_then(serde_json::Value::as_str);
-        assert_eq!(caller_meta, Some(caller_ctx.as_str()));
-    }
-
-    /// Derivation must be stable so that multi-hop A2A turns within the same child
-    /// task land on the SAME child context id (otherwise the called agent loses
-    /// continuity across turns), while different child tasks must not collide.
-    #[test]
-    fn derive_a2a_child_context_id_is_stable_per_child_task() {
-        let target = responder_target();
-        let caller = ContextId::new(42, 1);
-        let child_task_id = TaskId::from_external(ExternalId::new("a2a-child-fixed".to_string()));
-        let a = derive_a2a_child_context_id(&caller, &target, &child_task_id);
-        let b = derive_a2a_child_context_id(&caller, &target, &child_task_id);
-        assert_eq!(a.as_str(), b.as_str());
-    }
-
-    #[test]
-    fn derive_a2a_child_context_id_differs_for_parallel_child_tasks() {
-        let target = responder_target();
-        let caller = ContextId::new(42, 1);
-        let child_a = TaskId::from_external(ExternalId::new("a2a-child-a".to_string()));
-        let child_b = TaskId::from_external(ExternalId::new("a2a-child-b".to_string()));
-        let a = derive_a2a_child_context_id(&caller, &target, &child_a);
-        let b = derive_a2a_child_context_id(&caller, &target, &child_b);
-        assert_ne!(a.as_str(), b.as_str());
+        for request in [&first, &second] {
+            let wire_context = request
+                .pointer("/params/message/contextId")
+                .and_then(serde_json::Value::as_str)
+                .expect("contextId on wire");
+            assert_eq!(wire_context, caller_context_id.as_str());
+            assert!(!wire_context.starts_with("a2a:"));
+            assert_eq!(
+                request
+                    .pointer("/params/message/referenceTaskIds/0")
+                    .and_then(serde_json::Value::as_str),
+                Some(parent_task_id.as_str())
+            );
+        }
+        assert_eq!(
+            first
+                .pointer("/params/message/taskId")
+                .and_then(serde_json::Value::as_str),
+            Some(first_child.as_str())
+        );
+        assert_eq!(
+            second
+                .pointer("/params/message/taskId")
+                .and_then(serde_json::Value::as_str),
+            Some(second_child.as_str())
+        );
+        assert_ne!(first_child, second_child);
     }
 
     #[test]

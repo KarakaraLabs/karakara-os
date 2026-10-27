@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1399,7 +1400,14 @@ globalThis.onChatMessage = async function(_message) {
 
         let caller_pkg = AgentPackageName::parse("caller-agent").unwrap();
         let caller_key = AgentRouteKey::new(caller_pkg);
-        let scoped = ScopedInternalA2aRouter::new(caller_key, runner.internal_a2a_router().clone());
+        let caller_agent_id = baml_rt_core::ids::AgentId::from_uuid(
+            baml_rt_core::ids::UuidId::new(uuid::Uuid::new_v4()),
+        );
+        let scoped = ScopedInternalA2aRouter::new(
+            caller_key,
+            caller_agent_id,
+            runner.internal_a2a_router().clone(),
+        );
         use baml_rt_a2a::A2aRequestHandler as _;
         let request_val = json!({
             "jsonrpc": "2.0", "method": "message.sendStream",
@@ -1465,6 +1473,354 @@ globalThis.onChatMessage = async function(_message) {
             Err(e) => panic!("expected AgentDraining, got: {e}"),
             Ok(_) => panic!("draining agent should reject requests"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_non_owner_boot_does_not_execute_local_turn() {
+        use baml_rt_core::{AgentPackageName, AgentRouteKey, BamlRtError};
+        use baml_rt_provenance::{ContextAgentLeaseRequest, LeaseAcquisition};
+
+        let prov = test_provenance_config().await;
+        let state = test_deployment_state().await;
+        let runner = make_runner(prov, state);
+
+        let agent = build_test_agent().await;
+        let booted = make_booted(agent.clone(), "owned-elsewhere");
+        let package = AgentPackageName::parse("owned-elsewhere").unwrap();
+        let route_key = AgentRouteKey::new(package);
+        {
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(route_key.clone(), agent.clone());
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("owned-elsewhere".to_string(), booted);
+        }
+
+        let context_id = baml_rt_core::ids::ContextId::from("ctx-non-owner");
+        let other_boot = baml_rt_core::ids::ActivityAnchorId::from("prov-other-boot");
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        let acquired = runner
+            .provenance_config()
+            .store()
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    context_id.clone(),
+                    agent.agent_id().clone(),
+                    other_boot.clone(),
+                    "runner-other",
+                    now_ms,
+                )
+                .with_endpoint("http://runner-other:18080"),
+            )
+            .await
+            .expect("seed foreign lease");
+        assert!(matches!(acquired, LeaseAcquisition::Acquired { .. }));
+
+        let request = baml_rt_core::A2aWireRequest::from(json!({
+            "jsonrpc": "2.0",
+            "method": "message.sendStream",
+            "id": "corr-non-owner-1",
+            "params": {
+                "message": {
+                    "messageId": "msg-non-owner-1",
+                    "role": "user",
+                    "contextId": context_id.as_str(),
+                    "parts": [{"text": "must not execute"}]
+                }
+            }
+        }));
+        let error = match runner.handle_a2a_by_key(&route_key, request).await {
+            Ok(_) => panic!("secondary boot must not execute the turn"),
+            Err(error) => error,
+        };
+        let BamlRtError::Conflict(message) = error else {
+            panic!("expected retryable conflict, got {error:?}");
+        };
+        assert!(
+            message.contains("owned by boot") || message.contains("unreachable runner"),
+            "conflict should name lease ownership, got: {message}"
+        );
+
+        let lease = runner
+            .provenance_config()
+            .store()
+            .read_context_agent_lease(&context_id, agent.agent_id())
+            .await
+            .expect("read lease")
+            .expect("lease still present");
+        assert_eq!(lease.boot_event_id, other_boot);
+
+        // A stale lease still rejects takeover across an artifact boundary.
+        let revision_agent = build_test_agent().await;
+        let mut revision_booted = make_booted(revision_agent.clone(), "revision-boundary");
+        revision_booted.provenance = crate::agent_package::DeploymentProvenance::Repository {
+            content_hash: "a".repeat(64).parse().expect("content hash"),
+            artifact_hash: baml_rt_core::ArtifactHash::from_bytes(b"artifact-b"),
+            version: 1,
+        };
+        let revision_key =
+            AgentRouteKey::new(AgentPackageName::parse("revision-boundary").unwrap());
+        {
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(revision_key.clone(), revision_agent.clone());
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("revision-boundary".to_string(), revision_booted);
+        }
+
+        let revision_context = baml_rt_core::ids::ContextId::from("ctx-artifact-boundary");
+        runner
+            .provenance_config()
+            .store()
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    revision_context.clone(),
+                    revision_agent.agent_id().clone(),
+                    baml_rt_core::ids::ActivityAnchorId::from("prov-boot-a"),
+                    "runner-a",
+                    now_ms.saturating_sub(120_000),
+                )
+                .with_endpoint("http://runner-a:18080")
+                .with_artifact_hash(baml_rt_core::ArtifactHash::from_bytes(b"artifact-a")),
+            )
+            .await
+            .expect("seed stale revision lease");
+
+        let revision_request = baml_rt_core::A2aWireRequest::from(json!({
+            "jsonrpc": "2.0",
+            "method": "message.sendStream",
+            "id": "corr-artifact-boundary-1",
+            "params": {
+                "message": {
+                    "messageId": "msg-artifact-boundary-1",
+                    "role": "user",
+                    "contextId": revision_context.as_str(),
+                    "parts": [{"text": "must not cross revisions"}]
+                }
+            }
+        }));
+        let error = match runner
+            .handle_a2a_by_key(&revision_key, revision_request)
+            .await
+        {
+            Ok(_) => panic!("artifact mismatch must not execute the turn"),
+            Err(error) => error,
+        };
+        let BamlRtError::Conflict(message) = error else {
+            panic!("expected artifact-boundary conflict, got {error:?}");
+        };
+        assert!(
+            message.contains("owned by artifact"),
+            "conflict should name the held artifact, got: {message}"
+        );
+        let revision_lease = runner
+            .provenance_config()
+            .store()
+            .read_context_agent_lease(&revision_context, revision_agent.agent_id())
+            .await
+            .expect("read revision lease")
+            .expect("revision lease still present");
+        assert_eq!(
+            revision_lease.boot_event_id.as_str(),
+            "prov-boot-a",
+            "rejected takeover must leave the prior holder in place"
+        );
+    }
+
+    async fn audit_decision_kinds(
+        store: &baml_rt_provenance::SurrealProvenanceStore,
+    ) -> Vec<String> {
+        let mut response = store
+            .db()
+            .query(
+                "SELECT * FROM prov_node \
+                 WHERE label = 'AuditDecision' ORDER BY props.a2a_event_order",
+            )
+            .await
+            .expect("audit rows query");
+        let rows: Vec<serde_json::Value> = response.take(0).expect("audit rows");
+        rows.iter()
+            .filter_map(|row| {
+                row.get("props")?
+                    .get("audit_decision_kind")?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn undeploy_guard_requires_recorded_override_for_pinned_contexts() {
+        use baml_rt_core::{
+            ArtifactHash, DeploymentContentHash, DeploymentManager, ids::ContextId,
+        };
+        use baml_rt_provenance::{
+            ContextAgentLeaseRequest, ContextRouteBindingRequest, ContextRouteForkRequest,
+            ContextRouteRebindRequest, ProvenanceError,
+        };
+
+        use crate::agent_package::AgentLifecycleState;
+
+        let prov = test_provenance_config().await;
+        let state = test_deployment_state().await;
+        let runner = make_runner(prov, state);
+
+        let agent = build_test_agent().await;
+        let artifact = ArtifactHash::from_bytes(b"undeploy-guard-revision");
+        let replacement = ArtifactHash::from_bytes(b"undeploy-guard-replacement");
+        let content_hash: DeploymentContentHash = "d".repeat(64).parse().expect("content hash");
+        let mut booted = make_booted(agent.clone(), "guarded-undeploy");
+        booted.provenance = crate::agent_package::DeploymentProvenance::Repository {
+            content_hash: content_hash.clone(),
+            artifact_hash: artifact.clone(),
+            version: 1,
+        };
+        let route_key = baml_rt_core::AgentRouteKey::new(
+            baml_rt_core::AgentPackageName::parse("guarded-undeploy").unwrap(),
+        );
+        {
+            let mut agents = runner.agents.write().expect("RwLock poison");
+            agents.insert("guarded-undeploy".to_string(), booted);
+            let mut routed = runner.routed_agents.write().expect("RwLock poison");
+            routed.insert(route_key, agent.clone());
+        }
+
+        let store = runner.provenance_config().store();
+        let context_id = ContextId::from("ctx-undeploy-guard");
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::PROVENANCE_EVENT);
+        store
+            .resolve_context_route_binding(ContextRouteBindingRequest::new(
+                context_id.clone(),
+                "guarded-undeploy",
+                agent.agent_id().clone(),
+                artifact.clone(),
+            ))
+            .await
+            .expect("seed binding");
+        store
+            .db()
+            .query(
+                "UPSERT context_picker_index SET context_id=$ctx, latest_timestamp_ms=$ts, \
+                 latest_preview='pinned', first_user_message='pinned', has_host_ingress=false \
+                 WHERE context_id=$ctx",
+            )
+            .bind(("ctx", context_id.as_str().to_string()))
+            .bind(("ts", now_ms))
+            .await
+            .expect("picker write")
+            .check()
+            .expect("picker check");
+
+        let refused = DeploymentManager::undeploy_by_hash(runner.as_ref(), &content_hash, None)
+            .await
+            .expect_err("a recently active pinned context must block undeploy");
+        let baml_rt_core::BamlRtError::ContextsPinnedToRevision(refusal) = refused else {
+            panic!("expected a pinned-context refusal, got {refused:?}");
+        };
+        assert_eq!(refusal.package_name, "guarded-undeploy");
+        assert_eq!(refusal.artifact_hash, artifact.as_str());
+        assert_eq!(refusal.contexts, vec![context_id.as_str().to_string()]);
+        assert_eq!(
+            runner
+                .agents
+                .read()
+                .expect("RwLock poison")
+                .get("guarded-undeploy")
+                .expect("refused undeploy leaves the agent booted")
+                .lifecycle_state(),
+            AgentLifecycleState::Active,
+            "a refused undeploy must not start draining"
+        );
+
+        let removed = DeploymentManager::undeploy_by_hash(
+            runner.as_ref(),
+            &content_hash,
+            Some("retire pinned revision after operator review"),
+        )
+        .await
+        .expect("recorded override undeploys the revision");
+        assert!(removed.removed);
+        assert!(
+            runner
+                .agents
+                .read()
+                .expect("RwLock poison")
+                .get("guarded-undeploy")
+                .is_none()
+        );
+
+        let kinds = audit_decision_kinds(store).await;
+        assert!(
+            kinds.iter().any(|kind| kind == "undeploy_override"),
+            "override must be recorded, got {kinds:?}"
+        );
+        assert!(
+            kinds.iter().any(|kind| kind == "pinned_revision_missing"),
+            "the accepted revision loss must be recorded, got {kinds:?}"
+        );
+
+        // Rebind moves a context route to a new artifact and fences the old one.
+        let rebound_context = ContextId::from("ctx-rebind-guard");
+        store
+            .resolve_context_route_binding(ContextRouteBindingRequest::new(
+                rebound_context.clone(),
+                "guarded-undeploy",
+                agent.agent_id().clone(),
+                artifact.clone(),
+            ))
+            .await
+            .expect("seed rebind binding");
+        let rebound = store
+            .rebind_context_route_binding(ContextRouteRebindRequest {
+                context_id: rebound_context.clone(),
+                package_name: "guarded-undeploy".to_string(),
+                agent_id: agent.agent_id().clone(),
+                artifact_hash: replacement.clone(),
+                rationale: "operator approved a schema-compatible update".to_string(),
+            })
+            .await
+            .expect("explicit rebind");
+        assert_eq!(rebound.artifact_hash, replacement);
+        assert!(
+            audit_decision_kinds(store)
+                .await
+                .iter()
+                .any(|kind| kind == "revision_rebound"),
+            "rebind must record the revision boundary"
+        );
+
+        // A boot running the old artifact cannot take the rebound pair.
+        let lease_error = store
+            .acquire_context_agent_lease(
+                ContextAgentLeaseRequest::new(
+                    rebound_context.clone(),
+                    agent.agent_id().clone(),
+                    baml_rt_core::ids::ActivityAnchorId::from("prov-rebind-boot"),
+                    "runner-rebind",
+                    now_ms,
+                )
+                .with_artifact_hash(artifact.clone()),
+            )
+            .await
+            .expect_err("old artifact must not acquire a rebound pair");
+        assert!(
+            matches!(lease_error, ProvenanceError::LeaseArtifactMismatch { .. }),
+            "unexpected lease error: {lease_error:?}"
+        );
+
+        // close_and_fork pins a fresh context to the new revision.
+        let forked_context = ContextId::from("ctx-fork-guard");
+        let forked = store
+            .close_and_fork_context_route_binding(ContextRouteForkRequest {
+                old_context_id: rebound_context.clone(),
+                package_name: "guarded-undeploy".to_string(),
+                new_context_id: forked_context.clone(),
+                agent_id: agent.agent_id().clone(),
+                artifact_hash: replacement.clone(),
+                rationale: "operator forked a noisy context".to_string(),
+            })
+            .await
+            .expect("close and fork");
+        assert_eq!(forked.context_id, forked_context);
+        assert_eq!(forked.artifact_hash, replacement);
     }
 
     // ── cluster resolver fallback ────────────────────────────────────────────

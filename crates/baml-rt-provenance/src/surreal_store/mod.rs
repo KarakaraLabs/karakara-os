@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -93,6 +94,8 @@ mod transcript_extension;
 mod writer;
 
 use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -111,6 +114,7 @@ use surrealdb::{Surreal, engine::any::Any};
 pub use crate::read::{OpsReader, PlanningReader, TranscriptEngine};
 use crate::{
     error::{ProvenanceError, Result},
+    events::AuditDecision,
     id_semantics::{MessageEntityId, MessageEntityInput},
     mermaid_cache::MermaidCache,
     normalizer::ProvNormalizer,
@@ -130,6 +134,13 @@ use crate::{
 /// not raising this constant. See `record_event_required` callers and the
 /// `concurrent_writes_test` regression coverage.
 pub(super) const WRITE_CONFLICT_MAX_ATTEMPTS: u32 = 6;
+
+/// Lanes that serialize reference-record transactions (see
+/// [`SurrealProvenanceStore::run_shared_event_write`]).
+///
+/// Striped by context rather than one lane per context so the table stays bounded.
+/// Colliding contexts share a lane, which costs a little queueing and nothing else.
+pub(crate) const SHARED_WRITE_LANES: usize = 32;
 const WRITE_CONFLICT_BASE_DELAY: Duration = Duration::from_millis(2);
 const WRITE_CONFLICT_MAX_DELAY: Duration = Duration::from_millis(200);
 
@@ -190,12 +201,19 @@ pub struct SurrealProvenanceStore {
     archive_prefix_cache: DashMap<(String, String), u32>,
     /// Serializes `archive_next_local` per `(context_id, archive_prefix)` to cut MVCC/CREATE races.
     archive_local_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    /// Serializes `archive_ensure_prefix` per context so concurrent prefix allocation cannot
+    /// thundering-herd the max-prefix SELECT + INSERT and exhaust write-conflict retries.
+    archive_prefix_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     /// One in-flight allocate per `(context_id, activity_anchor)`; pairs with unique DB index.
     archive_anchor_serializers: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     /// Optional in-process ref-table cache (invalidated after each context-scoped write).
     ref_table_cache: RwLock<Option<Arc<baml_rt_tools::archive_refs::ContextRefTables>>>,
     /// Cached agent runtime package → instance index (invalidated on agent boot).
     agent_runtime_index_cache: RwLock<Option<agent_runtime_index::AgentRuntimeIndex>>,
+    /// Reference records this store already committed, keyed by record identity.
+    write_coalesce: Arc<crate::surreal_write_batch::WriteCoalesceCache>,
+    /// Lanes that keep one writer at a time on a context's reference records.
+    shared_write_lanes: Vec<Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl SurrealProvenanceStore {
@@ -303,8 +321,44 @@ impl SurrealProvenanceStore {
         &self,
         plan: impl crate::surreal_write_batch::ExecutableSurrealPlan,
     ) -> Result<()> {
-        let (sql, binds) = plan.into_sql_and_binds();
-        self.run_write_with_retry(&sql, &binds).await
+        let (sql, binds, coalesced) = plan.into_sql_binds_and_coalesced();
+        self.run_write_with_retry(&sql, &binds).await?;
+        // Recorded only after the commit, so a failed transaction never claims a
+        // record it did not write.
+        for (key, fingerprint) in coalesced {
+            self.write_coalesce.insert(key, fingerprint);
+        }
+        Ok(())
+    }
+
+    /// Commit the reference-record plan for one event.
+    ///
+    /// Reference records (Context, Task, TaskExecution, message placeholders, and
+    /// agent registration) are re-upserted by every event that touches the same
+    /// context. Same-context fanout re-upserts them from concurrent branches, and
+    /// the MVCC retry budget runs out before every branch lands. Serializing them
+    /// per lane keeps a single writer at a time; the plan's fingerprint cache means
+    /// repeats collapse to no-ops, so the lane is only held for real work.
+    ///
+    /// Event-owned records stay on the plain per-event transaction: their ids are
+    /// unique to the event, so no other writer can touch them.
+    pub(super) async fn run_shared_event_write(
+        &self,
+        context_id: Option<&str>,
+        plan: impl crate::surreal_write_batch::ExecutableSurrealPlan,
+    ) -> Result<()> {
+        let lane = self.shared_write_lanes[self.shared_write_lane(context_id)].clone();
+        let _guard = lane.lock().await;
+        self.run_event_write_plan(plan).await
+    }
+
+    fn shared_write_lane(&self, context_id: Option<&str>) -> usize {
+        if self.shared_write_lanes.len() == 1 {
+            return 0;
+        }
+        let mut hasher = DefaultHasher::new();
+        context_id.unwrap_or_default().hash(&mut hasher);
+        (hasher.finish() as usize) % self.shared_write_lanes.len()
     }
 
     /// Run one write statement under the shared MVCC retry budget, re-applying
@@ -348,5 +402,49 @@ impl SurrealProvenanceStore {
             }
         }
         unreachable!("retry loop returns on every iteration");
+    }
+
+    /// Run one operational-table mutation under the shared MVCC retry policy.
+    ///
+    /// Operational writes (leases, route bindings) can race their first insert,
+    /// so duplicate-record writes are retried like transaction conflicts: the
+    /// retry re-evaluates the statement and converges on one row. The retried
+    /// statement must be idempotent for the same reason.
+    pub(crate) async fn run_operational_write(
+        &self,
+        sql: &str,
+        binds: Vec<(&str, Value)>,
+    ) -> Result<()> {
+        for attempt in 0..WRITE_CONFLICT_MAX_ATTEMPTS {
+            let mut query = self.db.query(sql);
+            for (name, value) in &binds {
+                query = query.bind(((*name).to_string(), value.clone()));
+            }
+            match query.await.and_then(surrealdb::IndexedResults::check) {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if is_transaction_conflict(&error) || is_duplicate_record_write(&error) =>
+                {
+                    if attempt + 1 >= WRITE_CONFLICT_MAX_ATTEMPTS {
+                        return Err(ProvenanceError::Contention {
+                            details: error.message().to_string(),
+                        });
+                    }
+                    tokio::time::sleep(jittered_backoff(attempt)).await;
+                }
+                Err(error) => return Err(map_surreal_error(error)),
+            }
+        }
+        unreachable!("operational retry loop returns on every iteration");
+    }
+
+    /// Append one operator-only decision row to provenance.
+    pub(crate) async fn record_audit_decision(
+        &self,
+        context_id: &ContextId,
+        decision: AuditDecision,
+    ) -> Result<()> {
+        let event = crate::events::ProvEvent::audit_decision(context_id.clone(), decision);
+        crate::store::ProvenanceWriter::add_event(self, event).await
     }
 }

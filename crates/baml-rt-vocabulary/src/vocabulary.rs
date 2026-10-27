@@ -117,6 +117,16 @@ pub mod a2a {
     /// Routing key on host dispatch (`HostDispatchAccepted`).
     pub const HOST_INGRESS_ROUTING_KEY: &str = "a2a:host_ingress_routing_key";
     pub const DELEGATION_TARGET: &str = "a2a:delegation_target";
+    /// Typed delegation lineage identity (`DelegationLinked`).
+    pub const DELEGATION_ID: &str = "a2a:delegation_id";
+    /// Parent task that opened the delegation.
+    pub const DELEGATION_PARENT_TASK_ID: &str = "a2a:delegation_parent_task_id";
+    /// Tool session that owns the delegated request/reply exchange.
+    pub const DELEGATION_TOOL_SESSION_ID: &str = "a2a:delegation_tool_session_id";
+    /// Package-name snapshot of the calling agent at delegation time.
+    pub const DELEGATION_CALLER_NAME: &str = "a2a:delegation_caller_name";
+    /// Package-name snapshot of the delegated target agent at delegation time.
+    pub const DELEGATION_TARGET_NAME: &str = "a2a:delegation_target_name";
     pub const FAILURE_CLASS: &str = "a2a:failure_class";
     pub const FAILURE_EVIDENCE: &str = "a2a:failure_evidence";
     pub const FAILURE_CODE: &str = "a2a:failure_code";
@@ -182,6 +192,7 @@ pub mod a2a_types {
     pub const MESSAGE: &str = "a2a:Message";
     pub const ARTIFACT: &str = "a2a:Artifact";
     pub const DELEGATION_TARGET: &str = "a2a:DelegationTarget";
+    pub const DELEGATION: &str = "a2a:Delegation";
     pub const SESSION_STEP: &str = "a2a:SessionStep";
     pub const FAILURE_CLASSIFICATION_ACTIVITY: &str = "a2a:FailureClassificationActivity";
     pub const FAILURE_CLASSIFICATION: &str = "a2a:FailureClassification";
@@ -313,6 +324,13 @@ pub mod a2a_relations {
     /// Reserved — `InformedByObservation` variant is not yet emitted;
     /// this value is used as the `prov_type` attribute on WAS_DERIVED_FROM edges when it is.
     pub const INFORMED_BY_OBSERVATION: &str = "A2A_INFORMED_BY_OBSERVATION";
+    // Typed delegation lineage (`DelegationLinked`): one `Delegation` entity per
+    // tool session, linked to its parent task, delegated child task, caller
+    // stable Agent, and target stable Agent. Replaces name/prefix heuristics.
+    pub const DELEGATION_PARENT: &str = "A2A_DELEGATION_PARENT";
+    pub const DELEGATION_CHILD: &str = "A2A_DELEGATION_CHILD";
+    pub const DELEGATION_CALLER: &str = "A2A_DELEGATION_CALLER";
+    pub const DELEGATION_TARGET_AGENT: &str = "A2A_DELEGATION_TARGET_AGENT";
 }
 
 pub mod graph {
@@ -393,6 +411,7 @@ pub mod storage_safe {
     pub const A2A_ARTIFACT_ID: &str = "a2a_artifact_id";
     pub const A2A_ARTIFACT_TYPE: &str = "a2a_artifact_type";
     pub const A2A_CONTEXT_ID: &str = "a2a_context_id";
+    pub const A2A_DELEGATION_PARENT_TASK_ID: &str = "a2a_delegation_parent_task_id";
     pub const A2A_TIMESTAMP_MS: &str = "a2a_timestamp_ms";
     pub const A2A_EVENT_ORDER: &str = "a2a_event_order";
     pub const A2A_FAILURE_CLASS: &str = "a2a_failure_class";

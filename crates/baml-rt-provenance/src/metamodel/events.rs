@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -299,6 +300,8 @@ graph_event!(HostSourcePollRecorded => HostSourcePollRecorded, primary: Message,
 graph_event!(HostDispatchAccepted => HostDispatchAccepted, primary: Message, required: LegacyRequiredProps);
 graph_event!(HostDispatchRejected => HostDispatchRejected, primary: Message, required: LegacyRequiredProps);
 graph_event!(ContextCompactionRecorded => ContextCompactionRecorded, primary: ContextCompaction, required: LegacyRequiredProps);
+graph_event!(DelegationLinked => DelegationLinked, primary: Delegation, required: LegacyRequiredProps);
+graph_event!(AuditDecision => AuditDecision, primary: AuditDecision, required: LegacyRequiredProps);
 
 #[cfg(test)]
 mod tests {
@@ -334,10 +337,12 @@ mod tests {
             HostDispatchAccepted::RUNTIME_KIND,
             HostDispatchRejected::RUNTIME_KIND,
             ContextCompactionRecorded::RUNTIME_KIND,
+            DelegationLinked::RUNTIME_KIND,
+            AuditDecision::RUNTIME_KIND,
         );
 
         // Reflective check: typed markers must equal the runtime list of EventGraphKind variants.
-        assert_eq!(ALL_EVENT_KINDS.len(), 24);
+        assert_eq!(ALL_EVENT_KINDS.len(), 26);
     }
 
     #[test]

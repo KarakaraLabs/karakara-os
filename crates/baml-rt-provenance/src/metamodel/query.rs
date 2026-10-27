@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -401,10 +402,21 @@ pub(crate) fn conversation_message_agent_instances_clause(instances_bind: &str) 
     format!("AND label = 'Message' AND ({msg} OR {host_dispatch})")
 }
 
-/// ToolCall / SessionStep clause using pre-resolved AgentRuntimeInstance node ids.
+/// ToolCall clause using pre-resolved AgentRuntimeInstance node ids.
 pub(crate) fn conversation_call_agent_instances_clause(instances_bind: &str) -> String {
     let call = call_activity_to_agent_traversal(AgentTarget::InstanceIdArray(instances_bind));
-    format!("AND label IN ['ToolCall', 'SessionStep'] AND {call}")
+    format!("AND label = 'ToolCall' AND {call}")
+}
+
+/// SessionStep clause using pre-resolved AgentRuntimeInstance node ids.
+///
+/// SessionStep rows are linked to the task entity (`A2A_TASK_SESSION_STEP`), and the
+/// task's most-recent executing agent is the `WAS_LAST_EXECUTED_BY` head pointer, so
+/// the agent binding is a two-hop traversal instead of the `A2A_TASK_CALL` path used
+/// by ToolCall rows.
+pub(crate) fn conversation_session_step_agent_instances_clause(instances_bind: &str) -> String {
+    let step = session_step_to_agent_traversal(AgentTarget::InstanceIdArray(instances_bind));
+    format!("AND label = 'SessionStep' AND {step}")
 }
 
 /// Combined OR filter (ops-query paths only; conversation context uses split clauses above).
@@ -481,6 +493,28 @@ fn call_activity_from_agent_instances(target: AgentTarget<'_>) -> String {
 /// `(c:LlmCall|ToolCall) <-[:A2A_MESSAGE_CALL|:A2A_TASK_CALL]- (p:A2AMessageProcessing|A2ATaskExecution) -[:WAS_EXECUTED_BY]-> (a:AgentRuntimeInstance)`
 fn call_activity_to_agent_traversal(target: AgentTarget<'_>) -> String {
     call_activity_from_agent_instances(target)
+}
+
+/// Two-hop pattern for SessionStep: the step is linked to the task entity
+/// (`A2A_TASK_SESSION_STEP`), and the task entity's most-recent executing agent is
+/// the `WAS_LAST_EXECUTED_BY` head pointer.
+///
+/// On-disk shape:
+/// `(s:SessionStep) <-[:A2A_TASK_SESSION_STEP]- (t:A2ATask) -[:WAS_LAST_EXECUTED_BY]-> (a:AgentRuntimeInstance)`
+fn session_step_to_agent_traversal(target: AgentTarget<'_>) -> String {
+    let task_session_step = SemanticEdge::A2aTaskSessionStep.as_rel_str();
+    let last_executed = SemanticEdge::WasLastExecutedBy.as_rel_str();
+    let agent_pred = target.as_predicate();
+    format!(
+        "node_id IN (\
+            SELECT VALUE to_id FROM {TBL_EDGE} \
+            WHERE rel_type = '{task_session_step}' \
+            AND from_id IN (\
+                SELECT VALUE from_id FROM {TBL_EDGE} \
+                WHERE rel_type = '{last_executed}' AND {agent_pred}\
+            )\
+         )"
+    )
 }
 
 /// Single-hop pattern for AgentStop: the stop activity is directly

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -54,5 +55,14 @@ pub(crate) fn map_archive_provenance_err(e: ProvenanceError) -> BamlRtError {
         | ProvenanceError::EpisodeAgentResolutionTimedOut { .. } => {
             BamlRtError::InvalidArgument(format!("archive ref provenance episode gate: {e}"))
         }
+        ProvenanceError::StaleContextAgentLease { .. } => {
+            BamlRtError::Conflict(format!("archive ref provenance stale lease fence: {e}"))
+        }
+        ProvenanceError::LeaseArtifactMismatch { .. } => BamlRtError::Conflict(format!(
+            "archive ref provenance lease artifact mismatch: {e}"
+        )),
+        ProvenanceError::ContextRouteBindingConflict(_) => BamlRtError::Conflict(format!(
+            "archive ref provenance context route binding conflict: {e}"
+        )),
     }
 }
