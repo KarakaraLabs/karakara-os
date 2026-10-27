@@ -318,3 +318,104 @@ async fn session_step_rows_are_visible_to_the_agent() {
         page.items
     );
 }
+
+/// Appending coordinator and Notion rows to a shared context must not change any row already
+/// returned to ClickUp. This pins both sibling exclusion and stable identity, order, and rendering
+/// across consecutive agent-scoped reads.
+#[tokio::test]
+async fn sibling_activity_between_clickup_reads_does_not_change_clickup_view() {
+    let store = build_isolated_store().await;
+    let ctx = ContextId::new(9403, 1);
+    let clickup = agent_id("00000000-0000-0000-0000-0000000000c1");
+    let coordinator = agent_id("00000000-0000-0000-0000-0000000000c2");
+    let notion = agent_id("00000000-0000-0000-0000-0000000000c3");
+    let clickup_task = task("clickup-task");
+    let coordinator_task = task("coordinator-task");
+    let notion_task = task("notion-task");
+
+    boot(&store, &clickup, "clickup-agent").await;
+    boot(&store, &coordinator, "coordinator-agent").await;
+    boot(&store, &notion, "notion-agent").await;
+    ensure_task(&store, &ctx, &clickup_task, &clickup).await;
+    ensure_task(&store, &ctx, &coordinator_task, &coordinator).await;
+    ensure_task(&store, &ctx, &notion_task, &notion).await;
+
+    store
+        .add_event(ProvEvent::message_received_task(
+            ctx.clone(),
+            clickup_task.clone(),
+            MessageId::from_external(ExternalId::new("clickup-request")),
+            "ROLE_USER".to_string(),
+            vec!["list tasks in progress".to_string()],
+            None,
+            clickup.clone(),
+            1_900_000_300_000,
+        ))
+        .await
+        .expect("ClickUp request");
+    store
+        .add_event(ProvEvent::message_sent_task(
+            ctx.clone(),
+            clickup_task.clone(),
+            MessageId::from_external(ExternalId::new("clickup-response")),
+            "ROLE_AGENT".to_string(),
+            vec!["two tasks are in progress".to_string()],
+            None,
+            clickup.clone(),
+            1_900_000_300_001,
+            Vec::new(),
+        ))
+        .await
+        .expect("ClickUp response");
+
+    let before = store
+        .context_history_view(&ctx, &clickup, Some(100), None, None)
+        .await
+        .expect("ClickUp view before sibling activity");
+    assert!(!before.truncated, "ClickUp fixture must fit in one page");
+    let before_items = serde_json::to_value(&before.items).expect("serialize ClickUp view");
+
+    store
+        .add_event(ProvEvent::message_sent_task(
+            ctx.clone(),
+            coordinator_task,
+            MessageId::from_external(ExternalId::new("coordinator-update")),
+            "ROLE_AGENT".to_string(),
+            vec!["coordinator private update".to_string()],
+            None,
+            coordinator,
+            1_900_000_300_002,
+            Vec::new(),
+        ))
+        .await
+        .expect("coordinator sibling activity");
+    store
+        .add_event(ProvEvent::message_received_task(
+            ctx.clone(),
+            notion_task,
+            MessageId::from_external(ExternalId::new("notion-request")),
+            "ROLE_USER".to_string(),
+            vec!["notion private request".to_string()],
+            None,
+            notion,
+            1_900_000_300_003,
+        ))
+        .await
+        .expect("Notion sibling activity");
+
+    let after = store
+        .context_history_view(&ctx, &clickup, Some(100), None, None)
+        .await
+        .expect("ClickUp view after sibling activity");
+    assert!(!after.truncated, "ClickUp fixture must fit in one page");
+    let after_items = serde_json::to_value(&after.items).expect("serialize ClickUp view");
+
+    assert_eq!(
+        after_items, before_items,
+        "sibling appends must not change ClickUp row identity, order, or rendering"
+    );
+    assert_eq!(
+        after.cursor, before.cursor,
+        "sibling appends must not move ClickUp's paging cursor"
+    );
+}

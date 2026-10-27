@@ -616,20 +616,34 @@ P0 exit gate:
       compares by durable `activity_anchor` identity and returns appended lines; the old
       `take_prefix_growth` / value-equality error path is removed. Reordering, re-rendering,
       and zero-new-row hops no longer error.
-- [~] **P1.6 Define zero-visible-row behavior.** Zero-new-row is now accepted (no error). The
-      “promised visible completion must appear” assertion for content-bearing hops is still to
-      add.
-- [ ] **P1.7 Make ordering deterministic.** Verify `(event_order, node_id)` is
-      used consistently by window, cursor, delta, and projection paths.
-- [ ] **P1.8 Add sibling-interleaving coverage.** Append unrelated coordinator
-      or Notion activity between ClickUp reads and prove ClickUp's prior view is
-      unchanged.
-- [ ] **P1.9 Run the manual ClickUp authority flow.** Restart the runner and
-      execute the exact reported prompt.
+- [x] **P1.6 Define zero-visible-row behavior.** Zero-new-row is accepted (no error). Added
+      `hop_promises_visible_read` in `run_step_executor_loop`: a non-empty archive read
+      (`SearchRead`/`PageRead`) must append at least one projected row or the loop logs a
+      `tracing::warn!` content-loss signal. `Open`/`SendDone`/`Finish`/`Abort` and empty-args
+      `Send` remain legitimate zero-row hops. Pinned by
+      `step_executor_loop::tests::archive_read_hop_promises_visible_completion`.
+- [x] **P1.7 Make ordering deterministic.** Verified: window and cursor use the durable key
+      `(event_order, node_id)` (`sort_conversation_rows`, `fetch_agent_window_rows`
+      `ORDER BY event_order, node_id`, exclusive cursor). Projection preserves that order
+      verbatim and drops `node_id` (documented on `ProjectedConversationRow`); the delta
+      compares by the unique `activity_anchor`. Pinned by
+      `context_reader::tests::sort_conversation_rows_orders_by_event_order_then_node_id`.
+- [x] **P1.8 Add sibling-interleaving coverage.** Added
+      `shared_context_delegation_view_test::sibling_activity_between_clickup_reads_does_not_change_clickup_view`:
+      seeds ClickUp rows, appends coordinator and Notion rows to the same context, and asserts
+      the full serialized ClickUp view (row identity, order, rendering) and its paging cursor are
+      byte-for-byte unchanged.
+- [x] **P1.9 Run the manual ClickUp authority flow.** Restarted the runner (fresh
+      `agentium serve` on 127.0.0.1:18080 with coordinator + notion + clickup loaded) and ran the
+      exact prompt `hey use the clickup agent to get the list of tasks that are in progress`.
+      One `ctx-1793128486019-6` spanned coordinator and ClickUp. ClickUp navigated
+      teams → spaces → lists → tasks, returned 3 in-progress tasks (Task21, Task16, Test1),
+      and the coordinator relayed them with `TASK_STATE_COMPLETED`. Zero prefix-extension
+      failures, zero `ERROR`/`panic` log lines, zero content-loss warnings.
 
 P1 exit gate:
 
-- [ ] The ClickUp request completes without the prefix-extension error, and no
+- [x] The ClickUp request completes without the prefix-extension error, and no
       content-bearing row is silently lost.
 
 ### P2: isolate archives, receipts, duplicate guards, and citations
