@@ -255,7 +255,7 @@ UPDATE context_agent_leases SET heartbeat_ms = $now
 WHERE context_id = $ctx
   AND agent_id = $agent
   AND boot_event_id = $boot
-  AND fencing_token = $token
+  AND fencing_token = $fence_token
   AND released = false;
 "#;
 
@@ -268,7 +268,7 @@ UPDATE context_agent_leases SET
 WHERE context_id = $ctx
   AND agent_id = $agent
   AND boot_event_id = $boot
-  AND fencing_token = $token
+  AND fencing_token = $fence_token
   AND released = false;
 "#;
 
@@ -620,7 +620,7 @@ impl SurrealProvenanceStore {
                     "boot",
                     Value::String(fence.boot_event_id.as_str().to_string()),
                 ),
-                ("token", Value::from(fence.fencing_token)),
+                ("fence_token", Value::from(fence.fencing_token)),
                 ("now", Value::from(now_ms)),
             ],
         )
@@ -651,7 +651,7 @@ impl SurrealProvenanceStore {
                     "boot",
                     Value::String(fence.boot_event_id.as_str().to_string()),
                 ),
-                ("token", Value::from(fence.fencing_token)),
+                ("fence_token", Value::from(fence.fencing_token)),
                 ("now", Value::from(now_ms)),
             ],
         )

@@ -111,6 +111,26 @@ async fn takeover_bumps_token_and_rejects_stale_fenced_write() {
         .await
         .expect("current fence writes");
 
+    // Renew and release must use an ordinary bind name: `token` is a protected
+    // SurrealDB variable and fails at runtime, leaving the pair leased.
+    let renewed = store
+        .renew_context_agent_lease(&second_lease.fence(), 20_100)
+        .await
+        .expect("renew lease");
+    assert!(renewed.is_some(), "the current holder renews");
+    store
+        .release_context_agent_lease(&second_lease.fence(), 20_200)
+        .await
+        .expect("release lease");
+    assert!(
+        store
+            .read_context_agent_lease(&context_id, &agent_id)
+            .await
+            .expect("read released lease")
+            .is_none(),
+        "a released lease reads as absent"
+    );
+
     let mut response = store
         .db()
         .query(

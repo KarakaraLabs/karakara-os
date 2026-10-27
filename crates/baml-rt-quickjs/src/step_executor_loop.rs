@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -293,6 +294,37 @@ fn receipt_from_result(result: &Value) -> Option<ArchiveReceipt> {
         .get("receipt")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn step_op(result: &Value) -> Option<&str> {
+    result.get("op").and_then(Value::as_str).or_else(|| {
+        result
+            .get("step")
+            .and_then(|step| step.get("op"))
+            .and_then(Value::as_str)
+    })
+}
+
+/// True when an archive read returns exactly the output a prior read already produced.
+///
+/// Repeated successful reads add no information and let a model spend the whole step
+/// budget re-reading the same `@N`. Treating that as terminal consumes the receipt
+/// instead of surfacing `max_steps_exhausted`.
+fn is_repeated_archive_read_output(result: &Value, steps: &[Value]) -> bool {
+    if !matches!(step_op(result), Some("SearchRead" | "PageRead")) {
+        return false;
+    }
+    let Some(current_output) = result
+        .get("output")
+        .and_then(Value::as_str)
+        .filter(|output| !output.is_empty())
+    else {
+        return false;
+    };
+    steps.iter().any(|step| {
+        matches!(step_op(step), Some("SearchRead" | "PageRead"))
+            && step.get("output").and_then(Value::as_str) == Some(current_output)
+    })
 }
 
 fn infer_last_step_context(
@@ -743,6 +775,19 @@ pub async fn run_step_executor_loop(
             }
         }
 
+        if status == StepStatus::Done
+            && is_repeated_archive_read_output(&result, &steps[..steps.len() - 1])
+        {
+            tracing::warn!(
+                hop = hop_idx,
+                function = %current_function,
+                "step_executor_loop: repeated archive read returned no new output; terminating with last result"
+            );
+            last_step_context = next_step_context;
+            phase = Phase::Terminal(TerminalReason::Finished);
+            break;
+        }
+
         update_archive_ledger(&mut archive_ledger, &next_step_context);
         last_step_context = next_step_context;
 
@@ -983,5 +1028,48 @@ mod session_context_wire_tests {
             v["archives"][0]["header"],
             "mcp/grafana/query_prometheus:Send(expr=\"up\")"
         );
+    }
+
+    #[test]
+    fn repeated_archive_read_output_is_terminal() {
+        use super::is_repeated_archive_read_output;
+
+        let prior = serde_json::json!({
+            "op": "SearchRead",
+            "input": {"archive_ref": "@1", "grep": "clickup"},
+            "status": "done",
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+        let repeat = serde_json::json!({
+            "op": "SearchRead",
+            "input": {"archive_ref": "@1", "grep": "clickup", "offset": 0},
+            "status": "done",
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+        let advanced = serde_json::json!({
+            "op": "PageRead",
+            "input": {"archive_ref": "@1", "offset": 20},
+            "status": "done",
+            "output": "@1 · discover_agents ...\n  - name: notion-agent",
+        });
+        let send = serde_json::json!({
+            "op": "Send",
+            "input": {"query": "clickup"},
+            "status": "done",
+            "output": "@1 · discover_agents ...\n  - name: clickup-agent",
+        });
+
+        assert!(is_repeated_archive_read_output(
+            &repeat,
+            std::slice::from_ref(&prior)
+        ));
+        assert!(!is_repeated_archive_read_output(
+            &advanced,
+            std::slice::from_ref(&prior)
+        ));
+        assert!(!is_repeated_archive_read_output(
+            &send,
+            std::slice::from_ref(&prior)
+        ));
     }
 }
