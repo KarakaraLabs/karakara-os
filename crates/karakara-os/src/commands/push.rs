@@ -146,10 +146,10 @@ pub fn run(
             Err(err) => {
                 let retry_cmd = if authenticated {
                     format!(
-                        "cargo agent-platform deploy --hash {hash} --url {url} --runner-token \"$RUNNER_TOKEN\""
+                        "karak deploy --hash {hash} --url {url} --runner-token \"$RUNNER_TOKEN\""
                     )
                 } else {
-                    format!("cargo agent-platform deploy --hash {hash} --url {url}")
+                    format!("karak deploy --hash {hash} --url {url}")
                 };
                 let msg = format!(
                     "deploy failed after successful publish for {version} (hash: {hash}). \

@@ -128,7 +128,7 @@ Runtime behaviour (summary):
         "kind": "streamable_http",
         "url": "https://mcp.example.com/mcp",
         "headers": [
-          { "name": "X-Client-Name", "value": "agent-platform" }
+          { "name": "X-Client-Name", "value": "karakara" }
         ],
         "auth": {
           "kind": "bearer",
@@ -326,7 +326,7 @@ Importer (`importer.rs`):
 | Symptom | Likely cause |
 |---------|----------------|
 | Launch config digest mismatch | Operator changed `mcp-servers.json` without re-import (`resolver::connection_for` error log `mcp.launch_config_digest_mismatch`). |
-| Tool/identity digest mismatch / stale file | MCP server upgraded or tools changed; rerun `agent-platform mcp enable` and redeploy. |
+| Tool/identity digest mismatch / stale file | MCP server upgraded or tools changed; rerun `karak mcp enable` and redeploy. |
 | “not declared in mcp-servers.json” | Cache has approved server snapshot but runner config missing that **`mcpServers` key**. |
 
 ## 12. Metrics and telemetry

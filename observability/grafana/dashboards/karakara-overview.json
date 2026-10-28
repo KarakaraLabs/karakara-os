@@ -249,7 +249,7 @@
   "refresh": "5s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["agent-platform", "otel"],
+  "tags": ["karakara", "otel"],
   "templating": {
     "list": [
       {
@@ -290,7 +290,7 @@
   "timepicker": {},
   "timezone": "",
   "title": "Agent Platform Overview",
-  "uid": "agent-platform-overview",
+  "uid": "karakara-overview",
   "version": 3,
   "weekStart": ""
 }

@@ -23,7 +23,7 @@ Each target builds **natively** on its own architecture — no cross-compilation
 
 - `karak` (features: http-tools, memory, sandbox-provider, dev-tools) — platform host + developer SDK
 
-Legacy separate `baml-agent-runner` and `cargo-agent-platform` release artifacts are no longer produced.
+Legacy separate `baml-agent-runner` release artifacts are no longer produced.
 
 ## Release artifacts
 

@@ -380,7 +380,7 @@ impl ClientHandler for RuntimeClientHandler {
                 observed = %observed_digest,
                 tool_count = observed.len(),
                 event = "mcp.tools_list_changed",
-                "MCP server tool set drifted at runtime (tools/list_changed); snapshot marked stale, in-flight calls will fail. Re-import via `agent-platform mcp enable` and redeploy."
+                "MCP server tool set drifted at runtime (tools/list_changed); snapshot marked stale, in-flight calls will fail. Re-import via `karak mcp enable` and redeploy."
             );
             mark_drifted_and_persist(&server_id, &drifted, &cache_root).await;
         }
@@ -891,7 +891,7 @@ impl DigestLabel for IdentityDigest {
             expected = %expected,
             observed = %observed,
             event = "mcp.identity_mismatch",
-            "MCP server identity digest does not match approved snapshot; refusing to bind. Re-import via `agent-platform mcp enable` and redeploy."
+            "MCP server identity digest does not match approved snapshot; refusing to bind. Re-import via `karak mcp enable` and redeploy."
         );
     }
 
@@ -922,7 +922,7 @@ impl DigestLabel for StartupToolsDigest {
             observed = %observed,
             tool_count = context.tool_count,
             event = "mcp.startup_tools_digest_mismatch",
-            "MCP server tool surface drifted from approved snapshot at startup; refusing to bind. Re-import via `agent-platform mcp enable` to capture new tool schemas, then redeploy."
+            "MCP server tool surface drifted from approved snapshot at startup; refusing to bind. Re-import via `karak mcp enable` to capture new tool schemas, then redeploy."
         );
     }
 

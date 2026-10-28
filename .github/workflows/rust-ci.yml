@@ -74,10 +74,10 @@ jobs:
               - 'crates/baml-rt-tools/tests/fixtures/external-tools/sandbox_echo/adapter/**'
               - 'tests/fixtures/sandbox-conformance/**'
               - 'crates/baml-rt-tools/src/external_tools/metadata.rs'
-              - 'crates/cargo-agent-platform/src/commands/sandbox_bind_sync.rs'
-              - 'crates/cargo-agent-platform/src/commands/sandbox_oci_prepare.rs'
-              - 'crates/cargo-agent-platform/src/commands/mod.rs'
-              - 'crates/cargo-agent-platform/src/main.rs'
+              - 'crates/karakara-os/src/commands/sandbox_bind_sync.rs'
+              - 'crates/karakara-os/src/commands/sandbox_oci_prepare.rs'
+              - 'crates/karakara-os/src/commands/mod.rs'
+              - 'crates/karakara-os/src/main.rs'
               - '.github/workflows/rust-ci.yml'
 
   nextest:

@@ -77,7 +77,7 @@ impl GitHubClient {
             .get(format!("{base}{path}", base = self.base_url()))
             .header("Authorization", format!("Bearer {token}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "baml-agent-platform")
+            .header("User-Agent", "karakara")
     }
 
     pub fn post(&self, path: &str, token: &str) -> reqwest::RequestBuilder {
@@ -85,7 +85,7 @@ impl GitHubClient {
             .post(format!("{base}{path}", base = self.base_url()))
             .header("Authorization", format!("Bearer {token}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "baml-agent-platform")
+            .header("User-Agent", "karakara")
     }
 
     pub async fn send_json(

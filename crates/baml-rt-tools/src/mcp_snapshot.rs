@@ -699,7 +699,7 @@ mod tests {
             url: "https://example.invalid/mcp".into(),
             headers: vec![crate::mcp_config::HttpHeader {
                 name: "X-Client-Name".into(),
-                value: "agent-platform".into(),
+                value: "karakara".into(),
             }],
             auth: Some(HttpAuthConfig::Header {
                 header: "X-API-Key".into(),
@@ -734,7 +734,7 @@ mod tests {
                     url: "https://example.invalid:443/mcp".into(),
                     headers: vec![crate::mcp_config::HttpHeader {
                         name: "X-Client-Name".into(),
-                        value: "agent-platform".into(),
+                        value: "karakara".into(),
                     }],
                     auth: Some(HttpAuthConfig::Bearer {
                         token_ref: crate::mcp_config::HttpSecretRef {

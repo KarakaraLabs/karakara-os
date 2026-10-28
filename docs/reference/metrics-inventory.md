@@ -169,7 +169,7 @@ The `forwarded` label on `baml_rt_api_http_request_*` is **advisory** (derived f
 
 ## Grafana / local stack
 
-Starter dashboard: `observability/grafana/dashboards/agent-platform-overview.json`.
+Starter dashboard: `observability/grafana/dashboards/karakara-overview.json`.
 Prometheus summary helper: `just otel-summary <window>`.
 
 ---

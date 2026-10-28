@@ -25,7 +25,7 @@ discovery (`tool/describe` + `tool/schema`), which is how it advertises its
    next boot.
 
 To add a tool to an already-running runner instead, use the runner's
-`POST /external-tools/enable` endpoint (or the `agent-platform` CLI). Note: a
+`POST /external-tools/enable` endpoint (or the `karak` CLI). Note: a
 newly enabled **datasource** only starts serving its webhook route on the next
 boot, because webhook routes are mounted at startup.
 

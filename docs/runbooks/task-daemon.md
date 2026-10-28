@@ -151,8 +151,8 @@ versioned interpretation event contract:
 {
   "channels": {
     "karakara-eng": {
-      "project_key": "agent-platform",
-      "repo_path": "/path/to/agent-platform",
+      "project_key": "karakara",
+      "repo_path": "/path/to/karakara",
       "clickup_list_id": "901325431486"
     }
   }

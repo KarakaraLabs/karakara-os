@@ -755,7 +755,7 @@ mod tests {
                 "kind": "streamable_http",
                 "url": "https://mcp.grafana.example.com/mcp",
                 "headers": [
-                  { "name": "X-Client-Name", "value": "agent-platform" }
+                  { "name": "X-Client-Name", "value": "karakara" }
                 ],
                 "auth": {
                   "kind": "bearer",

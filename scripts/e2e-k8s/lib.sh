@@ -260,7 +260,7 @@ publish_and_deploy() {
 # SurrealDB queries
 # ---------------------------------------------------------------------------
 
-# Canonical SurrealDB namespaces defined by the agent-platform codebase.
+# Canonical SurrealDB namespaces defined by the karakara codebase.
 # Sources:
 #   cluster    — baml-agent-runner src/main.rs (cluster routing, placements)
 #   provenance — baml-rt-provenance src/surreal_store/schema.rs

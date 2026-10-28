@@ -100,7 +100,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # Distinct from ci-nextest: this job compiles
-          # cargo-agent-platform host-side via `cargo run` during smoke,
+          # karakara-os host-side via `cargo run` during smoke,
           # producing a different feature graph than the workspace
           # nextest invocation.
           shared-key: "ci-k8s-pilot"
@@ -109,7 +109,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
 
       - name: Install Node.js and TypeScript
-        # cargo-agent-platform compiles the dispatch-echo fixture's
+        # karakara-os compiles the dispatch-echo fixture's
         # TypeScript during `push`, so the host runner needs node + tsc.
         # Pin TS 6.x to match the rest of CI (rust-ci.yml nextest).
         run: |

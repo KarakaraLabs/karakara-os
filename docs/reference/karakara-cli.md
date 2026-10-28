@@ -18,17 +18,13 @@ cargo build --release -p karakara-os --all-features
 
 Local dev shortcuts: `just build`, `just runner` (build + start on `127.0.0.1:18080`).
 
-## Migration from `cargo-agent-platform` / `baml-agent-runner`
+## Migration from `baml-agent-runner`
 
 | Before | After |
 |--------|-------|
-| Separate `baml-agent-runner` + `cargo-agent-platform` binaries | Single `karak` binary |
 | `baml-agent-runner --serve-http …` | `karak serve --serve-http …` |
-| `cargo-agent-platform push` | `karakara install agent` (publish + deploy) |
-| `cargo-agent-platform build` / `regen` | **Removed** — publish triggers server-side build; monorepo fixture regen stays on `just regen-fixtures` |
-| `cargo-agent-platform deploy --hash …` | `karakara deploy --hash … --url …` |
 
-Legacy subcommands **`build`**, **`regen`**, and **`push`** are not registered on `karak`.
+`build`, `regen`, and `push` are not registered on `karak`.
 
 ## Project config
 

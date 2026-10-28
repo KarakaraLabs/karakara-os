@@ -38,7 +38,7 @@ High-signal families:
 - **task-daemon:** `baml_rt_task_daemon.run_once.*` ([`baml-rt-observability`](../crates/baml-rt-observability/src/metrics.rs)).
 
 A starter Grafana dashboard is provisioned at:
-`observability/grafana/dashboards/agent-platform-overview.json`.
+`observability/grafana/dashboards/karakara-overview.json`.
 
 ## Design Goals
 

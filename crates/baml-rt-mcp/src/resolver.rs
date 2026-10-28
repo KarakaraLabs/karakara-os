@@ -149,7 +149,7 @@ impl<R: SecretResolver + Send + Sync> McpResolver<R> {
                 observed = %observed_config_digest,
                 protocol_version = %protocol_version,
                 event = "mcp.launch_config_digest_mismatch",
-                "MCP launch config digest does not match approved snapshot; refusing to bind. Run `agent-platform mcp enable <server>` to re-import and approve, then redeploy affected agents."
+                "MCP launch config digest does not match approved snapshot; refusing to bind. Run `karak mcp enable <server>` to re-import and approve, then redeploy affected agents."
             );
             return Err(BamlRtError::InvalidArgument(format!(
                 "MCP server `{server_id}` launch config digest mismatch (expected `{server_config_digest}`, observed `{observed_config_digest}`); operator must re-import and approve a new registry snapshot"
