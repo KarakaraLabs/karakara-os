@@ -2,12 +2,12 @@ _metadata:
   major_version: 1
   minor_version: 1
 display_information:
-  name: Agentium Slack Read Integration
+  name: Karakara Slack Read Integration
   description: Read-only Slack access for source-backed todo extraction
   background_color: "#0f172a"
 features:
   bot_user:
-    display_name: Agentium Reader
+    display_name: Karakara Reader
     always_online: false
 oauth_config:
   redirect_urls:

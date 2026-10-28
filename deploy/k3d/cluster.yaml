@@ -1,7 +1,7 @@
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:
-  name: agentium
+  name: karakara
 servers: 1
 agents: 2
 ports:
@@ -10,10 +10,10 @@ ports:
       - loadbalancer
 # Local registry contract powering `--image-strategy registry` in
 # scripts/verify-k8s-pilot-package.sh: a `registry:2` container named
-# `k3d-agentium-registry` is started (and attached to this cluster's
+# `k3d-karakara-registry` is started (and attached to this cluster's
 # docker network) by the bringup helpers in scripts/e2e-k8s/lib.sh.
 # The host pushes to localhost:5400; kubelet inside the cluster pulls
-# from k3d-agentium-registry:5000, resolved via the containerd mirror
+# from k3d-karakara-registry:5000, resolved via the containerd mirror
 # block injected below. hostPort 5400 avoids the macOS AirPlay Receiver
 # default on port 5000.
 #
@@ -28,9 +28,9 @@ ports:
 registries:
   config: |
     mirrors:
-      "k3d-agentium-registry:5000":
+      "k3d-karakara-registry:5000":
         endpoint:
-          - "http://k3d-agentium-registry:5000"
+          - "http://k3d-karakara-registry:5000"
 options:
   k3s:
     extraArgs:

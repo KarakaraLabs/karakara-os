@@ -7,7 +7,7 @@
 # imported into the cluster via `k3d image import`.
 #
 # `runner.image.repository` uses the in-cluster registry hostname k3d
-# injects into the containerd mirror config (k3d-agentium-registry:5000).
+# injects into the containerd mirror config (k3d-karakara-registry:5000).
 # `pullPolicy: Always` exercises a real kubelet pull every pod start and
 # guarantees the registry digest wins over any image already cached on
 # the node — without it, a same-tag rebuild + `kubectl rollout restart`
@@ -21,16 +21,16 @@
 # the literal `tag:` below.
 #
 # Install (normally driven by lib.sh, not by hand):
-#   helm upgrade --install agentium deploy/helm/agentium-os/ \
-#     --namespace agentium --create-namespace \
-#     -f deploy/helm/agentium-os/examples/k3d-registry-values.yaml
+#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#     --namespace karak --create-namespace \
+#     -f deploy/helm/karakara-os/examples/k3d-registry-values.yaml
 
 global:
   environment: development
 
 runner:
   image:
-    repository: k3d-agentium-registry:5000/agentium-runner
+    repository: k3d-karakara-registry:5000/karakara-runner
     tag: demo
     pullPolicy: Always
   replicaCount: 2

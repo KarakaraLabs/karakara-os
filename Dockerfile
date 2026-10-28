@@ -31,7 +31,7 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 ENV CARGO_PROFILE_RELEASE_LTO=thin
 ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
-RUN cargo build --release -p agentium --features http-tools,memory,sandbox-provider,dev-tools
+RUN cargo build --release -p karakara-os --features http-tools,memory,sandbox-provider,dev-tools
 
 # Stage 2: Slim runtime image.
 #
@@ -53,10 +53,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 ENV NPM_CONFIG_CACHE=/tmp/npm-cache
 
-RUN groupadd -r agentium && useradd -r -g agentium -d /data -s /sbin/nologin agentium
-RUN mkdir -p /data && chown -R agentium:agentium /data
+RUN groupadd -r karakara && useradd -r -g karakara -d /data -s /sbin/nologin karakara
+RUN mkdir -p /data && chown -R karakara:karakara /data
 
-COPY --from=builder /build/target/release/agentium /usr/local/bin/
+COPY --from=builder /build/target/release/karak /usr/local/bin/
 
 # ONNX models for embedding/drift detection (git-lfs tracked).
 # Fail fast if LFS pointers were not resolved (e.g. missing `git lfs pull`).
@@ -74,5 +74,5 @@ USER 1000
 
 EXPOSE 18080
 
-ENTRYPOINT ["agentium", "serve"]
+ENTRYPOINT ["karakara", "serve"]
 CMD ["--serve-http", "0.0.0.0:18080"]

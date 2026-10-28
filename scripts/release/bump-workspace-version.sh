@@ -17,7 +17,7 @@ die() {
 [[ "$KIND" =~ ^(patch|minor|major)$ ]] || die "usage: bump-workspace-version.sh patch|minor|major"
 
 CARGO="${ROOT}/Cargo.toml"
-CHART="${ROOT}/deploy/helm/agentium-os/Chart.yaml"
+CHART="${ROOT}/deploy/helm/karakara-os/Chart.yaml"
 
 current="$(bash "${ROOT}/scripts/release/workspace-version.sh")"
 IFS=. read -r major minor patch <<<"$current"

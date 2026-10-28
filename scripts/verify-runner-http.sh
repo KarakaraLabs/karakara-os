@@ -33,7 +33,7 @@ RUNNER_PID=""
 if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/agents" 2>/dev/null | grep -q 200; then
   echo "Starting runner on $BIND (repository + state under $VERIFY_TMP)..."
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-  RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   RUST_LOG="${RUST_LOG:-error}" \
     "$RUNNER_BIN" serve \
     --serve-http "$BIND" \
@@ -59,14 +59,14 @@ if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/a
     exit 1
   fi
 
-  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   echo "Publishing fixture agents..."
   "$BUILDER_BIN" install agent --path "$FIXTURE1" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
   "$BUILDER_BIN" install agent --path "$FIXTURE2" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 elif [[ "$do_build" == "true" ]]; then
   echo "Server already responding on $BIND; publishing fixtures anyway (--build)."
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   "$BUILDER_BIN" install agent --path "$FIXTURE1" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
   "$BUILDER_BIN" install agent --path "$FIXTURE2" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 else

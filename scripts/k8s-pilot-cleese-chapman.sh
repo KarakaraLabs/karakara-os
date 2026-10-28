@@ -17,8 +17,8 @@ Usage:
   bash scripts/k8s-pilot-cleese-chapman.sh [options]
 
 Options:
-  --namespace <ns>       Kubernetes namespace (default: agentium)
-  --release <name>       Helm release / instance label (default: agentium)
+  --namespace <ns>       Kubernetes namespace (default: karakara)
+  --release <name>       Helm release / instance label (default: karakara)
   --secret <name>        Runner token secret name (default: runner-token)
   --secret-key <key>     Key inside the runner token secret (default: token)
   --fnox-config <name>   ConfigMap containing fnox.toml (default: fnox-config)
@@ -43,8 +43,8 @@ This script enforces the supported credential path:
 EOF
 }
 
-NAMESPACE="agentium"
-RELEASE_NAME="agentium"
+NAMESPACE="karakara"
+RELEASE_NAME="karakara"
 SECRET_NAME="runner-token"
 SECRET_KEY="token"
 FNOX_CONFIG_NAME="fnox-config"
@@ -58,7 +58,7 @@ KEEP_DEPLOYED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CLI_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/debug/agentium"
+CLI_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/debug/karakara"
 
 RUNNER_STS=""
 RUNNER_POD_0=""
@@ -194,8 +194,8 @@ ensure_fnox_openrouter_default() {
 }
 
 build_cli() {
-  log "building agentium CLI"
-  (cd "$REPO_ROOT" && cargo build -q -p agentium)
+  log "building karak CLI"
+  (cd "$REPO_ROOT" && cargo build -q -p karakara-os)
 }
 
 publish_agent() {

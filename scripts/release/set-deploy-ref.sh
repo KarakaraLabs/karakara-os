@@ -23,18 +23,18 @@ TRACK="${ROOT}/deploy/argocd/track.json"
 IMAGES="${ROOT}/deploy/values/dev/images.yaml"
 [[ -f "${TRACK}" ]] || die "missing ${TRACK}"
 
-export AGENTIUM_SET_ROOT="${ROOT}"
-export AGENTIUM_SET_GIT_REF="${GIT_REF}"
-export AGENTIUM_SET_IMG_TAG="${IMG_TAG}"
+export KARAKARA_SET_ROOT="${ROOT}"
+export KARAKARA_SET_GIT_REF="${GIT_REF}"
+export KARAKARA_SET_IMG_TAG="${IMG_TAG}"
 
 python3 <<'PY'
 import json
 import os
 from pathlib import Path
 
-root = Path(os.environ["AGENTIUM_SET_ROOT"])
-git_ref = os.environ["AGENTIUM_SET_GIT_REF"]
-img_tag = os.environ["AGENTIUM_SET_IMG_TAG"]
+root = Path(os.environ["KARAKARA_SET_ROOT"])
+git_ref = os.environ["KARAKARA_SET_GIT_REF"]
+img_tag = os.environ["KARAKARA_SET_IMG_TAG"]
 
 track_path = root / "deploy/argocd/track.json"
 images_path = root / "deploy/values/dev/images.yaml"

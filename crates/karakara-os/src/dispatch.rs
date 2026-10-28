@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Command dispatch for `agentium`.
+//! Command dispatch for `karak`.
 
 use crate::{
     cli::{

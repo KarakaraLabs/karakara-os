@@ -1,5 +1,5 @@
-{{- $fullname := include "agentium-os.runner.fullname" . -}}
-{{- $surrealFullname := include "agentium-os.surrealdb.fullname" . -}}
+{{- $fullname := include "karakara-os.runner.fullname" . -}}
+{{- $surrealFullname := include "karakara-os.surrealdb.fullname" . -}}
 {{- $surrealSecret := required "surrealdb.auth.existingSecret is required" .Values.surrealdb.auth.existingSecret -}}
 {{- $runnerSecret := required "runner.auth.existingSecret is required — cluster mode requires a runner token" .Values.runner.auth.existingSecret -}}
 apiVersion: apps/v1
@@ -7,18 +7,18 @@ kind: StatefulSet
 metadata:
   name: {{ $fullname }}
   labels:
-    {{- include "agentium-os.runner.labels" . | nindent 4 }}
+    {{- include "karakara-os.runner.labels" . | nindent 4 }}
 spec:
   # serviceName must match the headless service metadata.name for pod DNS.
   serviceName: {{ $fullname }}
   replicas: {{ .Values.runner.replicaCount }}
   selector:
     matchLabels:
-      {{- include "agentium-os.runner.selectorLabels" . | nindent 6 }}
+      {{- include "karakara-os.runner.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "agentium-os.runner.labels" . | nindent 8 }}
+        {{- include "karakara-os.runner.labels" . | nindent 8 }}
     spec:
       containers:
         - name: runner
@@ -82,11 +82,11 @@ spec:
             # in-process helper so `service.instance.id` on resources, spans, and metrics
             # cannot drift.
             - name: OTEL_SERVICE_NAME
-              value: "agentium-runner"
+              value: "karakara-runner"
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "service.namespace=agentium,deployment.environment={{ coalesce .Values.observability.environment .Values.global.environment "pilot" }},service.instance.id=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)"
+              value: "service.namespace=karakara,deployment.environment={{ coalesce .Values.observability.environment .Values.global.environment "pilot" }},service.instance.id=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)"
             {{- if .Values.observability.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.observability.otlpEndpoint | quote }}

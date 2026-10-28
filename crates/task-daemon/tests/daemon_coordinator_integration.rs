@@ -116,10 +116,10 @@ async fn run_once_mints_stable_context_and_delivers() {
     let state_path = dir.path().join("state.json");
     let poll = SourcePoll::slack(
         "slack:C123".to_string(),
-        "#agentium-eng".to_string(),
+        "#karakara-eng".to_string(),
         vec![
             SlackMessage {
-                channel_name: "#agentium-eng".to_string(),
+                channel_name: "#karakara-eng".to_string(),
                 channel_id: "C123".to_string(),
                 ts: "1735689600.000000".to_string(),
                 text: "first".to_string(),
@@ -136,7 +136,7 @@ async fn run_once_mints_stable_context_and_delivers() {
                 },
             },
             SlackMessage {
-                channel_name: "#agentium-eng".to_string(),
+                channel_name: "#karakara-eng".to_string(),
                 channel_id: "C123".to_string(),
                 ts: "1735689700.000000".to_string(),
                 text: "second".to_string(),

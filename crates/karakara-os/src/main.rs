@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `agentium` — unified Agentium platform host and developer SDK.
+//! `karak` — unified Karakara platform host and developer SDK.
 
 mod cli;
 mod commands;

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Agentium OS YTP Explainer Video — Main Render Orchestrator
+Karakara OS YTP Explainer Video — Main Render Orchestrator
 
 Usage:
     python -m video.render [--scene 1] [--output output/scene_01.mp4] [--no-audio]
@@ -135,9 +135,9 @@ def render_scene_01(output_path: str, include_audio: bool = True, cache_dir: str
 
 
 def render_scene_02(output_path: str, include_audio: bool = True, cache_dir: str | None = None) -> None:
-    from video.scenes.scene_02_agentium_os import render_scene_02 as _render, FPS, TOTAL_FRAMES
+    from video.scenes.scene_02_karakara_os import render_scene_02 as _render, FPS, TOTAL_FRAMES
     from video.audio.sfx import build_scene_02_audio
-    _generic_render("Scene Two — AGENTIUM OS", _render, build_scene_02_audio,
+    _generic_render("Scene Two — KARAKARA OS", _render, build_scene_02_audio,
                     TOTAL_FRAMES, FPS, output_path, include_audio, cache_dir)
 
 
@@ -183,7 +183,7 @@ def render_all(output_path: str, include_audio: bool = True,
                cache_dir_s4: str | None = None, cache_dir_s5: str | None = None) -> None:
     """Render all scenes (including citations), concatenate into one video."""
     from video.scenes.scene_01_other_agents import render_scene_01 as _r1, FPS as FPS1, TOTAL_FRAMES as TF1
-    from video.scenes.scene_02_agentium_os import render_scene_02 as _r2, FPS as FPS2, TOTAL_FRAMES as TF2
+    from video.scenes.scene_02_karakara_os import render_scene_02 as _r2, FPS as FPS2, TOTAL_FRAMES as TF2
     from video.scenes.scene_03_observability import render_scene_03 as _r3, FPS as FPS3, TOTAL_FRAMES as TF3
     from video.scenes.scene_04_citations import render_scene_04_citations as _r4c, FPS as FPS4c, TOTAL_FRAMES as TF4c
     from video.scenes.scene_04_repository import render_scene_04 as _r4, FPS as FPS4, TOTAL_FRAMES as TF4
@@ -242,7 +242,7 @@ def render_all(output_path: str, include_audio: bool = True,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Agentium OS YTP Explainer Video Renderer")
+    parser = argparse.ArgumentParser(description="Karakara OS YTP Explainer Video Renderer")
     parser.add_argument("--scene", type=str, default="0", help="Scene to render (1-5, 'loop', or 0=all)")
     parser.add_argument("--output", default=None, help="Output file path")
     parser.add_argument("--no-audio", action="store_true", help="Render without audio")
@@ -254,7 +254,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.scene == "loop":
-        out = args.output or "video/output/agentium_loop_bg.mp4"
+        out = args.output or "video/output/karakara_loop_bg.mp4"
         render_loop_bg(out, include_audio=not args.no_audio, cache_dir=args.cache_dir)
         return
 
@@ -276,7 +276,7 @@ def main() -> None:
         out = args.output or "video/output/scene_05.mp4"
         render_scene_05(out, include_audio=not args.no_audio, cache_dir=args.cache_dir)
     else:
-        out = args.output or "video/output/agentium_os.mp4"
+        out = args.output or "video/output/karakara_os.mp4"
         render_all(out, include_audio=not args.no_audio,
                    cache_dir_s1=args.cache_dir, cache_dir_s2=args.cache_dir_s2,
                    cache_dir_s3=args.cache_dir_s3, cache_dir_s4=args.cache_dir_s4,

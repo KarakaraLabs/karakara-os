@@ -1,6 +1,6 @@
-# Agentium MCP Support
+# Karakara MCP Support
 
-This document describes how Agentium integrates the [Model Context Protocol (MCP)](https://spec.modelcontextprotocol.io/) across **configuration**, **registry import**, **agent build/type generation**, and **runtime execution**.
+This document describes how Karakara integrates the [Model Context Protocol (MCP)](https://spec.modelcontextprotocol.io/) across **configuration**, **registry import**, **agent build/type generation**, and **runtime execution**.
 
 For external and sandbox host tools, see [Host tool guide](host-tool-guide.md). MCP pooling, drift handling, and runtime lifecycle are covered in §6–§8 below.
 
@@ -71,7 +71,7 @@ flowchart LR
 - **Default:** `$HOME/.agentium-os/mcp-servers.json`
 - **Override:** set `BAML_MCP_SERVERS_CONFIG` to an absolute path (see `baml_rt_mcp::resolver::MCP_SERVERS_CONFIG_ENV`).
 
-The file uses the conventional top-level key **`mcpServers`** (Claude Desktop–compatible shape), extended with **`secrets`** and **`sandbox`** for Agentium.
+The file uses the conventional top-level key **`mcpServers`** (Claude Desktop–compatible shape), extended with **`secrets`** and **`sandbox`** for Karakara.
 
 ## 4. `mcpServers` schema reference
 
@@ -223,17 +223,17 @@ Snapshots are stored in the **embedded repository service** backing the runner. 
 Operator CLI (uses shared builder library; no `baml-agent-builder` subprocess):
 
 ```bash
-agentium mcp enable <server-id> \
+karakara mcp enable <server-id> \
   --config ~/.agentium-os/mcp-servers.json \
   --repository-url http://127.0.0.1:18080/repository \
   [--yes] [--runner-token ...]
-agentium mcp list --repository-url http://127.0.0.1:18080/repository
-agentium mcp server meteo --repository-url ...
-agentium mcp tool mcp/meteo/get_meteo --repository-url ...
+karakara mcp list --repository-url http://127.0.0.1:18080/repository
+karakara mcp server meteo --repository-url ...
+karakara mcp tool mcp/meteo/get_meteo --repository-url ...
 ```
 
 - **Mutating** registry enablement may require **`RUNNER_TOKEN` / `--runner-token`** when the runner enforces operator auth.
-- Read-only **`mcp list` / `server` / `tool`** calls use anonymous GET against the repository URL (`crates/agentium/src/commands/mcp.rs`).
+- Read-only **`mcp list` / `server` / `tool`** calls use anonymous GET against the repository URL (`crates/karakara/src/commands/mcp.rs`).
 
 ## 7. Agent integration: manifest and naming
 
@@ -258,7 +258,7 @@ Reference example: `examples/agents/meteo-mcp-agent/manifest.json`.
 
 1. **`prepare_mcp_snapshots`** (`runtime_type_gen.rs`): From manifest `"tools"` it collects **`mcp/` server ids**, then:
    - **Embedded path:** pulls latest approved snapshot via `RepositoryService::get_latest_mcp_snapshot(server_id)` (publisher/builder with in-process registry).
-   - **Remote path:** `agentium` with `--repository-url` → GET `{url}/mcp/servers/{server_id}` JSON into `build_dir/mcp/` via `mcp_cache::write_snapshot`.
+   - **Remote path:** `karak` with `--repository-url` → GET `{url}/mcp/servers/{server_id}` JSON into `build_dir/mcp/` via `mcp_cache::write_snapshot`.
 
 2. **Catalog merge:** `build_builder_catalog_with_mcp_root(Some(build_dir.join("mcp")))` merges MCP-derived tools into the same catalog used for ordinary external/host tools (`mcp_builder_catalog::project_tool`).
 
@@ -269,9 +269,9 @@ Reference example: `examples/agents/meteo-mcp-agent/manifest.json`.
 Developer commands (when using HTTP repository):
 
 ```bash
-agentium build --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
+karakara build --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
 
-agentium regen --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
+karakara regen --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
 ```
 
 No build/typegen path reads host-local MCP cache env vars; approved snapshots come from repository registry and are projected into `build_dir/mcp/`.
@@ -296,7 +296,7 @@ Each approved MCP platform tool becomes an **`McpToolHandler`** (`handler.rs`), 
 
 ### 9.1 Denied MCP client features
 
-Runtime client handler denies server→client calls that Agentium does not support as a MCP **client**:
+Runtime client handler denies server→client calls that Karakara does not support as a MCP **client**:
 
 - Roots listing, sampling / `createMessage`, structured elicitation — **hard `METHOD_NOT_FOUND`**.
 

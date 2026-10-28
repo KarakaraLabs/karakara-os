@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# E2E k8s test harness for the Agentium OS k8s deployment feature.
+# E2E k8s test harness for the Karakara OS k8s deployment feature.
 #
 # Builds a Docker image, boots a k3d cluster, applies manifests, and runs
 # 15 scenario assertions through real pod surfaces.
@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/lib.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/agentium"
+BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak"
 
 # Parse flags
 SKIP_BUILD=false
@@ -1069,7 +1069,7 @@ scenario_15_task_lifecycle_across_pods() {
 # Main
 # ============================================================================
 main() {
-  echo "=== Agentium OS E2E K8s Test Harness ==="
+  echo "=== Karakara OS E2E K8s Test Harness ==="
   echo ""
 
   preflight

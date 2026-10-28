@@ -55,7 +55,7 @@ jobs:
               - 'deploy/k3d/**'
               - 'deploy/argocd/**'
               - 'deploy/values/**'
-              - 'docker/agentium-argocd-sync.Dockerfile'
+              - 'docker/karakara-argocd-sync.Dockerfile'
               - 'scripts/verify-k8s-pilot-package.sh'
               - 'scripts/k8s-pilot-smoke.sh'
               - 'scripts/e2e-k8s/**'
@@ -84,7 +84,7 @@ jobs:
 
       - name: Install OS deps
         # build-essential / pkg-config / libssl-dev / libclang-dev / lld
-        # are needed by `cargo run -p agentium` during the
+        # are needed by `cargo run -p karakara-os` during the
         # smoke step. zstd + git-lfs hydrate the embedded ONNX models the
         # Dockerfile copies into the runtime image.
         run: |
@@ -168,7 +168,7 @@ jobs:
 
       - name: Run authoritative validator (Argo + registry)
         run: |
-          AGENTIUM_FIXED_TAG="ci-$(git rev-parse --short HEAD)" \
+          KARAKARA_FIXED_TAG="ci-$(git rev-parse --short HEAD)" \
             bash scripts/e2e-k8s/image-tag-nonce.sh
           ./scripts/verify-k8s-pilot-package.sh
         env:

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `agentium init` — scaffold project config (and optional first agent).
+//! `karakara init` — scaffold project config (and optional first agent).
 
 use std::path::Path;
 
@@ -36,7 +36,7 @@ pub fn run(dir: &Path, runner_url: &str, agent_name: Option<&str>, with_agent: b
 
     println!(
         "\nNext: edit source, then `{}`",
-        style("agentium install agent").cyan()
+        style("karakara install agent").cyan()
     );
     Ok(())
 }

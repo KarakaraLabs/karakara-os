@@ -58,7 +58,7 @@ default_user_scopes="channels:read,groups:read,im:read,mpim:read,channels:histor
 
 case "$command" in
   install-url)
-    state="agentium-slack-$(date +%s)"
+    state="karakara-slack-$(date +%s)"
     scopes="$default_scopes"
     user_scopes="$default_user_scopes"
     while [ $# -gt 0 ]; do

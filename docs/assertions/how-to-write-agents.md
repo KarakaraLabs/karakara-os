@@ -1,6 +1,6 @@
 # How to write agents
 
-This guide is the **primary onboarding path** for agent authors in Agentium OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **citable history / citations**. Deep dives stay in linked docs; start here, then follow "Further reading."
+This guide is the **primary onboarding path** for agent authors in Karakara OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **citable history / citations**. Deep dives stay in linked docs; start here, then follow "Further reading."
 
 A single **worked example** — a business reporting agent with CRM and email tools — threads through the entire document so you can follow the flow from manifest → BAML → step executor → projected history → citations → `StructuredReply`.
 

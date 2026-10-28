@@ -143,7 +143,7 @@ the runner.
 You can also call the command directly:
 
 ```bash
-cargo run -q -p agentium -- sandbox-bind-sync \
+cargo run -q -p karakara-os -- sandbox-bind-sync \
   --tool-dir . \
   --rootfs ./.tmp/bind-rootfs \
   --dockerfile adapter/Dockerfile \

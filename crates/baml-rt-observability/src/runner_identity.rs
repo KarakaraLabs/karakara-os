@@ -195,24 +195,24 @@ mod tests {
     #[test]
     fn pod_identity_returns_namespace_and_pod_name_when_both_set() {
         let mut env = EnvScope::new();
-        env.set("POD_NAMESPACE", Some("agentium"));
+        env.set("POD_NAMESPACE", Some("karakara"));
         env.set("POD_NAME", Some("runner-0"));
         env.set("HOSTNAME", Some("hostname-ignored"));
         assert_eq!(
             pod_identity(),
-            Some(("agentium".to_string(), "runner-0".to_string()))
+            Some(("karakara".to_string(), "runner-0".to_string()))
         );
     }
 
     #[test]
     fn pod_identity_falls_back_to_hostname_for_pod_name() {
         let mut env = EnvScope::new();
-        env.set("POD_NAMESPACE", Some("agentium"));
+        env.set("POD_NAMESPACE", Some("karakara"));
         env.set("POD_NAME", None);
         env.set("HOSTNAME", Some("ci-runner"));
         assert_eq!(
             pod_identity(),
-            Some(("agentium".to_string(), "ci-runner".to_string()))
+            Some(("karakara".to_string(), "ci-runner".to_string()))
         );
     }
 

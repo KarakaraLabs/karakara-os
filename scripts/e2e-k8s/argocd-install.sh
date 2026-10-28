@@ -32,8 +32,8 @@ if [[ "${SKIP_HELM_REPO_UPDATE:-0}" != "1" ]]; then
 fi
 
 HELM_WAIT_ARGS=()
-if [[ "${AGENTIUM_ARGO_HELM_WAIT:-1}" == "1" ]]; then
-  HELM_WAIT_ARGS=(--wait "--timeout=${AGENTIUM_ARGO_HELM_TIMEOUT:-20m}")
+if [[ "${KARAKARA_ARGO_HELM_WAIT:-1}" == "1" ]]; then
+  HELM_WAIT_ARGS=(--wait "--timeout=${KARAKARA_ARGO_HELM_TIMEOUT:-20m}")
 fi
 
 helm upgrade --install argocd argo/argo-cd \

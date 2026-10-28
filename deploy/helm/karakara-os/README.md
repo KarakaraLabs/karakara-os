@@ -1,6 +1,6 @@
-# Agentium OS Helm Chart
+# Karakara OS Helm Chart
 
-Supported Kubernetes install surface for the Agentium OS pilot. Deploys a two-runner StatefulSet with a shared SurrealDB provenance store in a single namespace.
+Supported Kubernetes install surface for the Karakara OS pilot. Deploys a two-runner StatefulSet with a shared SurrealDB provenance store in a single namespace.
 
 ## Prerequisites
 
@@ -13,28 +13,28 @@ Supported Kubernetes install surface for the Agentium OS pilot. Deploys a two-ru
 The chart references pre-existing Kubernetes secrets and ConfigMaps. Create them before installing.
 
 ```bash
-kubectl create namespace agentium
+kubectl create namespace karakara
 
 # SurrealDB credentials
-kubectl create secret generic surrealdb-credentials -n agentium \
-  --from-literal=username=agentium \
+kubectl create secret generic surrealdb-credentials -n karakara \
+  --from-literal=username=karakara \
   --from-literal=password="$(openssl rand -hex 32)"
 
 # Runner operator token
-kubectl create secret generic runner-token -n agentium \
+kubectl create secret generic runner-token -n karakara \
   --from-literal=token="$(openssl rand -hex 32)"
 
 # fnox.toml (LLM configuration)
-kubectl create configmap fnox-config -n agentium \
+kubectl create configmap fnox-config -n karakara \
   --from-file=fnox.toml=./fnox.toml
 ```
 
 ## Install
 
 ```bash
-helm upgrade --install agentium deploy/helm/agentium-os/ \
-  --namespace agentium --create-namespace \
-  -f deploy/helm/agentium-os/examples/design-partner-values.yaml
+helm upgrade --install karakara deploy/helm/karakara-os/ \
+  --namespace karak --create-namespace \
+  -f deploy/helm/karakara-os/examples/design-partner-values.yaml
 ```
 
 ### Local k3d (Argo CD + local registry)
@@ -48,13 +48,13 @@ just up
 
 Values: [`deploy/values/local/defaults.yaml`](../../values/local/defaults.yaml) plus generated [`deploy/values/generated/images.yaml`](../../values/generated/images.yaml). See [`deploy/argocd/README.md`](../../argocd/README.md) and [`RELEASING.md`](../../../RELEASING.md).
 
-The host pushes to `localhost:5400`; the cluster pulls from `k3d-agentium-registry:5000` (`deploy/k3d/cluster.yaml`).
+The host pushes to `localhost:5400`; the cluster pulls from `k3d-karakara-registry:5000` (`deploy/k3d/cluster.yaml`).
 
 ## Verify
 
 ```bash
 # Port-forward to the runner API service
-kubectl port-forward svc/agentium-agentium-os-runner-api 18080:18080 -n agentium
+kubectl port-forward svc/karakara-karakara-os-runner-api 18080:18080 -n karakara
 
 # Health check
 curl http://localhost:18080/healthz
@@ -68,11 +68,11 @@ For a scripted, end-to-end local validation of this same install path (cluster â
 
 ## Runner image
 
-There is no published Agentium runner image. `runner.image.repository` and `runner.image.tag` are required values with no defaults. You must build and push the runner image to your own registry:
+There is no published Karakara runner image. `runner.image.repository` and `runner.image.tag` are required values with no defaults. You must build and push the runner image to your own registry:
 
 ```bash
-docker build -t your-registry.example.com/agentium-runner:0.1.0 .
-docker push your-registry.example.com/agentium-runner:0.1.0
+docker build -t your-registry.example.com/karakara-runner:0.1.0 .
+docker push your-registry.example.com/karakara-runner:0.1.0
 ```
 
 For any real design-partner or shared-cluster install, that means supplying a cluster-reachable OCI image reference, typically via a private registry. The `k3d image import` flow above is a fast dev fallback for local iteration; the k3d-managed-registry flow above mirrors the real install contract end-to-end.
@@ -114,32 +114,32 @@ This is a distinct failure mode from the `OOMKilled` path above. `Insufficient m
 
 ## SurrealDB namespaces
 
-The chart provisions a single SurrealDB instance shared by every runner crate. Each crate owns its own namespace / database pair; **there is no single "agentium" namespace**. When debugging or running ad-hoc queries you must target the right pair:
+The chart provisions a single SurrealDB instance shared by every runner crate. Each crate owns its own namespace / database pair; **there is no single "karakara" namespace**. When debugging or running ad-hoc queries you must target the right pair:
 
 | Namespace    | Database       | Owner                  | Contents                                            |
 | ------------ | -------------- | ---------------------- | --------------------------------------------------- |
-| `cluster`    | `registry`     | `agentium serve`       | `cluster_runners`, `cluster_agent_placements`       |
+| `cluster`    | `registry`     | `karak serve`       | `cluster_runners`, `cluster_agent_placements`       |
 | `provenance` | `store`        | `baml-rt-provenance`   | provenance graph (nodes, edges, payloads, archives) |
 | `config`     | `store`        | `baml-rt-config`       | tool configuration and secrets overview             |
 | `baml`       | `repository`   | `baml-rt-repository`   | content-addressable agent package archive           |
-| `baml`       | `runner_state` | `agentium serve`       | deployment state                                    |
+| `baml`       | `runner_state` | `karak serve`       | deployment state                                    |
 
 The authoritative list lives at `scripts/e2e-k8s/lib.sh:SURREAL_KNOWN_NAMESPACES`; update it (and this table) when a crate adds a new namespace.
 
 ### Querying interactively
 
 ```bash
-SURREAL_POD="$(kubectl get pod -n agentium -l app.kubernetes.io/component=surrealdb -o jsonpath='{.items[0].metadata.name}')"
+SURREAL_POD="$(kubectl get pod -n karakara -l app.kubernetes.io/component=surrealdb -o jsonpath='{.items[0].metadata.name}')"
 
 # Cluster routing state
-kubectl exec -n agentium "$SURREAL_POD" -c surrealdb -i -- \
+kubectl exec -n karakara "$SURREAL_POD" -c surrealdb -i -- \
   /surreal sql --endpoint http://localhost:8000 \
     --username "$SURREAL_USER" --password "$SURREAL_PASS" \
     --namespace cluster --database registry --json \
   <<<"SELECT * FROM cluster_runners;"
 
 # Provenance graph density
-kubectl exec -n agentium "$SURREAL_POD" -c surrealdb -i -- \
+kubectl exec -n karakara "$SURREAL_POD" -c surrealdb -i -- \
   /surreal sql --endpoint http://localhost:8000 \
     --username "$SURREAL_USER" --password "$SURREAL_PASS" \
     --namespace provenance --database store --json \

@@ -1,6 +1,6 @@
 # Security Policy
 
-Agentium OS executes agents, brokers tools, and handles secrets and provenance
+Karakara OS executes agents, brokers tools, and handles secrets and provenance
 data, so we take security reports seriously and appreciate coordinated
 disclosure.
 
@@ -37,4 +37,4 @@ time.
 - Coordination with you on disclosure timing once a fix is available, and
   credit in the advisory if you would like it.
 
-Thank you for helping keep Agentium OS and its users safe.
+Thank you for helping keep Karakara OS and its users safe.

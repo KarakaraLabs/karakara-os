@@ -375,8 +375,8 @@ mod tests {
     #[test]
     fn aggregates_all_success_outcomes() {
         let runners = vec![
-            (runner("r0", "agentium-runner-0"), Ok(false)),
-            (runner("r1", "agentium-runner-1"), Ok(false)),
+            (runner("r0", "karakara-runner-0"), Ok(false)),
+            (runner("r1", "karakara-runner-1"), Ok(false)),
         ];
         let mut results: Vec<ClusterDeployRunnerResultDto> = runners
             .into_iter()
@@ -396,9 +396,9 @@ mod tests {
     #[test]
     fn partial_failure_flags_all_succeeded_false() {
         let results = [
-            result_from_outcome(runner("r0", "agentium-runner-0"), Ok(true)),
+            result_from_outcome(runner("r0", "karakara-runner-0"), Ok(true)),
             result_from_outcome(
-                runner("r1", "agentium-runner-1"),
+                runner("r1", "karakara-runner-1"),
                 Err("connection refused".to_string()),
             ),
         ];
@@ -416,7 +416,7 @@ mod tests {
     /// `already_deployed=Some(true)` round-trips through the result mapping.
     #[test]
     fn already_deployed_round_trips() {
-        let result = result_from_outcome(runner("r0", "agentium-runner-0"), Ok(true));
+        let result = result_from_outcome(runner("r0", "karakara-runner-0"), Ok(true));
         assert!(result.ok);
         assert_eq!(result.already_deployed, Some(true));
         assert!(result.error.is_none());

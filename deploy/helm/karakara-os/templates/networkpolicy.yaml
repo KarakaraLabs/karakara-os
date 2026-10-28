@@ -21,13 +21,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "agentium-os.runner.fullname" . }}-ingress
+  name: {{ include "karakara-os.runner.fullname" . }}-ingress
   labels:
-    {{- include "agentium-os.runner.labels" . | nindent 4 }}
+    {{- include "karakara-os.runner.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
-      {{- include "agentium-os.runner.selectorLabels" . | nindent 6 }}
+      {{- include "karakara-os.runner.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
@@ -37,7 +37,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "agentium-os.runner.selectorLabels" . | nindent 14 }}
+              {{- include "karakara-os.runner.selectorLabels" . | nindent 14 }}
       ports:
         - protocol: TCP
           port: {{ .Values.runner.service.headless.port }}
@@ -52,20 +52,20 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "agentium-os.surrealdb.fullname" . }}-ingress
+  name: {{ include "karakara-os.surrealdb.fullname" . }}-ingress
   labels:
-    {{- include "agentium-os.surrealdb.labels" . | nindent 4 }}
+    {{- include "karakara-os.surrealdb.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
-      {{- include "agentium-os.surrealdb.selectorLabels" . | nindent 6 }}
+      {{- include "karakara-os.surrealdb.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "agentium-os.runner.selectorLabels" . | nindent 14 }}
+              {{- include "karakara-os.runner.selectorLabels" . | nindent 14 }}
       ports:
         - protocol: TCP
           port: {{ .Values.surrealdb.service.port }}

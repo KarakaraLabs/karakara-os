@@ -138,8 +138,8 @@ struct RunArgs {
     #[arg(long = "route", value_parser = parse_source_sink_route)]
     routes: Vec<SourceSinkRouteArg>,
 
-    /// Channel selector (`agentium-eng`, `#agentium-eng`, or `C...`).
-    #[arg(long, default_value = "agentium-eng")]
+    /// Channel selector (`karakara-eng`, `#karakara-eng`, or `C...`).
+    #[arg(long, default_value = "karakara-eng")]
     channel: String,
 
     /// Poll interval in seconds for watch mode.

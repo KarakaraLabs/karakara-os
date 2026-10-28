@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `agentium config show|set`
+//! `karakara config show|set`
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use console::style;
 
-use crate::project::{self, AgentiumConfig};
+use crate::project::{self, KarakaraConfig};
 
 pub fn show(config_path: Option<&Path>) -> Result<()> {
     let (cfg, loaded_from) = project::discover_config(config_path)?;
@@ -25,11 +25,11 @@ pub fn show(config_path: Option<&Path>) -> Result<()> {
 pub fn set(key: &str, value: &str, config_path: Option<&Path>) -> Result<()> {
     let path = config_path
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("agentium.toml"));
+        .unwrap_or_else(|| PathBuf::from("karakara.toml"));
     let mut cfg = if path.is_file() {
         project::load_file(&path)?
     } else {
-        AgentiumConfig::default()
+        KarakaraConfig::default()
     };
 
     match key {

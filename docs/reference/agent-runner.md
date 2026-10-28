@@ -1,6 +1,6 @@
 # Agent Runner Reference
 
-The `baml-agent-runner` crate provides the core A2A (Agent-to-Agent) host library that powers the Agentium OS runtime. It's instantiated via `agentium serve` and handles agent lifecycle, conversation management, and tool execution.
+The `baml-agent-runner` crate provides the core A2A (Agent-to-Agent) host library that powers the Karakara OS runtime. It's instantiated via `karak serve` and handles agent lifecycle, conversation management, and tool execution.
 
 ## Configuration
 
@@ -180,7 +180,7 @@ tool_timeout_seconds = 300
 ### Command Line Options
 
 ```bash
-agentium serve \
+karak serve \
   --port 8080 \
   --surreal-endpoint ws://localhost:8000/rpc \
   --agent-path ./my-agent \

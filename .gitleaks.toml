@@ -1,4 +1,4 @@
-# gitleaks configuration for Agentium OS.
+# gitleaks configuration for Karakara OS.
 #
 # Inherits the upstream rule set and layers project-specific allowlists for
 # documented placeholder tokens, deliberate negative-test fixtures, and large
@@ -11,7 +11,7 @@
 # The same scans run in CI (.github/workflows/secret-scan.yml) and as a
 # pre-commit hook (.pre-commit-config.yaml).
 
-title = "Agentium OS gitleaks configuration"
+title = "Karakara OS gitleaks configuration"
 
 [extend]
 useDefault = true

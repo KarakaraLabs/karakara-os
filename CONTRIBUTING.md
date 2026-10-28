@@ -1,4 +1,4 @@
-# Contributing to Agentium OS
+# Contributing to Karakara OS
 
 Thanks for your interest in contributing! This guide covers how to build, test,
 lint, and submit changes. By participating you agree to abide by our
@@ -6,7 +6,7 @@ lint, and submit changes. By participating you agree to abide by our
 
 ## Prerequisites
 
-Agentium OS is a Rust workspace (edition 2024) with the toolchain pinned via
+Karakara OS is a Rust workspace (edition 2024) with the toolchain pinned via
 `rust-toolchain.toml`, so `rustup` selects the right version automatically.
 
 Some build and test paths link the runner binary and exercise the agent build
@@ -118,7 +118,7 @@ settings (branch protection, runner groups, secrets).
 
 ## Licensing
 
-Agentium OS is licensed under the **[Apache License, Version 2.0](LICENSE)**
+Karakara OS is licensed under the **[Apache License, Version 2.0](LICENSE)**
 only. There is no separate “SPDX license” — `Apache-2.0` is the standard
 [SPDX](https://spdx.org/licenses/) identifier for that same legal text.
 

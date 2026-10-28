@@ -49,7 +49,7 @@ Or directly:
 
 Flags: `--no-build`, `--keep-cluster`, `--image-tag`, `--local-port`, `--values`. See `--help`.
 
-Image tags are nonces from `deploy/values/generated/.last-image-tag` (or `AGENTIUM_IMAGE_TAG`). The runner image is pushed to `k3d-agentium-registry:5000` and installed via Argo CD.
+Image tags are nonces from `deploy/values/generated/.last-image-tag` (or `KARAKARA_IMAGE_TAG`). The runner image is pushed to `k3d-karakara-registry:5000` and installed via Argo CD.
 
 ### Richer scenario suite
 
@@ -125,14 +125,14 @@ On any scenario failure, the harness dumps diagnostic data before tearing down:
 
 ```
 ./e2e-k8s-logs/<timestamp>/
-├── agentium-agentium-os-runner-0.log            # Current pod logs
-├── agentium-agentium-os-runner-0-previous.log   # Previous container logs (if pod restarted)
-├── agentium-agentium-os-runner-0-tail.log       # Tail re-captured ~2s after the dump (catches lines emitted post-failure)
-├── agentium-agentium-os-runner-1.log
-├── agentium-agentium-os-runner-1-previous.log
-├── agentium-agentium-os-runner-1-tail.log
-├── agentium-agentium-os-surrealdb-0.log
-├── agentium-agentium-os-surrealdb-0-previous.log
+├── karakara-karakara-os-runner-0.log            # Current pod logs
+├── karakara-karakara-os-runner-0-previous.log   # Previous container logs (if pod restarted)
+├── karakara-karakara-os-runner-0-tail.log       # Tail re-captured ~2s after the dump (catches lines emitted post-failure)
+├── karakara-karakara-os-runner-1.log
+├── karakara-karakara-os-runner-1-previous.log
+├── karakara-karakara-os-runner-1-tail.log
+├── karakara-karakara-os-surrealdb-0.log
+├── karakara-karakara-os-surrealdb-0-previous.log
 ├── describe-pods.txt                            # `kubectl describe pod` for each chart pod
 ├── events.txt                                   # Namespace events sorted by lastTimestamp
 ├── all-pods.txt                                 # `kubectl get pods -A -o wide`
@@ -145,8 +145,8 @@ On any scenario failure, the harness dumps diagnostic data before tearing down:
 ```
 
 File names reflect the chart-rendered StatefulSet names
-(`<release>-agentium-os-runner`, `<release>-agentium-os-surrealdb`). The
-default release is `agentium`.
+(`<release>-karakara-os-runner`, `<release>-karakara-os-surrealdb`). The
+default release is `karakara`.
 
 When triaging a failed lane, work from cluster layer down to runner layer:
 
@@ -179,11 +179,11 @@ leak credentials into the artifact zip.
 To query the cluster registry manually while the cluster is running (with `--keep-cluster`), use the chart-rendered SurrealDB pod name:
 
 ```bash
-SURREAL_POD=$(kubectl -n agentium get statefulset \
-  -l app.kubernetes.io/instance=agentium,app.kubernetes.io/component=surrealdb \
+SURREAL_POD=$(kubectl -n karakara get statefulset \
+  -l app.kubernetes.io/instance=karakara,app.kubernetes.io/component=surrealdb \
   -o jsonpath='{.items[0].metadata.name}')-0
 
-kubectl exec -n agentium "$SURREAL_POD" -c surrealdb -- \
+kubectl exec -n karakara "$SURREAL_POD" -c surrealdb -- \
   /surreal sql \
   --endpoint http://localhost:8000 \
   --username e2e --password e2e-test-pass \
@@ -199,16 +199,16 @@ Replace the SQL statement as needed. The provenance store uses namespace `proven
 If the harness crashes without running its trap handler (e.g. `kill -9`), clean up manually:
 
 ```bash
-k3d cluster delete agentium
+k3d cluster delete karakara
 
 # Optional: also remove the local registry container (persists across runs
 # with --restart=unless-stopped so it stays available for future
 # with --keep-cluster).
-docker rm -f k3d-agentium-registry
+docker rm -f k3d-karakara-registry
 ```
 
 Check for orphaned port-forwards:
 
 ```bash
-ps aux | grep 'port-forward.*agentium' | grep -v grep | awk '{print $2}' | xargs kill
+ps aux | grep 'port-forward.*karakara' | grep -v grep | awk '{print $2}' | xargs kill
 ```

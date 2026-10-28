@@ -1,13 +1,13 @@
 <!-- doc-type: assertion -->
 
-# Agentium runtime thesis
+# Karakara runtime thesis
 
 Normative architectural assertions that guide agent authoring, runtime changes, and reviews.
 Validated against the codebase as of 2026-06.
 
 ## Runtime boundary
 
-**Agentium OS** is a deployable **agent runtime**, not an in-process framework. It executes
+**Karakara OS** is a deployable **agent runtime**, not an in-process framework. It executes
 declarative agent artefacts (manifest, TypeScript, BAML), owns planning and execution surfaces,
 orchestrates **host-mediated** tool sessions, and captures provenance for everything inside the
 boundary.

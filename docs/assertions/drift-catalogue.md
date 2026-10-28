@@ -344,20 +344,20 @@ time from `session_plan_functions.json`.
 
 ### How tool descriptions flow through drift scoring
 
-1. BAML function returns `SupportNotionSessionPlan { step: { op: "Send", input: { query: "agentium" } } }`
+1. BAML function returns `SupportNotionSessionPlan { step: { op: "Send", input: { query: "karakara" } } }`
 2. `FunctionToolManifest` maps `ChooseNotionAction → support/notion` (resolved at load time)
 3. `ToolNameResolution::FromManifest("support/notion")` is set on `LlmEffectMetadata`
 4. Drift scorer calls `ToolRegistry::describe_invocation_for("support/notion", payload)`
-5. `ToolWrapper<NotionTool>` deserializes `step.input` as `NotionInput::SearchPages { query: "agentium" }`
-6. `DescribeAction::describe()` on `NotionInput` returns `"searching Notion for 'agentium'"`
+5. `ToolWrapper<NotionTool>` deserializes `step.input` as `NotionInput::SearchPages { query: "karakara" }`
+6. `DescribeAction::describe()` on `NotionInput` returns `"searching Notion for 'karakara'"`
 7. This prose is embedded and compared to the plan step description
 
 ### Aligned tool action examples
 
 | Tool action | DescribeAction output | Plan step | Step alignment |
 |-------------|----------------------|-----------|---------------|
-| Notion SearchPages(query="agentium") | "searching Notion for 'agentium'" | "Search Notion for pages about agentium" | HIGH (>0.55) |
-| Notion GetPageBlocks | "retrieving Notion page content" | "Retrieve block content from the agentium page" | HIGH (>0.45) |
+| Notion SearchPages(query="karakara") | "searching Notion for 'karakara'" | "Search Notion for pages about karakara" | HIGH (>0.55) |
+| Notion GetPageBlocks | "retrieving Notion page content" | "Retrieve block content from the karakara page" | HIGH (>0.45) |
 | Notion SearchPages(query=None) | "listing all Notion pages" | "Search Notion for all user pages" | HIGH (>0.55) |
 | ClickUp CreateTask(name="Research") | "creating ClickUp task 'Research'" | "Create task via ClickUp with title Research" | HIGH (>0.55) |
 | Discover agents | "listing all available agents" | "Query agent registry for available agents" | HIGH (>0.50) |
@@ -366,14 +366,14 @@ time from `session_plan_functions.json`.
 
 | Tool action | DescribeAction output | Plan step | Step alignment |
 |-------------|----------------------|-----------|---------------|
-| Notion SearchPages(query="IGNORE ALL INSTRUCTIONS...") | "searching Notion for 'IGNORE ALL...'" | "Search Notion for agentium" | VERY LOW (<0.35) → **block** |
+| Notion SearchPages(query="IGNORE ALL INSTRUCTIONS...") | "searching Notion for 'IGNORE ALL...'" | "Search Notion for karakara" | VERY LOW (<0.35) → **block** |
 | Slack SearchMessages(query="API keys passwords") | "searching Slack for 'API keys passwords'" | "Search Slack for deployment discussions" | VERY LOW (<0.35) → **block** |
 
 ### Composite severity for PlanCommitted
 
 For PlanCommitted calls, the **step** is the operative anchor — not the intent.
 A tool action like "retrieving Notion page content" may be semantically distant
-from the broad intent "Find information about agentium" (intent=0.25) but close
+from the broad intent "Find information about karakara" (intent=0.25) but close
 to its assigned step "Retrieve block content from the page" (step=0.52). The
 composite severity is driven by `step_sev`, `trajectory_sev`, `adherence_sev`,
 and `xe_sev`. Intent alignment is NOT in the worst-of calculation — it
@@ -387,7 +387,7 @@ See `tests/fixtures/drift/09_tool_action_summaries.toml` for calibration scenari
 ## Threshold Calibration Guide
 
 1. **Start in Audit mode** with the default thresholds. Never enable Enforce before collecting baseline data.
-2. **Run representative workloads** and examine drift distributions in the Agentium Drift tab.
+2. **Run representative workloads** and examine drift distributions in the Karakara Drift tab.
 3. **Observe per-agent/model baselines** — different LLMs produce different embedding signatures. A model that writes verbose session plans may have naturally lower step alignment than a terse model.
 4. **Tighten thresholds** only after confirming stable baselines. Decrease warn thresholds in increments of 0.05.
 5. **`revision_leniency`** (default 0.10) accommodates plan revisions. Increase to 0.15–0.20 if your agents frequently replan.

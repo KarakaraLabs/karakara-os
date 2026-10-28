@@ -26,7 +26,7 @@ use uuid::Uuid;
 #[cfg(test)]
 const NAMESPACE_URL: Uuid = uuid::uuid!("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 
-/// Fixed domain separator for every Agentium agent identity.
+/// Fixed domain separator for every Karakara agent identity.
 /// UUIDv5(`NAMESPACE_URL`, `"urn:agentium:agent-id"`).
 pub const AGENTIUM_AGENT_NAMESPACE: Uuid = uuid::uuid!("901413be-e052-5702-98d9-9e382499c0b0");
 

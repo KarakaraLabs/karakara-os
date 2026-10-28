@@ -34,7 +34,7 @@ import type { LlmPromptOperation } from "../types/a2a";
 import RunStatusIndicator from "./RunStatusIndicator.vue";
 import { IDLE_RUN_STATUS, type OperatorRunStatus } from "../operator/runStatus";
 
-const TRACES_STORAGE_KEY = "agentium:showTraces";
+const TRACES_STORAGE_KEY = "karakara:showTraces";
 
 function readTracesPreference(): boolean | null {
   if (typeof window === "undefined") return null;

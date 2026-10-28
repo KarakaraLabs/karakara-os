@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `agentium install agent|tool` — publish source and deploy (or enable tool).
+//! `karakara install agent|tool` — publish source and deploy (or enable tool).
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 use console::style;
 
 use super::{publish::PublishOriginArg, push::run as push_run, utils::RunnerToken};
-use crate::project::{self, AgentiumConfig};
+use crate::project::{self, KarakaraConfig};
 
 pub fn install_agent(
     path: Option<&str>,
@@ -80,7 +80,7 @@ pub fn install_tool(
     })
 }
 
-fn resolve_agent_path(path: Option<&str>, cfg: &AgentiumConfig, cwd: &Path) -> Result<PathBuf> {
+fn resolve_agent_path(path: Option<&str>, cfg: &KarakaraConfig, cwd: &Path) -> Result<PathBuf> {
     if let Some(p) = path {
         let pb = PathBuf::from(p);
         return Ok(if pb.is_absolute() { pb } else { cwd.join(pb) });

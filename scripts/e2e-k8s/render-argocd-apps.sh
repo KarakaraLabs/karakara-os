@@ -33,8 +33,8 @@ _track_rev() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["targetRevision"])' "${TRACK}"
 }
 
-REPO="${AGENTIUM_GIT_REPO:-$(_track_repo)}"
-REV="${AGENTIUM_GIT_REVISION:-$(_track_rev)}"
+REPO="${KARAKARA_GIT_REPO:-$(_track_repo)}"
+REV="${KARAKARA_GIT_REVISION:-$(_track_rev)}"
 OUT_DIR="${ROOT}/deploy/argocd/.rendered"
 APP_DIR="${ROOT}/deploy/argocd/apps"
 mkdir -p "${OUT_DIR}"
@@ -43,15 +43,15 @@ _render() {
   local infile="$1"
   local base
   base="$(basename "${infile}")"
-  sed -e "s|__AGENTIUM_GIT_REPO__|${REPO}|g" -e "s|__AGENTIUM_GIT_REVISION__|${REV}|g" "${infile}" \
+  sed -e "s|__KARAKARA_GIT_REPO__|${REPO}|g" -e "s|__KARAKARA_GIT_REVISION__|${REV}|g" "${infile}" \
     >"${OUT_DIR}/${base}"
 }
 
 _render "${APP_DIR}/root-application.yaml"
 cp "${APP_DIR}/project.yaml" "${OUT_DIR}/project.yaml"
 
-if grep -q '__AGENTIUM_GIT_REPO__\|__AGENTIUM_GIT_REVISION__' "${OUT_DIR}/root-application.yaml" 2>/dev/null; then
-  die "${OUT_DIR}/root-application.yaml still contains __AGENTIUM_* placeholders"
+if grep -q '__KARAKARA_GIT_REPO__\|__KARAKARA_GIT_REVISION__' "${OUT_DIR}/root-application.yaml" 2>/dev/null; then
+  die "${OUT_DIR}/root-application.yaml still contains __KARAKARA_* placeholders"
 fi
 
 echo "render-argocd-apps: wrote ${OUT_DIR} repo=${REPO} rev=${REV}"

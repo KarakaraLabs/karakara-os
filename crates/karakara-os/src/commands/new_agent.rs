@@ -249,7 +249,7 @@ pub fn run(
     );
     println!(
         "  3. Run {} to package the agent",
-        style("agentium install agent --path <agent-dir>").dim()
+        style("karakara install agent --path <agent-dir>").dim()
     );
 
     Ok(())

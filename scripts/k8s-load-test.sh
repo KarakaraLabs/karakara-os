@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/e2e-k8s/lib.sh"
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/agentium"
+BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak"
 
 SCENARIOS="local_a2a,forwarded_a2a,split_dual_runner"
 CONCURRENCY="1,8,32"
@@ -46,7 +46,7 @@ OBSERVABILITY_COMPOSE_FILE="${REPO_ROOT}/observability/docker-compose.yml"
 OTLP_HOST_PORT="4317"
 PROMETHEUS_URL="http://localhost:9090"
 OTLP_ENDPOINT="http://host.k3d.internal:4317"
-VALUES_OVERLAY="${REPO_ROOT}/deploy/helm/agentium-os/examples/k3d-load-test-values.yaml"
+VALUES_OVERLAY="${REPO_ROOT}/deploy/helm/karakara-os/examples/k3d-load-test-values.yaml"
 SCENARIO_RESULTS_JSON=()
 
 usage() {
@@ -88,7 +88,7 @@ What this does:
 
 This orchestrator keeps the k3d cluster and observability stack running
 on success. `docker compose -f observability/docker-compose.yml down` and
-`k3d cluster delete agentium` clean up.
+`k3d cluster delete karakara` clean up.
 EOF
 }
 
@@ -312,7 +312,7 @@ probe_otlp_reachability() {
   if [[ "$current" != "$OTLP_ENDPOINT" ]]; then
     log_info "Updating runner OTEL_EXPORTER_OTLP_ENDPOINT (${current:-unset} -> ${OTLP_ENDPOINT}) via helm upgrade"
     helm upgrade "$RELEASE_NAME" \
-      "${REPO_ROOT}/deploy/helm/agentium-os/" \
+      "${REPO_ROOT}/deploy/helm/karakara-os/" \
       --namespace "$NAMESPACE" \
       --reuse-values \
       --set-string "observability.otlpEndpoint=${OTLP_ENDPOINT}" >/dev/null

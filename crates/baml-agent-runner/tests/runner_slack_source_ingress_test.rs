@@ -157,7 +157,7 @@ async fn enqueue_slack_inbox_source_records(
 
 fn raw_slack_source_event(source_label: &str, records: Vec<Value>) -> Value {
     let source_key = match source_label {
-        "#agentium-eng" => "slack:C012TEST001",
+        "#karakara-eng" => "slack:C012TEST001",
         _ => "slack:C012TEST999",
     };
 
@@ -336,7 +336,7 @@ async fn slack_source_ingress_dispatch_http_routes_raw_slack_source_records_to_t
         "message_type": "host.source-records.v1",
         "messages": [
             raw_slack_source_event(
-                "#agentium-eng",
+                "#karakara-eng",
                 vec![
                     json!({
                         "ts": "1735720111.000001",
@@ -408,7 +408,7 @@ async fn slack_source_ingress_dispatch_http_noops_raw_slack_chatter_without_acti
         "message_type": "host.source-records.v1",
         "messages": [
             raw_slack_source_event(
-                "#agentium-eng",
+                "#karakara-eng",
                 vec![
                     json!({
                         "ts": "1735720211.000001",
@@ -482,7 +482,7 @@ async fn slack_source_ingress_dispatch_http_batches_mixed_raw_slack_work_items_i
         "message_type": "host.source-records.v1",
         "messages": [
             raw_slack_source_event(
-                "#agentium-eng",
+                "#karakara-eng",
                 vec![
                     json!({
                         "ts": "1735720311.000001",
@@ -537,7 +537,7 @@ async fn slack_source_ingress_dispatch_http_expands_slack_threads_before_derivin
 
     let (mock_server, mock_state) = start_slack_thread_replies_server(vec![
         json!({
-            "channel_id": "Cagentiumeng",
+            "channel_id": "Ckarakaraeng",
             "ts": "1735720511.000001",
             "thread_ts": "1735720511.000001",
             "user_id": "U123",
@@ -545,7 +545,7 @@ async fn slack_source_ingress_dispatch_http_expands_slack_threads_before_derivin
             "text": "Can we track the OAuth docs follow-up?"
         }),
         json!({
-            "channel_id": "Cagentiumeng",
+            "channel_id": "Ckarakaraeng",
             "ts": "1735720512.000001",
             "thread_ts": "1735720511.000001",
             "user_id": "U456",
@@ -583,7 +583,7 @@ async fn slack_source_ingress_dispatch_http_expands_slack_threads_before_derivin
         "message_type": "host.source-records.v1",
         "messages": [
             raw_slack_source_event(
-                "#agentium-eng",
+                "#karakara-eng",
                 vec![json!({
                     "ts": "1735720511.000001",
                     "thread_ts": "1735720511.000001",
@@ -665,7 +665,7 @@ async fn slack_source_ingress_dispatch_http_does_not_expand_thread_root_without_
         "message_type": "host.source-records.v1",
         "messages": [
             raw_slack_source_event(
-                "#agentium-eng",
+                "#karakara-eng",
                 vec![json!({
                     "ts": "1735720511.000001",
                     "thread_ts": "1735720511.000001",
@@ -877,8 +877,8 @@ async fn slack_source_ingress_dispatch_http_rejects_multi_message_batches() {
         "routing_key": "event:intake",
         "message_type": "host.source-records.v1",
         "messages": [
-            raw_slack_source_event("#agentium-eng", vec![]),
-            raw_slack_source_event("#agentium-eng", vec![])
+            raw_slack_source_event("#karakara-eng", vec![]),
+            raw_slack_source_event("#karakara-eng", vec![])
         ]
     });
 
@@ -935,7 +935,7 @@ async fn slack_source_ingress_dispatch_http_rejects_noncanonical_raw_source_rout
         "routing_key": "slack:intake",
         "message_type": "host.source-records.v1",
         "messages": [
-            raw_slack_source_event("#agentium-eng", vec![])
+            raw_slack_source_event("#karakara-eng", vec![])
         ]
     });
 

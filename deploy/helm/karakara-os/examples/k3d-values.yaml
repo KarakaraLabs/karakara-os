@@ -1,18 +1,18 @@
 # Local k3d development values.
 #
-# Prerequisites: see deploy/helm/agentium-os/README.md
+# Prerequisites: see deploy/helm/karakara-os/README.md
 #
 # Install:
-#   helm upgrade --install agentium deploy/helm/agentium-os/ \
-#     --namespace agentium --create-namespace \
-#     -f deploy/helm/agentium-os/examples/k3d-values.yaml
+#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#     --namespace karak --create-namespace \
+#     -f deploy/helm/karakara-os/examples/k3d-values.yaml
 
 global:
   environment: development
 
 runner:
   image:
-    repository: agentium-runner
+    repository: karakara-runner
     tag: demo
     pullPolicy: Never
   replicaCount: 2

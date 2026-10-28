@@ -41,7 +41,7 @@ Commands:
   enable    Approve/import the Claude external-tool snapshot into the repository registry
   runner    Prepare the sandbox, then start baml-agent-runner on 127.0.0.1:18080
   push      Enable registry snapshot, then publish/deploy examples/agents/claude-agent
-  chat      Run push, then connect to claude-agent with agentium chat
+  chat      Run push, then connect to claude-agent with karakara chat
 
 Typical flow:
   # Terminal 1
@@ -89,7 +89,7 @@ prepare() {
     rm -rf "$TOOL_TMP_DIR"
 
     log_step "Running setup_bind_sandbox.sh --force (builds/materializes sandbox rootfs)"
-    AGENT_PLATFORM_CMD="cargo run -q -p agentium --" \
+    AGENT_PLATFORM_CMD="cargo run -q -p karakara-os --" \
         "$TOOL_DIR/setup_bind_sandbox.sh" \
         --image "$SANDBOX_IMAGE" \
         --rootfs "$ROOTFS" \
@@ -106,7 +106,7 @@ enable_external_tool() {
     fi
 
     log_step "Approving/importing Claude external-tool snapshot into $REPOSITORY_URL"
-    cargo run -q -p agentium -- external-tool enable \
+    cargo run -q -p karakara-os -- external-tool enable \
         "$TOOL_DIR" \
         --sandbox-rootfs "$ROOTFS" \
         --repository-url "$REPOSITORY_URL" \
@@ -116,7 +116,7 @@ enable_external_tool() {
 push_agent() {
     enable_external_tool
     log_step "Publishing and deploying $AGENT_DIR"
-    cargo run -q -p agentium -- install agent \
+    cargo run -q -p karakara-os -- install agent \
         --path "$AGENT_DIR" \
         --repository-url "$REPOSITORY_URL" \
         --url "$RUNNER_URL"
@@ -134,9 +134,9 @@ case "$cmd" in
         ;;
     runner)
         prepare
-        log_step "Starting agentium serve on 127.0.0.1:18080"
+        log_step "Starting karak serve on 127.0.0.1:18080"
         echo "    In another terminal, run: scripts/claude_sandbox.sh chat"
-        exec cargo run -p agentium --all-features -- serve \
+        exec cargo run -p karakara-os --all-features -- serve \
             --a2a-stdio \
             --serve-http 127.0.0.1:18080 \
             --provenance-db provenance.db
@@ -147,7 +147,7 @@ case "$cmd" in
     chat)
         push_agent
         log_step "Connecting to $AGENT_NAME"
-        exec cargo run -p agentium -- chat --agent "$AGENT_NAME"
+        exec cargo run -p karakara-os -- chat --agent "$AGENT_NAME"
         ;;
     -h|--help|help)
         usage

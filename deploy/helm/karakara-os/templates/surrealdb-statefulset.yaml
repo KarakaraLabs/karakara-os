@@ -1,22 +1,22 @@
-{{- $fullname := include "agentium-os.surrealdb.fullname" . -}}
+{{- $fullname := include "karakara-os.surrealdb.fullname" . -}}
 {{- $secret := required "surrealdb.auth.existingSecret is required" .Values.surrealdb.auth.existingSecret -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ $fullname }}
   labels:
-    {{- include "agentium-os.surrealdb.labels" . | nindent 4 }}
+    {{- include "karakara-os.surrealdb.labels" . | nindent 4 }}
 spec:
   # Single instance — SurrealDB HA is out of scope for the pilot.
   serviceName: {{ $fullname }}
   replicas: 1
   selector:
     matchLabels:
-      {{- include "agentium-os.surrealdb.selectorLabels" . | nindent 6 }}
+      {{- include "karakara-os.surrealdb.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "agentium-os.surrealdb.labels" . | nindent 8 }}
+        {{- include "karakara-os.surrealdb.labels" . | nindent 8 }}
     spec:
       containers:
         - name: surrealdb

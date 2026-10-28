@@ -1,6 +1,6 @@
-# Agentium OS
+# Karakara OS
 
-Agentium OS is a **deployable agent runtime** for AI systems that take real
+Karakara OS is a **deployable agent runtime** for AI systems that take real
 actions — tools, MCP servers, other agents, multi-turn tasks — while the **host
 stays in control of every effect**. Agents are authored in
 [BAML](https://github.com/BoundaryML/baml) and TypeScript, executed in an
@@ -12,10 +12,10 @@ embedded QuickJS sandbox, and served over the
 
 ## The proposition
 
-These are the architectural commitments that define Agentium OS (expanded in
-[`docs/assertions/agentium-runtime-thesis.md`](docs/assertions/agentium-runtime-thesis.md)):
+These are the architectural commitments that define Karakara OS (expanded in
+[`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md)):
 
-**Runtime, not framework.** Agentium is something you **deploy and operate** —
+**Runtime, not framework.** Karakara is something you **deploy and operate** —
 a boundary around planning, execution, A2A, and observability — not a library
 you embed and hope agents behave.
 
@@ -41,7 +41,7 @@ durable truth lives in the graph.
 
 ```mermaid
 flowchart LR
-  subgraph boundary ["Agentium runtime boundary"]
+  subgraph boundary ["Karakara runtime boundary"]
     A2A[A2A / tasks]
     QJS[QuickJS + BAML agents]
     HOST[Host tool sessions]
@@ -72,7 +72,7 @@ demos — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ```bash
 just check-host          # Linux deps + TypeScript 6 on PATH
-just build-release       # agentium (platform host + SDK)
+just build-release       # karakara (platform host + SDK)
 ```
 
 ### Local runner (+ chat UI)
@@ -121,7 +121,7 @@ Operator install path: [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runboo
 ```bash
 just fmt
 just clippy
-just doctor              # workspace integrity (agentium)
+just doctor              # workspace integrity (karakara)
 just test-unit           # no API keys
 just test                # CI-parity nextest (needs OPENROUTER_API_KEY for LLM lane)
 ```
@@ -142,7 +142,7 @@ just otel-down
 |----------|------------|
 | Agent authors | [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) |
 | Operators / K8s | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
-| Runtime thesis | [`docs/assertions/agentium-runtime-thesis.md`](docs/assertions/agentium-runtime-thesis.md) |
+| Runtime thesis | [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md) |
 | Full index | [`docs/README.md`](docs/README.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 

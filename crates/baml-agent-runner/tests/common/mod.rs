@@ -89,7 +89,7 @@ pub fn e2e_secs_ci_or_local(ci_secs: u64, local_secs: u64) -> u64 {
 }
 
 /// SurrealDB container image tag used by cluster-mode integration tests.
-/// Keep in sync with `deploy/helm/agentium-os/values.yaml` so adversarial
+/// Keep in sync with `deploy/helm/karakara-os/values.yaml` so adversarial
 /// and routing tests both exercise the same SurrealDB version the pilot
 /// ships.
 #[allow(dead_code)] // Only cluster-tests binaries reach this constant.

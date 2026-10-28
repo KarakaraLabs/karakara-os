@@ -149,8 +149,8 @@ The runner emits these OpenTelemetry **resource attributes** on every signal (se
 
 | Resource attr | Value / source |
 |---|---|
-| `service.name` | `agentium-runner` (override via `OTEL_SERVICE_NAME`). |
-| `service.namespace` | `agentium` (override via `OTEL_RESOURCE_ATTRIBUTES`). |
+| `service.name` | `karakara-runner` (override via `OTEL_SERVICE_NAME`). |
+| `service.namespace` | `karakara` (override via `OTEL_RESOURCE_ATTRIBUTES`). |
 | `service.instance.id` | Per-runner identity. Resolution order: `OTEL_RESOURCE_ATTRIBUTES` override → `POD_NAME` (K8s downward API) → `HOSTNAME` → stable UUID fallback. The Helm chart sets this from `$(POD_NAME)`. |
 | `deployment.environment` | Helm: `coalesce(observability.environment, global.environment, "pilot")`. Non-Helm: `OTEL_DEPLOYMENT_ENVIRONMENT` or default `pilot`. |
 | `k8s.namespace.name` | `$(POD_NAMESPACE)` when present. |

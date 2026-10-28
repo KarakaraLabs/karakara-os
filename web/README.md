@@ -1,4 +1,4 @@
-# Agentium OS Web UI
+# Karakara OS Web UI
 
 A single-page Vue 3 + TypeScript app that serves as the operator and developer console for a running `baml-agent-runner`. It is the visual surface for the host-governed runtime: deploy agents, configure LLM clients / tool bundles / secrets, chat with deployed agents, and inspect the provenance graph generated as agents execute.
 
@@ -62,10 +62,10 @@ Other scripts (from `package.json`):
 
 From the repo root, `just web-build` runs `npm ci && npm run build` so the runner can serve the produced `dist/`.
 
-To start a runner that the UI can talk to, see the project root `CLAUDE.md` and `deploy/helm/agentium-os/README.md`. Locally:
+To start a runner that the UI can talk to, see the project root `CLAUDE.md` and `deploy/helm/karakara-os/README.md`. Locally:
 
 ```bash
-cargo run -p agentium -- serve   # serves HTTP on 127.0.0.1:18080 by default
+cargo run -p karakara-os -- serve   # serves HTTP on 127.0.0.1:18080 by default
 ```
 
 ## Authentication

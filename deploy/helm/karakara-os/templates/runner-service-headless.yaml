@@ -4,12 +4,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentium-os.runner.fullname" . }}
+  name: {{ include "karakara-os.runner.fullname" . }}
   labels:
-    {{- include "agentium-os.runner.labels" . | nindent 4 }}
+    {{- include "karakara-os.runner.labels" . | nindent 4 }}
 spec:
   selector:
-    {{- include "agentium-os.runner.selectorLabels" . | nindent 4 }}
+    {{- include "karakara-os.runner.selectorLabels" . | nindent 4 }}
   ports:
     - port: {{ .Values.runner.service.headless.port }}
       targetPort: {{ .Values.runner.service.headless.port }}

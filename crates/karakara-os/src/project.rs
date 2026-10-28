@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Project-level `agentium.toml` configuration.
+//! Project-level `karakara.toml` configuration.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_RUNNER_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentiumConfig {
+pub struct KarakaraConfig {
     #[serde(default)]
     pub runner: RunnerConfig,
     #[serde(default)]
@@ -44,7 +44,7 @@ pub struct ProjectConfig {
     pub agent_path: Option<String>,
 }
 
-impl AgentiumConfig {
+impl KarakaraConfig {
     pub fn repository_url(&self) -> String {
         format!("{}/repository", self.runner.url.trim_end_matches('/'))
     }
@@ -61,12 +61,12 @@ impl AgentiumConfig {
     }
 }
 
-pub fn discover_config(explicit: Option<&Path>) -> Result<(AgentiumConfig, Option<PathBuf>)> {
+pub fn discover_config(explicit: Option<&Path>) -> Result<(KarakaraConfig, Option<PathBuf>)> {
     if let Some(path) = explicit {
         let cfg = load_file(path)?;
         return Ok((cfg, Some(path.to_path_buf())));
     }
-    let local = PathBuf::from("agentium.toml");
+    let local = PathBuf::from("karakara.toml");
     if local.is_file() {
         let cfg = load_file(&local)?;
         return Ok((cfg, Some(local)));
@@ -78,30 +78,30 @@ pub fn discover_config(explicit: Option<&Path>) -> Result<(AgentiumConfig, Optio
             return Ok((cfg, Some(global)));
         }
     }
-    Ok((AgentiumConfig::default(), None))
+    Ok((KarakaraConfig::default(), None))
 }
 
-pub fn load_file(path: &Path) -> Result<AgentiumConfig> {
+pub fn load_file(path: &Path) -> Result<KarakaraConfig> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
     toml::from_str(&raw).with_context(|| format!("Failed to parse {}", path.display()))
 }
 
-pub fn write_file(path: &Path, config: &AgentiumConfig) -> Result<()> {
+pub fn write_file(path: &Path, config: &KarakaraConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let raw = toml::to_string_pretty(config).context("Failed to serialize agentium.toml")?;
+    let raw = toml::to_string_pretty(config).context("Failed to serialize karakara.toml")?;
     std::fs::write(path, raw).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 pub fn init_project(dir: &Path, runner_url: &str, agent_name: Option<&str>) -> Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let config_path = dir.join("agentium.toml");
+    let config_path = dir.join("karakara.toml");
     if config_path.exists() {
         bail!("{} already exists", config_path.display());
     }
-    let mut config = AgentiumConfig::default();
+    let mut config = KarakaraConfig::default();
     config.runner.url = runner_url.trim_end_matches('/').to_string();
     if let Some(name) = agent_name {
         config.project.default_agent = Some(name.to_string());

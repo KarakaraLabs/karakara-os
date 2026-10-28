@@ -451,7 +451,7 @@ async fn t1_cpu_peg_deploy_keeps_probes_responsive() {
 /// non-zero status so the kubelet restarts the pod.
 ///
 /// This test forces a clean listener exit via the debug-only fault-injection
-/// env var `AGENTIUM_TEST_LISTENER_EXIT_AFTER_SECS=2`. After ~2s the listener
+/// env var `KARAKARA_TEST_LISTENER_EXIT_AFTER_SECS=2`. After ~2s the listener
 /// task gracefully shuts down and `axum::serve(...).await` returns `Ok(())`.
 /// The K8s-pilot match arm in `crates/baml-agent-runner/src/main.rs` must
 /// translate that into a non-zero process exit; this test asserts the

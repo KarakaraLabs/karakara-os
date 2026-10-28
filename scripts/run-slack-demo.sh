@@ -38,8 +38,8 @@ if [ -f .env ]; then
 fi
 
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
-RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
+RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
 if [ ! -x "$RUNNER_BIN" ]; then
   echo "Runner binary not found: $RUNNER_BIN" >&2
   exit 1

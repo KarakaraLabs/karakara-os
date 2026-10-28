@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: agentium
+  name: karakara
   namespace: argocd
 spec:
-  description: Agentium OS local k3d
+  description: Karakara OS local k3d
   sourceRepos:
     - "*"
   destinations:

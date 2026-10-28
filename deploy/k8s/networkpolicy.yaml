@@ -22,7 +22,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: runner-ingress
-  namespace: agentium
+  namespace: karakara
 spec:
   podSelector:
     matchLabels:
@@ -52,7 +52,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: surrealdb-ingress
-  namespace: agentium
+  namespace: karakara
 spec:
   podSelector:
     matchLabels:

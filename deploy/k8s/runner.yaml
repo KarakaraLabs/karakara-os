@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: runner
-  namespace: agentium
+  namespace: karakara
 spec:
   selector:
     app: runner
@@ -15,7 +15,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: runner
-  namespace: agentium
+  namespace: karakara
 spec:
   serviceName: runner
   replicas: 2
@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: runner
-          image: agentium-runner:demo
+          image: karakara-runner:demo
           imagePullPolicy: Never
           securityContext:
             runAsNonRoot: true

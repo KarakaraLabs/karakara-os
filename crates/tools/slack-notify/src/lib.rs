@@ -41,7 +41,7 @@ fn channel_cache() -> &'static Mutex<HashMap<String, String>> {
 pub struct SlackNotifyInput {
     #[baml(description = "Message body to post to the configured Slack channel.")]
     pub text: String,
-    #[baml(description = "Agentium context_id; used by the tool to derive Slack threading.")]
+    #[baml(description = "Karakara context_id; used by the tool to derive Slack threading.")]
     pub context_id: String,
 }
 

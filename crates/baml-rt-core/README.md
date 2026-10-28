@@ -1,6 +1,6 @@
 # baml-rt-core
 
-Core types and shared utilities for the Agentium OS workspace.
+Core types and shared utilities for the Karakara OS workspace.
 
 ## Responsibilities
 

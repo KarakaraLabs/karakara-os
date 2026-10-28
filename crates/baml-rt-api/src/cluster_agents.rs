@@ -536,8 +536,8 @@ mod tests {
     #[tokio::test]
     async fn no_skew_when_hashes_match() {
         let runners = vec![
-            runner("r0", "agentium-runner-0"),
-            runner("r1", "agentium-runner-1"),
+            runner("r0", "karakara-runner-0"),
+            runner("r1", "karakara-runner-1"),
         ];
         let placements = Vec::new();
         let fetch = |_r: ClusterRunnerInfo| async move {
@@ -558,8 +558,8 @@ mod tests {
     #[tokio::test]
     async fn skew_when_hashes_differ() {
         let runners = vec![
-            runner("r0", "agentium-runner-0"),
-            runner("r1", "agentium-runner-1"),
+            runner("r0", "karakara-runner-0"),
+            runner("r1", "karakara-runner-1"),
         ];
         let placements = Vec::new();
         let fetch = |r: ClusterRunnerInfo| async move {
@@ -599,8 +599,8 @@ mod tests {
     #[tokio::test]
     async fn unreachable_runner_falls_back_to_placement_table() {
         let runners = vec![
-            runner("r0", "agentium-runner-0"),
-            runner("r1", "agentium-runner-1"),
+            runner("r0", "karakara-runner-0"),
+            runner("r1", "karakara-runner-1"),
         ];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "dispatch-echo".to_string(),
@@ -651,7 +651,7 @@ mod tests {
     /// to overwrite the live `content_hash` reported by `/agents`.
     #[tokio::test]
     async fn reachable_runner_overrides_placement_table_hash() {
-        let runners = vec![runner("r0", "agentium-runner-0")];
+        let runners = vec![runner("r0", "karakara-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
             runner_id: "r0".to_string(),
@@ -683,8 +683,8 @@ mod tests {
     #[tokio::test]
     async fn missing_content_hashes_do_not_collapse_to_false_parity() {
         let runners = vec![
-            runner("r0", "agentium-runner-0"),
-            runner("r1", "agentium-runner-1"),
+            runner("r0", "karakara-runner-0"),
+            runner("r1", "karakara-runner-1"),
         ];
         let placements = Vec::new();
         let fetch = |_r: ClusterRunnerInfo| async move {
@@ -710,7 +710,7 @@ mod tests {
     /// silently leak a UUID into the skew row's `service_instance_id`.
     #[tokio::test]
     async fn orphan_placement_synthesizes_unreachable_runner_status() {
-        let runners = vec![runner("r0", "agentium-runner-0")];
+        let runners = vec![runner("r0", "karakara-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
             runner_id: "ghost-uuid".to_string(),
@@ -749,8 +749,8 @@ mod tests {
     #[tokio::test]
     async fn local_runner_short_circuits_fan_out() {
         let runners = vec![
-            runner("r0", "agentium-runner-0"),
-            runner("r1", "agentium-runner-1"),
+            runner("r0", "karakara-runner-0"),
+            runner("r1", "karakara-runner-1"),
         ];
         let placements = Vec::new();
         let local_agents = vec![entry("echo", "local-hash", "v1")];
@@ -788,7 +788,7 @@ mod tests {
     /// field must be absent on `source=runner` rows (where it's meaningless).
     #[tokio::test]
     async fn placement_source_carries_updated_at_ms() {
-        let runners = vec![runner("r0", "agentium-runner-0")];
+        let runners = vec![runner("r0", "karakara-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "echo".to_string(),
             runner_id: "r0".to_string(),
@@ -816,7 +816,7 @@ mod tests {
     /// Placement rows with non-active status (e.g. tombstones) are ignored.
     #[tokio::test]
     async fn inactive_placements_are_skipped() {
-        let runners = vec![runner("r0", "agentium-runner-0")];
+        let runners = vec![runner("r0", "karakara-runner-0")];
         let placements = vec![ClusterPlacementInfo {
             agent_package: "ghost".to_string(),
             runner_id: "r0".to_string(),

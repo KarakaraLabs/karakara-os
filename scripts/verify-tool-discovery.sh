@@ -31,7 +31,7 @@ RUNNER_PID=""
 if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/agents" 2>/dev/null | grep -q 200; then
   echo "Starting runner on $BIND (state/repo under $VERIFY_TMP)..."
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-  RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  RUNNER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   RUST_LOG="${RUST_LOG:-error}" \
     "$RUNNER_BIN" serve \
     --serve-http "$BIND" \
@@ -54,13 +54,13 @@ if ! curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "${RUNNER_URL}/a
     exit 1
   fi
 
-  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   echo "Publishing $AGENT_DIR ..."
   "$BUILDER_BIN" install agent --path "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 elif [[ "$do_build" == "true" ]]; then
   echo "Re-publishing (--build) against existing server on $BIND..."
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/agentium"
+  BUILDER_BIN="${CARGO_TARGET_DIR:-target}/release/karak"
   "$BUILDER_BIN" install agent --path "$AGENT_DIR" --repository-url "$REPOSITORY_URL" --url "$RUNNER_URL"
 fi
 

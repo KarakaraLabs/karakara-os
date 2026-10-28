@@ -26,25 +26,25 @@ run_agent_platform() {
     return
   fi
 
-  if agentium "$subcmd" --help >/dev/null 2>&1; then
-    agentium "$subcmd" "$@"
+  if karakara "$subcmd" --help >/dev/null 2>&1; then
+    karakara "$subcmd" "$@"
     return
   fi
 
-  if cargo run -q -p agentium -- "$subcmd" --help >/dev/null 2>&1; then
-    cargo run -q -p agentium -- "$subcmd" "$@"
+  if cargo run -q -p karakara-os -- "$subcmd" --help >/dev/null 2>&1; then
+    cargo run -q -p karakara-os -- "$subcmd" "$@"
     return
   fi
 
   cat >&2 <<'EOF'
-Could not find a compatible agentium command.
+Could not find a compatible karak command.
 
 Tried:
-  1) agentium <subcommand>
-  2) cargo run -q -p agentium -- <subcommand>
+  1) karakara <subcommand>
+  2) cargo run -q -p karakara-os -- <subcommand>
 
 You can override command resolution with:
-  export AGENT_PLATFORM_CMD='cargo run -q -p agentium --'
+  export AGENT_PLATFORM_CMD='cargo run -q -p karakara-os --'
 (or another explicit command that supports sandbox-bind-sync)
 EOF
   exit 1

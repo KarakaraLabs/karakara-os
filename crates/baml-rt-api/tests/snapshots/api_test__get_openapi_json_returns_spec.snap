@@ -8,10 +8,10 @@ expression: snapshot
   "body": {
     "openapi": "3.1.0",
     "info": {
-      "title": "Agentium OS Runner API",
-      "description": "HTTP API for the Agentium OS agent runner: agent discovery, A2A JSON-RPC forwarding, deployment lifecycle, tool configuration, and provenance-backed observability.",
+      "title": "Karakara OS Runner API",
+      "description": "HTTP API for the Karakara OS agent runner: agent discovery, A2A JSON-RPC forwarding, deployment lifecycle, tool configuration, and provenance-backed observability.",
       "contact": {
-        "name": "Agentium OS",
+        "name": "Karakara OS",
         "url": "https://github.com/semiotic-agentium/agentium-os"
       },
       "license": {

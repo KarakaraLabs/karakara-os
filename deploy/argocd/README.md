@@ -3,7 +3,7 @@
 | Path | Role |
 |------|------|
 | [`track.json`](track.json) | `repoURL`, `targetRevision`, `imageTag` |
-| [`apps/`](apps/) | Application templates (`__AGENTIUM_*` placeholders) |
+| [`apps/`](apps/) | Application templates (`__KARAKARA_*` placeholders) |
 | [`.rendered/`](.rendered/) | Rendered manifests — apply these only |
 
 ## Local flow
@@ -23,7 +23,7 @@ bash scripts/e2e-k8s/render-argocd-apps.sh
 kubectl apply -f deploy/argocd/.rendered/
 ```
 
-Override Git source for forks: `AGENTIUM_GIT_REPO`, `AGENTIUM_GIT_REVISION`.
+Override Git source for forks: `KARAKARA_GIT_REPO`, `KARAKARA_GIT_REVISION`.
 
 ## Semver
 

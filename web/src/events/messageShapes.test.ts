@@ -31,7 +31,7 @@ const slackSourceShape: AgentDeliverableMessageShape = {
         source: {
           source_kind: "slack",
           source_key: "slack:C012TEST001",
-          source_label: "#agentium-eng",
+          source_label: "#karakara-eng",
         },
         records: [],
       },

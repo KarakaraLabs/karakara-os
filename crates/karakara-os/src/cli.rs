@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Clap command definitions for `agentium`.
+//! Clap command definitions for `karak`.
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -11,12 +11,12 @@ use crate::{
     templates::external_tool::{Access, InvocationMode, Language, Runtime, SandboxSource},
 };
 
-/// Agentium — unified platform host and developer SDK
+/// Karakara — unified platform host and developer SDK
 #[derive(Parser)]
 #[command(
     name = "karak",
     version,
-    about = "Agentium platform and developer SDK"
+    about = "Karakara platform and developer SDK"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -25,13 +25,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Start the Agentium platform (HTTP, stdio, repository, provenance)
+    /// Start the Karakara platform (HTTP, stdio, repository, provenance)
     Serve {
         #[command(flatten)]
         runner: baml_agent_runner::RunnerCli,
     },
 
-    /// Scaffold project config (`agentium.toml`) and optionally a first agent
+    /// Scaffold project config (`karakara.toml`) and optionally a first agent
     Init {
         #[arg(long, default_value = ".")]
         dir: String,
@@ -46,7 +46,7 @@ pub enum Commands {
         with_agent: bool,
     },
 
-    /// Inspect or update `agentium.toml`
+    /// Inspect or update `karakara.toml`
     Config {
         #[command(subcommand)]
         command: ConfigCommands,

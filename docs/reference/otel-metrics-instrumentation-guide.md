@@ -2,7 +2,7 @@
 
 **Patterns for instrumenting Rust crates with production-grade OTel metrics.**
 
-Based on Agentium OS crates (`baml-rt-core`, `baml-rt-a2a`, `baml-rt-api`): orthogonal metrics module, OpenTelemetry native API, structured attributes, and testability.
+Based on Karakara OS crates (`baml-rt-core`, `baml-rt-a2a`, `baml-rt-api`): orthogonal metrics module, OpenTelemetry native API, structured attributes, and testability.
 
 ---
 

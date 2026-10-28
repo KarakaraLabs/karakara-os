@@ -31,9 +31,9 @@ Commands:
   config    Render MCP server runtime config only
   enable    Discover/approve meteo MCP schema directly into the repository registry
   prepare   Render config and enable registry schema
-  runner    Render config, then start agentium serve on $HTTP_BIND
+  runner    Render config, then start karak serve on $HTTP_BIND
   push      Enable registry schema, then publish+deploy $AGENT_DIR to $RUNNER_URL
-  chat      Run push, then connect to $AGENT_NAME with agentium chat
+  chat      Run push, then connect to $AGENT_NAME with karakara chat
   review    Show registry state for the meteo MCP server
 
 Typical flow:
@@ -65,7 +65,7 @@ log_step() {
 }
 
 agent_platform() {
-    cargo run -q -p agentium -- "$@"
+    cargo run -q -p karakara-os -- "$@"
 }
 
 render_config() {
@@ -124,9 +124,9 @@ case "$cmd" in
         ;;
     runner)
         render_config
-        log_step "Starting agentium serve on $HTTP_BIND"
+        log_step "Starting karak serve on $HTTP_BIND"
         echo "    In another terminal, run: scripts/meteo_mcp.sh chat"
-        exec cargo run -p agentium --all-features -- serve \
+        exec cargo run -p karakara-os --all-features -- serve \
             --a2a-stdio \
             --serve-http "$HTTP_BIND" \
             --provenance-db provenance.db
@@ -137,7 +137,7 @@ case "$cmd" in
     chat)
         push_agent
         log_step "Connecting to $AGENT_NAME"
-        exec cargo run -q -p agentium -- chat --agent "$AGENT_NAME" --url "$RUNNER_URL"
+        exec cargo run -q -p karakara-os -- chat --agent "$AGENT_NAME" --url "$RUNNER_URL"
         ;;
     review)
         review

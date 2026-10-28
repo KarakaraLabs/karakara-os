@@ -5,8 +5,8 @@
   ],
   "binaries": [
     {
-      "package": "agentium",
-      "bin": "agentium",
+      "package": "karakara",
+      "bin": "karakara",
       "features": ["http-tools", "memory", "sandbox-provider", "dev-tools"],
       "ship": true
     }

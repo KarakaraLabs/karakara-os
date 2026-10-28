@@ -1,12 +1,12 @@
 # Host Tool Development Guide
 
-Host tools in Agentium OS provide agents with capabilities beyond LLM inference. This guide covers both **MCP (Model Context Protocol) servers** and **external tools** — the two primary host tool types.
+Host tools in Karakara OS provide agents with capabilities beyond LLM inference. This guide covers both **MCP (Model Context Protocol) servers** and **external tools** — the two primary host tool types.
 
 ## Tool Types Overview
 
 ### MCP Servers
 - **Protocol**: JSON-RPC over stdio/SSE
-- **Lifecycle**: Managed by Agentium runtime
+- **Lifecycle**: Managed by Karakara runtime
 - **State**: Stateless request/response
 - **Use cases**: APIs, databases, file systems
 - **Registry**: Cached server snapshots with schema validation
@@ -42,7 +42,7 @@ MCP servers are configured in `mcp-catalog.json`:
 
 ### Registry Snapshots
 
-Agentium maintains registry snapshots of MCP servers for:
+Karakara maintains registry snapshots of MCP servers for:
 - **Schema validation** - Ensure tool/resource schemas match expectations
 - **Offline builds** - Enable CI/test without external dependencies  
 - **Version consistency** - Lock to approved server versions
@@ -284,7 +284,7 @@ console.log(`Temperature: ${result.temperature}°C, Conditions: ${result.conditi
 
 ## Registry Architecture
 
-The Agentium registry provides:
+The Karakara registry provides:
 
 ### MCP Snapshots
 - **Server metadata** - Command, args, environment

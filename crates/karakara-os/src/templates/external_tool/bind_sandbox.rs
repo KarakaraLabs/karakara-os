@@ -47,36 +47,36 @@ set -euo pipefail
 #   3) writes tool-manifest.lock.json (gitignored) with the host bind path
 #   4) validates metadata via `check-external-tool` (with --check)
 
-run_agentium() {{
+run_karak() {{
   local subcmd="${{1:-}}"
   shift || true
 
-  if [[ -n "${{AGENTIUM_CMD:-}}" ]]; then
+  if [[ -n "${{KARAKARA_CMD:-}}" ]]; then
     # shellcheck disable=SC2206
-    local cmd=( $AGENTIUM_CMD )
+    local cmd=( $KARAKARA_CMD )
     "${{cmd[@]}}" "$subcmd" "$@"
     return
   fi
 
-  if agentium "$subcmd" --help >/dev/null 2>&1; then
-    agentium "$subcmd" "$@"
+  if karakara "$subcmd" --help >/dev/null 2>&1; then
+    karakara "$subcmd" "$@"
     return
   fi
 
-  if cargo run -q -p agentium -- "$subcmd" --help >/dev/null 2>&1; then
-    cargo run -q -p agentium -- "$subcmd" "$@"
+  if cargo run -q -p karakara-os -- "$subcmd" --help >/dev/null 2>&1; then
+    cargo run -q -p karakara-os -- "$subcmd" "$@"
     return
   fi
 
   cat >&2 <<'EOF'
-Could not find a compatible agentium command.
+Could not find a compatible karak command.
 
 Tried:
-  1) agentium <subcommand>
-  2) cargo run -q -p agentium -- <subcommand>
+  1) karakara <subcommand>
+  2) cargo run -q -p karakara-os -- <subcommand>
 
 You can override command resolution with:
-  export AGENTIUM_CMD='cargo run -q -p agentium --'
+  export KARAKARA_CMD='cargo run -q -p karakara-os --'
 (or another explicit command that supports sandbox-bind-sync)
 EOF
   exit 1
@@ -152,7 +152,7 @@ if [[ $FORCE -eq 1 ]]; then
   args+=(--force)
 fi
 
-run_agentium "${{args[@]}}"
+run_karak "${{args[@]}}"
 
 echo "Bind runtime lock written and validated."
 echo "  tool:           {tool_id}"

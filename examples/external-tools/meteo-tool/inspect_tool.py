@@ -29,7 +29,7 @@ DEFAULT_ROOTFS = pathlib.Path(__file__).resolve().parent / ".tmp" / "dev-meteo-t
 
 
 def _read_bundle(rootfs: pathlib.Path) -> dict:
-    bundle_path = rootfs / "etc" / "agentium" / "tool-bundle.json"
+    bundle_path = rootfs / "etc" / "karakara" / "tool-bundle.json"
     if not bundle_path.exists():
         raise SystemExit(
             f"missing sidecar bundle at {bundle_path}\n"

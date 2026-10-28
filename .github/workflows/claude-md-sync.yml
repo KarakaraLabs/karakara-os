@@ -84,7 +84,7 @@ jobs:
             crates/baml-rt-api/src/openapi.rs \
             crates/baml-agent-runner/src/main.rs \
             crates/baml-agent-runner/src/deployment_state.rs \
-            crates/agentium/src/main.rs \
+            crates/karakara/src/main.rs \
             2>/dev/null) || true
           [ -z "$API_DIFF" ] && API_DIFF="No changes"
 
@@ -94,7 +94,7 @@ jobs:
             2>/dev/null) || true
           [ -z "$METRICS_DIFF" ] && METRICS_DIFF="No changes"
 
-          HELM_DIFF=$(git diff HEAD^1..HEAD -- deploy/helm/agentium-os/ 2>/dev/null) || true
+          HELM_DIFF=$(git diff HEAD^1..HEAD -- deploy/helm/karakara-os/ 2>/dev/null) || true
           [ -z "$HELM_DIFF" ] && HELM_DIFF="No changes"
 
           CLAUDE_DIFF=$(git diff HEAD^1..HEAD -- CLAUDE.md 2>/dev/null) || true
@@ -103,7 +103,7 @@ jobs:
           CURRENT_CLAUDE=$(cat CLAUDE.md)
 
           cat > /tmp/system_prompt.txt << 'SYSPROMPT'
-          You maintain Agentium OS documentation after merges to main.
+          You maintain Karakara OS documentation after merges to main.
 
           Responsibilities (ONLY these paths):
           - CLAUDE.md — slim pointer hub (~100 lines max): build commands, doc map entry, crate one-liners. Never restore long architecture prose (defer to README.md and docs/README.md).
@@ -115,10 +115,10 @@ jobs:
           Path → doc routing when code changes:
           - crates/baml-rt-api/src/router.rs, handlers.rs → docs/reference/agent-runner.md
           - crates/baml-agent-runner/** deploy/restore → docs/reference/deployment-lifecycle-contract.md
-          - crates/agentium/** → docs/reference/sdk-cli.md
-          - crates/baml-rt-mcp/**, repository MCP routes → docs/reference/agentium-mcp-support.md
+          - crates/karakara/** → docs/reference/sdk-cli.md
+          - crates/baml-rt-mcp/**, repository MCP routes → docs/reference/karakara-mcp-support.md
           - **/metrics.rs, effect_metrics.rs → docs/reference/metrics-inventory.md
-          - deploy/helm/agentium-os/** → docs/runbooks/k8s-pilot-operator-guide.md
+          - deploy/helm/karakara-os/** → docs/runbooks/k8s-pilot-operator-guide.md
           - New top-level crate dir → CLAUDE.md crate table (+ docs/README.md if needed)
 
           Canonical facts to preserve:
@@ -165,8 +165,8 @@ jobs:
             -X POST "https://openrouter.ai/api/v1/chat/completions" \
             -H "Authorization: Bearer $OPENROUTER_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "HTTP-Referer: https://github.com/agentium-os/agent-platform" \
-            -H "X-Title: Agentium OS Doc Sync" \
+            -H "HTTP-Referer: https://github.com/karakara-os/agent-platform" \
+            -H "X-Title: Karakara OS Doc Sync" \
             -d @/tmp/api_payload.json)
 
           if [ "$HTTP_CODE" -ne 200 ]; then

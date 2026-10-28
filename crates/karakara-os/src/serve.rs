@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `agentium serve` — start the Agentium platform.
+//! `karak serve` — start the Karakara platform.
 
 use baml_agent_runner::RunnerCli;
 

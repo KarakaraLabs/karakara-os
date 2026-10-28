@@ -1,6 +1,6 @@
 # CI security (public repository)
 
-Agentium OS is public. GitHub Actions must treat **fork pull requests** as
+Karakara OS is public. GitHub Actions must treat **fork pull requests** as
 untrusted: they can change any file in the PR branch, including workflow
 definitions in the fork (upstream workflow files still govern what runs, but
 the **checked-out commit** is attacker-controlled).

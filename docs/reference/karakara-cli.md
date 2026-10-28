@@ -1,8 +1,8 @@
-# Agentium CLI Reference
+# Karakara CLI Reference
 
-The unified **`agentium`** binary is the only user-facing entrypoint for Agentium OS:
+The unified **`karak`** binary is the only user-facing entrypoint for Karakara OS:
 
-- **`agentium serve`** — run the platform (HTTP A2A, repository, provenance, config)
+- **`karak serve`** — run the platform (HTTP A2A, repository, provenance, config)
 - **SDK subcommands** — scaffold, install, chat, eval, registry, sandbox tooling
 
 For HTTP API details (deploy, A2A, auth tiers), see [`agent-runner.md`](agent-runner.md).
@@ -12,8 +12,8 @@ For HTTP API details (deploy, A2A, auth tiers), see [`agent-runner.md`](agent-ru
 See [`INSTALL.md`](../../INSTALL.md). From a clone:
 
 ```bash
-cargo build --release -p agentium --all-features
-./target/release/agentium --help
+cargo build --release -p karakara-os --all-features
+./target/release/karak --help
 ```
 
 Local dev shortcuts: `just build`, `just runner` (build + start on `127.0.0.1:18080`).
@@ -22,17 +22,17 @@ Local dev shortcuts: `just build`, `just runner` (build + start on `127.0.0.1:18
 
 | Before | After |
 |--------|-------|
-| Separate `baml-agent-runner` + `cargo-agent-platform` binaries | Single `agentium` binary |
-| `baml-agent-runner --serve-http …` | `agentium serve --serve-http …` |
-| `cargo-agent-platform push` | `agentium install agent` (publish + deploy) |
+| Separate `baml-agent-runner` + `cargo-agent-platform` binaries | Single `karak` binary |
+| `baml-agent-runner --serve-http …` | `karak serve --serve-http …` |
+| `cargo-agent-platform push` | `karakara install agent` (publish + deploy) |
 | `cargo-agent-platform build` / `regen` | **Removed** — publish triggers server-side build; monorepo fixture regen stays on `just regen-fixtures` |
-| `cargo-agent-platform deploy --hash …` | `agentium deploy --hash … --url …` |
+| `cargo-agent-platform deploy --hash …` | `karakara deploy --hash … --url …` |
 
-Legacy subcommands **`build`**, **`regen`**, and **`push`** are not registered on `agentium`.
+Legacy subcommands **`build`**, **`regen`**, and **`push`** are not registered on `karak`.
 
 ## Project config
 
-`agentium init` creates `agentium.toml`:
+`karakara init` creates `karakara.toml`:
 
 ```toml
 [runner]
@@ -47,14 +47,14 @@ agent_path = "./my-agent"
 Resolution order: `--config` flag → `./agentium.toml` → `~/.config/agentium/config.toml`.
 
 ```bash
-agentium config show
-agentium config set runner.url http://127.0.0.1:18080
+karakara config show
+karakara config set runner.url http://127.0.0.1:18080
 ```
 
 ## Platform host
 
 ```bash
-agentium serve --serve-http 127.0.0.1:18080 \
+karak serve --serve-http 127.0.0.1:18080 \
   --repository-dir ./.repository \
   --state-dir ./.runner-state \
   --provenance-db ./provenance.db
@@ -65,40 +65,40 @@ All former `baml-agent-runner` flags are available on `serve` (flattened runner 
 ## Primary developer loop
 
 ```bash
-agentium init --with-agent --agent-name support-bot --tags support,demo
-agentium skill install agent
+karakara init --with-agent --agent-name support-bot --tags support,demo
+karakara skill install agent
 # edit agent source only (manifest, baml_src/, src/)
-agentium install agent --path ./support-bot
-agentium sync-types
-agentium chat --agent support-bot --instance default
-agentium eval run --min-pass-rate 0.9
+karakara install agent --path ./support-bot
+karakara sync-types
+karakara chat --agent support-bot --instance default
+karakara eval run --min-pass-rate 0.9
 ```
 
 | Command | Purpose |
 |---------|---------|
 | `install agent` | `POST /repository/publish` (server build) + `POST /deploy` |
 | `install tool` | Approve and register an external tool snapshot |
-| `publish` | Publish source only (no deploy); prints `agentium deploy …` hint |
+| `publish` | Publish source only (no deploy); prints `karakara deploy …` hint |
 | `deploy --hash HASH --url URL` | Activate a published artifact |
 | `sync-types` | Pull `_baml_runtime.baml` + `baml-runtime.d.ts` from `GET /repository/dev-artifacts` |
 
 ## Scaffolding
 
 ```bash
-agentium new-agent my-agent --template simple --tags support,demo
-agentium new-tool weather --bundle support --lang rust
-agentium new-static-tool github   # platform-internal (monorepo contributors only)
+karakara new-agent my-agent --template simple --tags support,demo
+karakara new-tool weather --bundle support --lang rust
+karakara new-static-tool github   # platform-internal (monorepo contributors only)
 ```
 
-Interactive mode: omit positional names (`agentium new-agent`, `agentium new-tool`, …).
+Interactive mode: omit positional names (`karakara new-agent`, `karakara new-tool`, …).
 
 ## Eval harness
 
 ```bash
-agentium eval init                    # writes eval/cases.toml from example
-agentium eval run --min-pass-rate 0.9
-agentium eval run --cases lifecycle-demo,smoke-one-shot
-agentium eval report                # prints eval/out/last-run.json
+karakara eval init                    # writes eval/cases.toml from example
+karakara eval run --min-pass-rate 0.9
+karakara eval run --cases lifecycle-demo,smoke-one-shot
+karakara eval report                # prints eval/out/last-run.json
 ```
 
 Eval talks to a **running** runner over HTTP:
@@ -107,7 +107,7 @@ Eval talks to a **running** runner over HTTP:
 2. **`POST /agents/{agent}/a2a`** — chat turns via `message.sendStream` (JSON-RPC `id` must use `corr-<millis>-<counter>` format).
 3. **`POST /events/publish`** — ingress turns (fixture JSON on disk).
 
-Manifest syntax: `crates/agentium/eval/cases.toml.example`. Turn modes:
+Manifest syntax: `crates/karakara/eval/cases.toml.example`. Turn modes:
 
 - **`chat`** (default) — A2A user message; assert on task states and streamed text.
 - **`ingress`** — publish host event fixture; assert on `contains` / `not_contains` in the publish response (non-empty `failures` fails the turn).
@@ -127,15 +127,15 @@ Unchanged in role from the former SDK:
 ## Skills
 
 ```bash
-agentium skill install agent   # Cursor skill: agent authoring
-agentium skill install tool    # Cursor skill: external tool authoring
+karakara skill install agent   # Cursor skill: agent authoring
+karakara skill install tool    # Cursor skill: external tool authoring
 ```
 
-Bundled skills live under `crates/agentium/skills/`.
+Bundled skills live under `crates/karakara/skills/`.
 
 ## Authentication
 
-Operator routes accept `X-Runner-Token` or `--runner-token` / `RUNNER_TOKEN` env (see `agentium.toml` `runner.token_env`).
+Operator routes accept `X-Runner-Token` or `--runner-token` / `RUNNER_TOKEN` env (see `karakara.toml` `runner.token_env`).
 
 Public routes (no token): discovery, A2A, `/events/publish`, read-only `/repository/*` including **`GET /repository/dev-artifacts`**.
 
@@ -145,7 +145,7 @@ On **`POST /repository/publish`**, the runner captures `_baml_runtime.baml` and 
 
 ```bash
 # After publish
-agentium sync-types --path ./my-agent
+karakara sync-types --path ./my-agent
 # or
 curl 'http://127.0.0.1:18080/repository/dev-artifacts?agent=my-agent'
 curl 'http://127.0.0.1:18080/repository/dev-artifacts?hash=<content-hash>'

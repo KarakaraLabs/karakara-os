@@ -28,7 +28,7 @@ require_cmd() {
 # the standard `app.kubernetes.io/instance` label set by the chart.
 #
 # Args: namespace, release_name, array_var_name
-# Example: discover_release_pods agentium agentium pods
+# Example: discover_release_pods karakara karakara pods
 #          for pod in "${pods[@]}"; do ... done
 discover_release_pods() {
   local namespace="$1" release_name="$2" array_var="$3"

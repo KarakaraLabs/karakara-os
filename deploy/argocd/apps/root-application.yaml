@@ -2,23 +2,23 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: agentium-os
+  name: karakara-os
   namespace: argocd
 spec:
-  project: agentium
+  project: karakara
   source:
     repoURL: __AGENTIUM_GIT_REPO__
     targetRevision: __AGENTIUM_GIT_REVISION__
-    path: deploy/helm/agentium-os
+    path: deploy/helm/karakara-os
     helm:
-      releaseName: agentium
+      releaseName: karakara
       valueFiles:
         - ../../values/local/defaults.yaml
         - ../../values/generated/images.yaml
         - ../../values/generated/scenario.yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: agentium
+    namespace: karakara
   syncPolicy:
     syncOptions:
       - CreateNamespace=true

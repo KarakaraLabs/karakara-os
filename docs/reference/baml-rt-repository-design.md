@@ -1,6 +1,6 @@
 # baml-rt-hash & baml-rt-repository — Design Document
 
-Two crates that give Agentium OS a **content-addressable package repository** with lineage tracking, versioning, and search.
+Two crates that give Karakara OS a **content-addressable package repository** with lineage tracking, versioning, and search.
 
 - **`baml-rt-hash`** — standalone canonical hashing (SHA-256 over a length-delimited section format with deterministic JSON key ordering). Depends only on `sha2`, `serde_json`, `thiserror`.
 - **`baml-rt-repository`** — SurrealDB-backed repository: publish, fork, search, lineage DAG, tagging, and an Axum HTTP API.

@@ -12,16 +12,16 @@ use std::{
 use anyhow::{Context, Result, bail};
 use console::style;
 
-const AGENT_SKILL: &str = include_str!("../../skills/agentium-agent-authoring/SKILL.md");
-const TOOL_SKILL: &str = include_str!("../../skills/agentium-tool-authoring/SKILL.md");
+const AGENT_SKILL: &str = include_str!("../../skills/karakara-agent-authoring/SKILL.md");
+const TOOL_SKILL: &str = include_str!("../../skills/karakara-tool-authoring/SKILL.md");
 
 pub fn install(kind: &str, dest_root: Option<&Path>) -> Result<()> {
     let base = dest_root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(".cursor/skills"));
     let (name, content) = match kind {
-        "agent" => ("agentium-agent-authoring", AGENT_SKILL),
-        "tool" => ("agentium-tool-authoring", TOOL_SKILL),
+        "agent" => ("karakara-agent-authoring", AGENT_SKILL),
+        "tool" => ("karakara-tool-authoring", TOOL_SKILL),
         other => bail!("Unknown skill kind: {other}. Use agent or tool."),
     };
     let dir = base.join(name);

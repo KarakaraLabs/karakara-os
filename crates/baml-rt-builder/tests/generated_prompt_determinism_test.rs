@@ -14,8 +14,8 @@ use baml_rt_builder::builder::{AgentDir, BuildDir, RuntimeTypeGenerator, traits:
 use sha2::{Digest, Sha256};
 use test_support::common::{copy_agent_tree_for_build, workspace_root};
 
-const SOURCE_ENV: &str = "AGENTIUM_PROMPT_DETERMINISM_SOURCE";
-const OUTPUT_ENV: &str = "AGENTIUM_PROMPT_DETERMINISM_OUTPUT";
+const SOURCE_ENV: &str = "KARAKARA_PROMPT_DETERMINISM_SOURCE";
+const OUTPUT_ENV: &str = "KARAKARA_PROMPT_DETERMINISM_OUTPUT";
 const RUNTIME_PRELUDE: &str = "_baml_runtime.baml";
 const CATALOG_SIDECAR: &str = "_baml_tool_schema_catalog.txt";
 

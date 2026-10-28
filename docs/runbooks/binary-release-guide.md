@@ -1,6 +1,6 @@
 # Binary release guide
 
-Agentium OS publishes prebuilt Linux binaries for x86_64 and aarch64 via GitHub Releases. This guide covers the automated release pipeline and manual procedures.
+Karakara OS publishes prebuilt Linux binaries for x86_64 and aarch64 via GitHub Releases. This guide covers the automated release pipeline and manual procedures.
 
 ## Release pipeline overview
 
@@ -21,7 +21,7 @@ Each target builds **natively** on its own architecture — no cross-compilation
 
 ### Shipped binaries
 
-- `agentium` (features: http-tools, memory, sandbox-provider, dev-tools) — platform host + developer SDK
+- `karak` (features: http-tools, memory, sandbox-provider, dev-tools) — platform host + developer SDK
 
 Legacy separate `baml-agent-runner` and `cargo-agent-platform` release artifacts are no longer produced.
 
@@ -29,7 +29,7 @@ Legacy separate `baml-agent-runner` and `cargo-agent-platform` release artifacts
 
 Each GitHub Release contains:
 
-- `agentium-os-v{version}-{target}.tar.gz` per target
+- `karakara-os-v{version}-{target}.tar.gz` per target
 - `SHA256SUMS` (aggregate checksums)
 - Auto-generated release notes
 
@@ -49,7 +49,7 @@ Release Please owns normal releases:
 5. Release Please creates `vX.Y.Z` and a GitHub Release.
 6. Same Release Please workflow builds binaries and uploads assets to that release.
 
-Manual tag pushes are fallback-only. If used, the tag must point at a commit where `Cargo.toml`, `Cargo.lock`, and `deploy/helm/agentium-os/Chart.yaml` all contain the same version.
+Manual tag pushes are fallback-only. If used, the tag must point at a commit where `Cargo.toml`, `Cargo.lock`, and `deploy/helm/karakara-os/Chart.yaml` all contain the same version.
 
 The binary publish workflow automatically:
 1. Verifies tag matches `[workspace.package].version` and Helm `appVersion`
@@ -77,7 +77,7 @@ sudo apt-get install build-essential pkg-config libssl-dev \
   libdbus-1-dev libcap-ng-dev clang libclang-dev llvm-dev lld
 
 # Build release binary
-cargo build --profile release-dist --features http-tools,memory,sandbox-provider,dev-tools -p agentium
+cargo build --profile release-dist --features http-tools,memory,sandbox-provider,dev-tools -p karakara-os
 
 # Or use the release scripts
 scripts/release/build-release-binaries.sh  # host target

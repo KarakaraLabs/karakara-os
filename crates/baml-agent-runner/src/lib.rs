@@ -3,10 +3,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Agentium platform runtime library.
+//! Karakara platform runtime library.
 //!
 //! Starts the runner, restores previously-deployed agents from --state-dir,
-//! and serves HTTP / stdio / event poll loop. Invoked via `agentium serve`.
+//! and serves HTTP / stdio / event poll loop. Invoked via `karak serve`.
 
 #![recursion_limit = "256"]
 
@@ -101,7 +101,7 @@ fn resolve_claude_workspaces_base(cli: &Cli) -> Option<PathBuf> {
     })
 }
 
-/// Start the Agentium platform (HTTP / stdio / event poll loop).
+/// Start the Karakara platform (HTTP / stdio / event poll loop).
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let claude_workspaces_base = resolve_claude_workspaces_base(&cli);
     run_inner(cli, claude_workspaces_base).await

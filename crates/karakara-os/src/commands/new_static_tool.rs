@@ -55,7 +55,7 @@ pub fn run(
     let tool_dir = workspace_root.join(format!("crates/tools/{name}"));
     if tool_dir.exists() {
         bail!(
-            "Error: tool crate already exists at {}\nHint: choose a different tool name or remove the existing directory.\nNext step: run `agentium list-tools` to inspect existing tool IDs.",
+            "Error: tool crate already exists at {}\nHint: choose a different tool name or remove the existing directory.\nNext step: run `karakara list-tools` to inspect existing tool IDs.",
             tool_dir.display()
         );
     }
@@ -165,7 +165,7 @@ pub fn run(
     println!("{}", style("Applying changes...").cyan());
     writer.commit().map_err(|e| {
         anyhow!(
-            "Error: failed to apply staged changes.\nCause: {e}\nHint: this can happen when workspace files drift from expected structure.\nNext step: run `agentium doctor --ci` and retry."
+            "Error: failed to apply staged changes.\nCause: {e}\nHint: this can happen when workspace files drift from expected structure.\nNext step: run `karakara doctor --ci` and retry."
         )
     })?;
 
@@ -236,7 +236,7 @@ fn patch_file<P: Patcher>(
 
     let patched = patcher.patch_for_tool(&content, tool_name).map_err(|e| {
         anyhow!(
-            "Error: failed to patch {}\nCause: {e}\nHint: this usually means the file format drifted from the expected template.\nNext step: inspect this file and run `agentium doctor`.",
+            "Error: failed to patch {}\nCause: {e}\nHint: this usually means the file format drifted from the expected template.\nNext step: inspect this file and run `karakara doctor`.",
             path.display()
         )
     })?;

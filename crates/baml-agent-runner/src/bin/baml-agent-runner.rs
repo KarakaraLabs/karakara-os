@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Legacy entrypoint for integration tests (`CARGO_BIN_EXE_baml-agent-runner`).
-//! Production uses `agentium serve`.
+//! Production uses `karak serve`.
 
 use clap::Parser;
 

@@ -96,7 +96,7 @@ if json_out:
     sys.stdout.write("\n")
     sys.exit(0)
 
-print(f"Agentium OS release manifest (version {version})")
+print(f"Karakara OS release manifest (version {version})")
 print()
 print("Targets:")
 for target in manifest["targets"]:
