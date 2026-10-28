@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 # SPDX-License-Identifier: Apache-2.0
 #
 # Collect tier-3 gate E2E evidence artifacts into e2e-evidence/gate-tier3/

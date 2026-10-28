@@ -41,7 +41,7 @@ path = [
   "NOTICE",
 ]
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 Semiotic AI, Inc."
+SPDX-FileCopyrightText = ["2026 Semiotic AI, Inc.", "2026 Karakara Labs"]
 SPDX-License-Identifier = "Apache-2.0"
 
 # --- Generated and content-hashed trees ---
@@ -63,7 +63,7 @@ path = [
   "deploy/**",
 ]
 precedence = "closest"
-SPDX-FileCopyrightText = "2026 Semiotic AI, Inc."
+SPDX-FileCopyrightText = ["2026 Semiotic AI, Inc.", "2026 Karakara Labs"]
 SPDX-License-Identifier = "Apache-2.0"
 
 # --- Vendored third-party model snapshots (HuggingFace cache layout) ---

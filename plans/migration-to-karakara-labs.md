@@ -98,6 +98,7 @@ Still to decide or find out.
 
   ```
   SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+SPDX-FileCopyrightText: 2026 Karakara Labs
   SPDX-FileCopyrightText: 2026 Karakara Labs
   SPDX-License-Identifier: Apache-2.0
   ```
