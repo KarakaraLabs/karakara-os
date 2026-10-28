@@ -10,6 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use baml_rt_tools::ToolCapability;
+
 use super::{
     AdditionalProperties, OpenInputContract, OpenInputRequirement, SchemaDeclaration,
     SchemaDeclarationKind, SchemaEnum, SchemaLiteral, SchemaObject, SchemaTypeId, SchemaTypeRef,
@@ -41,6 +43,8 @@ pub struct ToolTypescriptContract {
     pub open_requirement: Option<OpenInputRequirement>,
     pub input: String,
     pub output: String,
+    /// Lifecycle capability (`OneShot` or `Streaming`).
+    pub capability: ToolCapability,
 }
 
 /// Render every declaration and tool contract in `graph`.
@@ -210,6 +214,7 @@ impl TypescriptRenderer {
             open_requirement,
             input: self.render_type(&contract.input),
             output: self.render_type(&contract.output),
+            capability: contract.capability,
         }
     }
 

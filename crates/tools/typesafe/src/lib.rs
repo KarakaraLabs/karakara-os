@@ -21,7 +21,9 @@ pub(crate) mod validation;
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_derive_core::{JsonSchemaType, TsType};
-use baml_rt_core::{BamlRtError, ClassifiedToolError, Result as BamlResult};
+use baml_rt_core::{
+    BamlRtError, ClassifiedToolError, Result as BamlResult, backoff::backoff_delay,
+};
 use baml_rt_tools::{
     ActionIdentity, BamlTool, BundleType, DescribeAction, OpaqueJson, ToolSessionContext, baml_tool,
 };
@@ -39,6 +41,64 @@ const TYPESAFE_API_KEY: &str = "TYPESAFE_API_KEY";
 const TYPESAFE_API_BASE_URL: &str = "TYPESAFE_API_BASE_URL";
 const DEFAULT_TYPESAFE_API_BASE_URL: &str = "https://api.typesafe.ai";
 const SYSTEM_ONE_DESCRIPTION: &str = "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state.";
+
+/// Base delay for transient-retry backoff. Matches the shared runtime default.
+const RETRY_BACKOFF_BASE: Duration = Duration::from_millis(500);
+/// Cap for transient-retry backoff.
+const RETRY_BACKOFF_CAP: Duration = Duration::from_secs(5);
+
+/// Bounded exponential backoff for transient provider failures without a
+/// `Retry-After` value. `attempt` is 1-based, so the first retry waits for
+/// the base delay.
+fn retry_backoff(attempt: u32) -> Duration {
+    backoff_delay(
+        RETRY_BACKOFF_BASE,
+        RETRY_BACKOFF_CAP,
+        attempt.saturating_sub(1),
+    )
+}
+
+/// Sleep for a bounded retry delay. Returns `false` immediately when the
+/// delay cannot fit before the call deadline, so the caller fails without
+/// holding its concurrency permit until the deadline arrives.
+async fn sleep_for_retry(deadline: tokio::time::Instant, delay: Duration) -> bool {
+    if delay >= deadline.saturating_duration_since(tokio::time::Instant::now()) {
+        return false;
+    }
+    tokio::time::timeout_at(deadline, tokio::time::sleep(delay))
+        .await
+        .is_ok()
+}
+
+/// Parse the preferred retry delay from a TypeSafe 429 response.
+///
+/// TypeSafe SDKs honor `retry-after-ms` first, then `Retry-After` (delta
+/// seconds or an HTTP date). Invalid, negative, or past values yield `None`,
+/// which falls back to [`retry_backoff`].
+fn retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    if let Some(value) = headers
+        .get("retry-after-ms")
+        .and_then(|value| value.to_str().ok())
+        && let Ok(millis) = value.trim().parse::<u64>()
+    {
+        return Some(millis);
+    }
+    if let Some(value) = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+    {
+        let value = value.trim();
+        if let Ok(seconds) = value.parse::<u64>() {
+            return seconds.checked_mul(1000);
+        }
+        if let Ok(when) = httpdate::parse_http_date(value)
+            && let Ok(delay) = when.duration_since(std::time::SystemTime::now())
+        {
+            return u64::try_from(delay.as_millis()).ok();
+        }
+    }
+    None
+}
 
 fn tagged_variant_schema<T: JsonSchemaType>(tag_value: &str) -> Value {
     let mut schema = match T::json_schema_inline() {
@@ -745,10 +805,10 @@ async fn call_system_one(
     }
     if status.as_u16() == 429 {
         return Err(SystemOneError::ProviderRateLimited {
-            retry_after_ms: None,
+            retry_after_ms: retry_after_ms(response.headers()),
         });
     }
-    if status.is_server_error() {
+    if status.as_u16() == 408 || status.is_server_error() {
         return Err(SystemOneError::provider_unavailable(
             "TypeSafe System One is unavailable",
         ));
@@ -846,29 +906,54 @@ impl BamlTool for SystemOneTool {
             })?
             .ok_or(SystemOneError::MissingCredential)?;
 
-        let now = tokio::time::Instant::now();
-        let remaining = if now >= deadline {
-            Duration::ZERO
-        } else {
-            deadline - now
-        };
-        if remaining.is_zero() {
-            return Err(SystemOneError::provider_unavailable(
-                "TypeSafe System One call deadline was exceeded before the request started",
-            )
-            .into());
+        let mut attempt: u32 = 0;
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(SystemOneError::provider_unavailable(
+                    "TypeSafe System One call deadline was exceeded before an attempt could start",
+                )
+                .into());
+            }
+            let remaining = deadline - now;
+            attempt += 1;
+
+            match call_system_one(&args, &validated, api_key.as_str(), remaining).await {
+                Ok(output) => {
+                    if config.controls.max_tokens_per_hour.is_some()
+                        && let Some(usage) = output.usage.as_ref()
+                    {
+                        let tokens = usage
+                            .input_tokens
+                            .unwrap_or(0)
+                            .saturating_add(usage.output_tokens.unwrap_or(0));
+                        controls.record_usage(tokens);
+                    }
+                    return Ok(output);
+                }
+                Err(SystemOneError::ProviderRateLimited { retry_after_ms }) => {
+                    if attempt >= config.max_attempts
+                        || !sleep_for_retry(
+                            deadline,
+                            retry_after_ms
+                                .map(Duration::from_millis)
+                                .unwrap_or_else(|| retry_backoff(attempt)),
+                        )
+                        .await
+                    {
+                        return Err(SystemOneError::ProviderRateLimited { retry_after_ms }.into());
+                    }
+                }
+                Err(SystemOneError::ProviderUnavailable { message }) => {
+                    if attempt >= config.max_attempts
+                        || !sleep_for_retry(deadline, retry_backoff(attempt)).await
+                    {
+                        return Err(SystemOneError::provider_unavailable(message).into());
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
-        let output = call_system_one(&args, &validated, api_key.as_str(), remaining).await?;
-        if config.controls.max_tokens_per_hour.is_some()
-            && let Some(usage) = output.usage.as_ref()
-        {
-            let tokens = usage
-                .input_tokens
-                .unwrap_or(0)
-                .saturating_add(usage.output_tokens.unwrap_or(0));
-            controls.record_usage(tokens);
-        }
-        Ok(output)
     }
 
     fn classify_execution_error(err: &BamlRtError) -> ClassifiedToolError {

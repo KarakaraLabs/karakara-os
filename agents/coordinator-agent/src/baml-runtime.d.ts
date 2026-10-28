@@ -635,6 +635,19 @@ export type ToolOpenArgs<T extends ToolName> =
     ? [openInput: ToolOpenInput<T>]
     : [openInput?: ToolOpenInput<T>];
 
+export type OneShotToolName = never;
+
+export type ToolOutcome<O> =
+  | { status: "done"; result: O }
+  | { status: "error"; error: ToolFailure };
+
+declare global {
+  function invokeTool<T extends OneShotToolName>(
+    toolName: T,
+    input: ToolInput<T>
+  ): Promise<ToolOutcome<ToolOutput<T>>>;
+}
+
 export type ToolSessionPhase =
   | "Open"
   | "Send"

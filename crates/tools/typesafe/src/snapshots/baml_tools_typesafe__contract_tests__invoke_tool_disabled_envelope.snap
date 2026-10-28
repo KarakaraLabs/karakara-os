@@ -1,0 +1,16 @@
+---
+source: crates/tools/typesafe/src/contract_tests.rs
+expression: envelope
+---
+{
+  "status": "error",
+  "error": {
+    "kind": "ExecutionFailed",
+    "message": "TypeSafe System One is disabled by operator configuration",
+    "retryable": false,
+    "disposition": "inform_and_continue",
+    "code": "typesafe_disabled",
+    "hint": null,
+    "retry_after_ms": null
+  }
+}

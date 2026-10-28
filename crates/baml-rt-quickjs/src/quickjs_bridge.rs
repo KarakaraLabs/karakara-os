@@ -54,7 +54,7 @@ use types::{
     BriefPollParams, CorrelationMap, EvalLifecycleGuard, EvalNotifyMap, EvalOnceResult,
     EvalResultMap, InFlightCounter, InFlightGuard, InvocationContextRegistrySlot,
     InvocationScopeMap, PreparedBriefPollEval, StreamInvocationSession, StreamSemaphore,
-    StreamSessionMap, empty_open_input, tool_step_to_value,
+    StreamSessionMap, empty_open_input, tool_failure_to_js, tool_step_to_value,
 };
 
 /// Bridge between QuickJS JavaScript runtime and BAML functions

@@ -9,7 +9,7 @@ use std::{
 };
 
 use baml_rt_tools::{
-    SessionPlanFunctionsMap, UnifiedStepExecutorFunctionsMap,
+    SessionPlanFunctionsMap, ToolCapability, UnifiedStepExecutorFunctionsMap,
     tools::ToolFunctionMetadata,
     ts_gen::{
         generated_prelude_typescript_symbols, render_runtime_typescript, runtime_typescript_symbols,
@@ -415,6 +415,42 @@ fn render_tool_catalog(surface: &ToolTypescriptSurface) -> Result<String> {
         "  T extends ToolWithRequiredOpenInput",
         "    ? [openInput: ToolOpenInput<T>]",
         "    : [openInput?: ToolOpenInput<T>];",
+        "",
+    ] {
+        write_line(&mut out, line)?;
+    }
+
+    // One-shot author surface: only manifest-allowed `ToolCapability::OneShot`
+    // tools are reachable through `invokeTool`.
+    let one_shot_names: Vec<String> = surface
+        .tools
+        .values()
+        .filter(|contract| contract.capability == ToolCapability::OneShot)
+        .map(|contract| quote_ts(&contract.tool_name))
+        .collect();
+    if one_shot_names.is_empty() {
+        write_line(&mut out, "export type OneShotToolName = never;")?;
+    } else {
+        write_line(
+            &mut out,
+            &format!(
+                "export type OneShotToolName =\n  | {};",
+                one_shot_names.join("\n  | ")
+            ),
+        )?;
+    }
+    write_line(&mut out, "")?;
+    for line in [
+        "export type ToolOutcome<O> =",
+        "  | { status: \"done\"; result: O }",
+        "  | { status: \"error\"; error: ToolFailure };",
+        "",
+        "declare global {",
+        "  function invokeTool<T extends OneShotToolName>(",
+        "    toolName: T,",
+        "    input: ToolInput<T>",
+        "  ): Promise<ToolOutcome<ToolOutput<T>>>;",
+        "}",
         "",
     ] {
         write_line(&mut out, line)?;
