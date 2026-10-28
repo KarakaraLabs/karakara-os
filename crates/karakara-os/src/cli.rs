@@ -14,7 +14,7 @@ use crate::{
 /// Agentium — unified platform host and developer SDK
 #[derive(Parser)]
 #[command(
-    name = "agentium",
+    name = "karak",
     version,
     about = "Agentium platform and developer SDK"
 )]

@@ -1,13 +1,13 @@
 [package]
-name = "agentium"
+name = "karakara-os"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
 publish = false
-description = "Agentium — unified platform host and developer SDK"
+description = "Karakara OS — unified platform host and developer SDK"
 
 [[bin]]
-name = "agentium"
+name = "karak"
 path = "src/main.rs"
 
 [dependencies]
