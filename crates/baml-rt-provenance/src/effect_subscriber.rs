@@ -15,10 +15,10 @@ use baml_rt_core::{
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
     llm_text::{extract_response_text, llm_completion_should_materialize_assistant_message},
 };
-use baml_rt_observability::metrics::{self, LlmCallMetrics};
 use baml_rt_karakara::{
     CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus, resolve_karakara_policy,
 };
+use baml_rt_observability::metrics::{self, LlmCallMetrics};
 use baml_rt_tools::{
     ToolRegistry,
     archive_refs::RefTable,

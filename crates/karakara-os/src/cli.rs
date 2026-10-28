@@ -14,11 +14,7 @@ use crate::{
 
 /// Karakara — unified platform host and developer SDK
 #[derive(Parser)]
-#[command(
-    name = "karak",
-    version,
-    about = "Karakara platform and developer SDK"
-)]
+#[command(name = "karak", version, about = "Karakara platform and developer SDK")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

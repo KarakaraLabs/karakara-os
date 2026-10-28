@@ -32,8 +32,8 @@ pub use gate::{AmbiguityAwareGate, GateAction, GateDecision, GatePolicy};
 pub use gate_outcome::{GateOutcome, GateOutcomeStore};
 pub use global::{
     global_denied_recent_store, global_gate_outcome_store, global_grounding_store,
-    global_pending_gate_auth_store, global_karakara_config, grant_pending_gate_authorization,
-    resolve_pending_gate_authorization, resolve_karakara_policy, set_global_karakara_config,
+    global_karakara_config, global_pending_gate_auth_store, grant_pending_gate_authorization,
+    resolve_karakara_policy, resolve_pending_gate_authorization, set_global_karakara_config,
     submit_grounding,
 };
 pub use integrity::{CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus};
