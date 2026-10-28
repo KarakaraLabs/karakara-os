@@ -1,7 +1,7 @@
 # Incident Fixtures
 
 Seeded outage datasets used by the Grafana/LGTM investigation slice
-([#512](https://github.com/karakara-labs/karakara-os/issues/512)).
+([#512](https://github.com/KarakaraLabs/karakara-os/issues/512)).
 Each scenario directory pairs LGTM-style evidence (metrics, logs, traces, annotations)
 with sample incident events shaped so a real producer (Grafana Alerting,
 FireHydrant, Slack/operator console) can later replace them without

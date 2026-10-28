@@ -11,7 +11,7 @@ report discloses the problem to everyone before a fix exists.
 
 Instead, report privately through GitHub's private vulnerability reporting:
 
-- Go to the [**Security** tab](https://github.com/karakara-labs/karakara-os/security/advisories/new)
+- Go to the [**Security** tab](https://github.com/KarakaraLabs/karakara-os/security/advisories/new)
   and open a new draft advisory, or
 - Use the **Report a vulnerability** button on the repository's Security tab.
 

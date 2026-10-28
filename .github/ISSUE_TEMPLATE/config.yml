@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/karakara-labs/karakara-os/security/advisories/new
+    url: https://github.com/KarakaraLabs/karakara-os/security/advisories/new
     about: Report security vulnerabilities privately. Do not open a public issue.

@@ -1,10 +1,10 @@
 # `lgtm-checkout-5xx` — checkout-api 5xx surge after v2.34.0 deploy
 
 First Grafana/LGTM seeded outage dataset. Owned by issue
-[#521](https://github.com/karakara-labs/karakara-os/issues/521) and
-used by [#519](https://github.com/karakara-labs/karakara-os/issues/519),
-[#515](https://github.com/karakara-labs/karakara-os/issues/515), and
-[#513](https://github.com/karakara-labs/karakara-os/issues/513).
+[#521](https://github.com/KarakaraLabs/karakara-os/issues/521) and
+used by [#519](https://github.com/KarakaraLabs/karakara-os/issues/519),
+[#515](https://github.com/KarakaraLabs/karakara-os/issues/515), and
+[#513](https://github.com/KarakaraLabs/karakara-os/issues/513).
 
 ## What this scenario is
 
@@ -71,7 +71,7 @@ manual chat prompt in the demo path.
 | `events/manual-operator-exploratory.json` | `incident.manual.v1` | `operator` | Operator-typed event from the Event Console (#520 / #526) |
 
 Suggested investigation agent subscription (per Natanael's note on
-[#521 comment](https://github.com/karakara-labs/karakara-os/issues/521)):
+[#521 comment](https://github.com/KarakaraLabs/karakara-os/issues/521)):
 
 ```json
 { "schema_versions": ["grafana.alert.v1"], "source_kinds": ["grafana"] }

@@ -93,7 +93,7 @@ Confirmed from the repo. No decision needed, just keep these files as they are.
 
 Still to decide or find out.
 
-- [x] Pick the new product name: **karakara-os**. Registry availability confirmed (GitHub org `karakara-labs`, crates.io, npm all clear). Trademark register search still pending.
+- [x] Pick the new product name: **karakara-os**. Registry availability confirmed (GitHub org `KarakaraLabs`, crates.io, npm all clear). Trademark register search still pending.
 - [x] Choose the exact "modified by" and "Copyright 2026 Karakara Labs" header wording, and apply it to files we touch:
 
   ```
@@ -101,7 +101,7 @@ Still to decide or find out.
   SPDX-FileCopyrightText: 2026 Karakara Labs
   SPDX-License-Identifier: Apache-2.0
   ```
-- [x] Mechanical rebrand applied: `baml-rt-semiotic` → `baml-rt-karakara`, `agentium` crate → `karakara-os` (binary `karak`), brand text/URLs/images → karakara / karakara-labs, and the Karakara Labs SPDX line added to touched files. `cargo check --workspace`, `cargo fmt`, and the regenerated OpenAPI snapshot pass.
+- [x] Mechanical rebrand applied: `baml-rt-semiotic` → `baml-rt-karakara`, `agentium` crate → `karakara-os` (binary `karak`), brand text/URLs/images → karakara / KarakaraLabs, and the Karakara Labs SPDX line added to touched files. `cargo check --workspace`, `cargo fmt`, and the regenerated OpenAPI snapshot pass.
 - [ ] Check dependency licenses across the workspace, including vendored deps.
 - [ ] Scan git history for leaked secrets before making the fork public.
 - [ ] Review employment and IP assignment agreements. Confirm Semiotic AI, Inc. owned our work as work-for-hire.
