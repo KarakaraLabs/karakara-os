@@ -6,21 +6,21 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Config bundle name in the runner config store (`GET/PUT /config/semiotic`).
-pub const SEMIOTIC_CONFIG_BUNDLE_NAME: &str = "semiotic";
+/// Config bundle name in the runner config store (`GET/PUT /config/karakara`).
+pub const KARAKARA_CONFIG_BUNDLE_NAME: &str = "karakara";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SemioticMode {
+pub enum KarakaraMode {
     #[default]
     DryRun,
     Enforce,
 }
 
-/// Operator-facing gate posture derived from [`SemioticPolicy`].
+/// Operator-facing gate posture derived from [`KarakaraPolicy`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SemioticPosture {
+pub enum KarakaraPosture {
     Off,
     Audit,
     Enforce,
@@ -32,8 +32,8 @@ pub enum SemioticPosture {
 pub struct EffectiveAgentPolicy {
     pub agent_package: String,
     pub has_override: bool,
-    pub policy: SemioticPolicy,
-    pub posture: SemioticPosture,
+    pub policy: KarakaraPolicy,
+    pub posture: KarakaraPosture,
     pub summary: String,
 }
 
@@ -41,19 +41,19 @@ pub struct EffectiveAgentPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EffectiveSystemPolicy {
-    pub policy: SemioticPolicy,
-    pub posture: SemioticPosture,
+    pub policy: KarakaraPolicy,
+    pub posture: KarakaraPosture,
     pub summary: String,
 }
 
 /// Effective gate policy for one agent (or the global default).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SemioticPolicy {
+pub struct KarakaraPolicy {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub mode: SemioticMode,
+    pub mode: KarakaraMode,
     /// Minimum tier to enforce (2 = write-access tools).
     #[serde(default = "default_enforce_min")]
     pub enforce_min_tier: u8,
@@ -66,19 +66,19 @@ pub struct SemioticPolicy {
 /// Per-agent overrides keyed by `agent_package` (same as LLM routing / GET /agents).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SemioticOverrides {
+pub struct KarakaraOverrides {
     #[serde(default)]
-    pub agent: HashMap<String, SemioticPolicy>,
+    pub agent: HashMap<String, KarakaraPolicy>,
 }
 
-/// Full semiotic bundle: global default + per-agent overrides.
+/// Full karakara bundle: global default + per-agent overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SemioticConfig {
+pub struct KarakaraConfig {
     #[serde(flatten)]
-    pub default: SemioticPolicy,
+    pub default: KarakaraPolicy,
     #[serde(default)]
-    pub overrides: SemioticOverrides,
+    pub overrides: KarakaraOverrides,
 }
 
 fn default_enforce_min() -> u8 {
@@ -88,11 +88,11 @@ fn default_true() -> bool {
     true
 }
 
-impl Default for SemioticPolicy {
+impl Default for KarakaraPolicy {
     fn default() -> Self {
         Self {
             enabled: false,
-            mode: SemioticMode::DryRun,
+            mode: KarakaraMode::DryRun,
             enforce_min_tier: 2,
             require_postconditions_t3: true,
             strict_citation_anchors: true,
@@ -100,27 +100,27 @@ impl Default for SemioticPolicy {
     }
 }
 
-impl SemioticPolicy {
+impl KarakaraPolicy {
     pub fn should_enforce(&self, tier: u8) -> bool {
-        self.enabled && self.mode == SemioticMode::Enforce && tier >= self.enforce_min_tier
+        self.enabled && self.mode == KarakaraMode::Enforce && tier >= self.enforce_min_tier
     }
 
-    pub fn posture(&self) -> SemioticPosture {
+    pub fn posture(&self) -> KarakaraPosture {
         if !self.enabled {
-            return SemioticPosture::Off;
+            return KarakaraPosture::Off;
         }
-        if self.mode == SemioticMode::Enforce {
-            SemioticPosture::Enforce
+        if self.mode == KarakaraMode::Enforce {
+            KarakaraPosture::Enforce
         } else {
-            SemioticPosture::Audit
+            KarakaraPosture::Audit
         }
     }
 
     pub fn summary_label(&self) -> String {
         let posture = match self.posture() {
-            SemioticPosture::Off => "Off",
-            SemioticPosture::Audit => "Audit",
-            SemioticPosture::Enforce => "Enforce",
+            KarakaraPosture::Off => "Off",
+            KarakaraPosture::Audit => "Audit",
+            KarakaraPosture::Enforce => "Enforce",
         };
         let mut parts = vec![format!("{posture} · tier≥{}", self.enforce_min_tier)];
         if self.require_postconditions_t3 {
@@ -133,13 +133,13 @@ impl SemioticPolicy {
     }
 }
 
-impl SemioticConfig {
+impl KarakaraConfig {
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
     /// Resolve policy for an executing agent. Inheritance: `overrides.agent[package]` → global default.
-    pub fn resolve(&self, agent_package: Option<&str>) -> SemioticPolicy {
+    pub fn resolve(&self, agent_package: Option<&str>) -> KarakaraPolicy {
         if let Some(pkg) = agent_package
             && let Some(policy) = self.overrides.agent.get(pkg)
         {
@@ -194,53 +194,53 @@ mod tests {
 
     #[test]
     fn resolve_uses_agent_override_when_present() {
-        let mut config = SemioticConfig::default();
+        let mut config = KarakaraConfig::default();
         config.overrides.agent.insert(
             "deploy-agent".to_string(),
-            SemioticPolicy {
+            KarakaraPolicy {
                 enabled: true,
-                mode: SemioticMode::Enforce,
+                mode: KarakaraMode::Enforce,
                 enforce_min_tier: 2,
                 ..Default::default()
             },
         );
         let policy = config.resolve(Some("deploy-agent"));
         assert!(policy.enabled);
-        assert_eq!(policy.mode, SemioticMode::Enforce);
+        assert_eq!(policy.mode, KarakaraMode::Enforce);
     }
 
     #[test]
     fn resolve_falls_back_to_global_default() {
-        let config = SemioticConfig::default();
+        let config = KarakaraConfig::default();
         let policy = config.resolve(Some("other-agent"));
         assert!(!policy.enabled);
-        assert_eq!(policy.mode, SemioticMode::DryRun);
+        assert_eq!(policy.mode, KarakaraMode::DryRun);
     }
 
     #[test]
     fn posture_off_when_disabled() {
-        let policy = SemioticPolicy::default();
-        assert_eq!(policy.posture(), SemioticPosture::Off);
+        let policy = KarakaraPolicy::default();
+        assert_eq!(policy.posture(), KarakaraPosture::Off);
     }
 
     #[test]
     fn posture_audit_when_dry_run_enabled() {
-        let policy = SemioticPolicy {
+        let policy = KarakaraPolicy {
             enabled: true,
-            mode: SemioticMode::DryRun,
+            mode: KarakaraMode::DryRun,
             ..Default::default()
         };
-        assert_eq!(policy.posture(), SemioticPosture::Audit);
+        assert_eq!(policy.posture(), KarakaraPosture::Audit);
     }
 
     #[test]
     fn effective_agents_marks_override() {
-        let mut config = SemioticConfig::default();
+        let mut config = KarakaraConfig::default();
         config.overrides.agent.insert(
             "custom-agent".to_string(),
-            SemioticPolicy {
+            KarakaraPolicy {
                 enabled: true,
-                mode: SemioticMode::Enforce,
+                mode: KarakaraMode::Enforce,
                 ..Default::default()
             },
         );
@@ -251,6 +251,6 @@ mod tests {
             .find(|a| a.agent_package == "custom-agent")
             .expect("custom");
         assert!(custom.has_override);
-        assert_eq!(custom.posture, SemioticPosture::Enforce);
+        assert_eq!(custom.posture, KarakaraPosture::Enforce);
     }
 }

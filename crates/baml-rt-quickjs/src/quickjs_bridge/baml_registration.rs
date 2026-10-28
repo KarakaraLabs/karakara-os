@@ -1419,8 +1419,8 @@ pub(super) async fn register_execution_session_helper(bridge: &QuickJSBridge) ->
                                         .base(),
                                     &scope_for_run,
                                 )?;
-                                let art = baml_rt_semiotic::ParseArtifact::coerce_from_value(artifact);
-                                baml_rt_semiotic::submit_grounding(
+                                let art = baml_rt_karakara::ParseArtifact::coerce_from_value(artifact);
+                                baml_rt_karakara::submit_grounding(
                                     &scope_for_run,
                                     art,
                                     plan_step_id.clone(),

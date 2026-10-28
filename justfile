@@ -40,8 +40,8 @@ regen-fixtures:
     set +a
     cargo run --release -p baml-rt-builder --all-features --bin regen_fixtures
 
-# Retired: ONNX drift models removed in semiotic gate cutover.
-# download-models: (removed — see docs/assertions/semiotic-gate.md)
+# Retired: ONNX drift models removed in karakara gate cutover.
+# download-models: (removed — see docs/assertions/karakara-gate.md)
 
 # Verify the local host has the system deps required to build agents.
 # On non-Linux hosts, skips Linux-only checks (libdbus / libcap-ng);

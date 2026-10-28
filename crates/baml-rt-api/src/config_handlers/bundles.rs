@@ -8,14 +8,14 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode as AxumStatus};
 use baml_rt_llm_config::{LLM_CONFIG_BUNDLE_NAME, LlmClientConfig};
-use baml_rt_semiotic::SEMIOTIC_CONFIG_BUNDLE_NAME;
+use baml_rt_karakara::KARAKARA_CONFIG_BUNDLE_NAME;
 use baml_rt_tools::BundleName;
 use http_api_problem::HttpApiProblem;
 use serde_json::Value;
 
 use super::{
     common::{HttpResult, config_err_500, is_builtin_config_bundle, llm_bundle_schema, problem},
-    semiotic,
+    karakara,
 };
 use crate::openapi::{ConfigVersionDto, ToolConfigDto, ToolConfigSchemaDto};
 
@@ -69,11 +69,11 @@ pub async fn list_config(
             has_config: with_config.contains(LLM_CONFIG_BUNDLE_NAME),
         });
 
-        let semiotic_bundle =
-            BundleName::new(SEMIOTIC_CONFIG_BUNDLE_NAME).expect("semiotic bundle name is valid");
-        seen.insert(semiotic_bundle);
-        out.push(semiotic::list_schema_entry(
-            with_config.contains(SEMIOTIC_CONFIG_BUNDLE_NAME),
+        let karakara_bundle =
+            BundleName::new(KARAKARA_CONFIG_BUNDLE_NAME).expect("karakara bundle name is valid");
+        seen.insert(karakara_bundle);
+        out.push(karakara::list_schema_entry(
+            with_config.contains(KARAKARA_CONFIG_BUNDLE_NAME),
         )?);
 
         for metadata in catalog.iter() {
@@ -152,9 +152,9 @@ pub async fn get_config(
                     0,
                 ),
             }
-        } else if semiotic::is_bundle(parsed.as_str()) {
+        } else if karakara::is_bundle(parsed.as_str()) {
             let (config_value, version) =
-                semiotic::load_or_default(config.as_ref(), &parsed).await?;
+                karakara::load_or_default(config.as_ref(), &parsed).await?;
             (config_value, version)
         } else {
             let metadata = catalog.bundle_config(&parsed).ok_or_else(|| {
@@ -238,8 +238,8 @@ pub async fn put_config(
         llm_config.normalize();
         serde_json::to_value(&llm_config)
             .map_err(|e| problem(500, "Internal Error", format!("serialize LLM config: {e}")))?
-    } else if semiotic::is_bundle(parsed.as_str()) {
-        semiotic::parse_put_body(body)?
+    } else if karakara::is_bundle(parsed.as_str()) {
+        karakara::parse_put_body(body)?
     } else {
         let config_meta = catalog
             .bundle_config(&parsed)
@@ -300,8 +300,8 @@ pub async fn put_config(
         problem(400, "Bad Request", e.to_string())
     })?;
 
-    if semiotic::is_bundle(parsed.as_str()) {
-        semiotic::apply_hot_reload(&version.config);
+    if karakara::is_bundle(parsed.as_str()) {
+        karakara::apply_hot_reload(&version.config);
     }
 
     Ok(Json(ConfigVersionDto {
@@ -365,8 +365,8 @@ pub async fn delete_config(
 
         config.delete(&parsed).await.map_err(config_err_500)?;
 
-        if semiotic::is_bundle(parsed.as_str()) {
-            semiotic::reset_hot_reload();
+        if karakara::is_bundle(parsed.as_str()) {
+            karakara::reset_hot_reload();
         }
 
         Ok(AxumStatus::NO_CONTENT)

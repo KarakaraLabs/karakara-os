@@ -1,4 +1,4 @@
-# Semiotic Gate
+# Karakara Gate
 
 Deterministic pre-action grounding for consequential tool calls. The LLM produces a
 `ParseArtifact`; host code classifies tier and runs the P4 ambiguity-aware gate.
@@ -34,7 +34,7 @@ Defaults from tool metadata `access_level`:
 - `write` → tier 2
 - `delete` → tier 3
 
-Overrides: tag `semiotic:tier=N`, `semiotic:external`, `semiotic:reversible`. MCP
+Overrides: tag `karakara:tier=N`, `karakara:external`, `karakara:reversible`. MCP
 `readOnlyHint` / `destructiveHint` are hints only — never tier-lowering evidence.
 `delegation_target` on A2A calls uses delegation default tier.
 
@@ -59,8 +59,8 @@ Actions: `execute`, `execute_flagged`, `ask`, `queue_for_human`.
 
 ## Configuration
 
-Runtime gate policy lives in the **config store** bundle `semiotic` — same mechanism as
-LLM clients (`GET/PUT /config/semiotic`). Operators edit it in **Settings → Trust**;
+Runtime gate policy lives in the **config store** bundle `karakara` — same mechanism as
+LLM clients (`GET/PUT /config/karakara`). Operators edit it in **Settings → Trust**;
 changes hot-reload without restart.
 
 **System default** applies to all agents. **Per-agent overrides** are keyed by

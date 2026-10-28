@@ -97,7 +97,7 @@ def main() -> int:
                     r.get("activity_outcome"),
                     "gate" if g else "no_gate",
                 )
-        activity = get_json("/config/semiotic/activity?windowHours=24&agentPackage=clickup-agent")
+        activity = get_json("/config/karakara/activity?windowHours=24&agentPackage=clickup-agent")
         print("fleet", activity.get("fleet"))
         for a in activity.get("agents", []):
             if a.get("agentPackage") == "clickup-agent":

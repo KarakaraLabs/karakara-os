@@ -15,7 +15,7 @@ members = [
   "crates/baml-rt-citation",
   "crates/baml-rt-conversation",
   "crates/baml-rt-core",
-  "crates/baml-rt-semiotic",
+  "crates/baml-rt-karakara",
   "crates/baml-rt-hash",
   "crates/baml-rt-id",
   "crates/baml-rt-interceptor",

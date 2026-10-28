@@ -12,17 +12,17 @@ import type { AgentDiscoveryEntry } from "../types/a2a";
 import type {
   EffectiveAgentPolicy,
   EffectiveSystemPolicy,
-  SemioticConfig,
-  SemioticPolicy,
+  KarakaraConfig,
+  KarakaraPolicy,
 } from "../types/config";
-import { postureChipClass, postureLabel } from "../chat/semioticPolicyUi";
+import { postureChipClass, postureLabel } from "../chat/karakaraPolicyUi";
 import { readTrustAgentFromUrl } from "../events/operatorRoute";
-import SemioticActivityPanel from "./SemioticActivityPanel.vue";
-import SemioticPolicyFields from "./SemioticPolicyFields.vue";
+import KarakaraActivityPanel from "./KarakaraActivityPanel.vue";
+import KarakaraPolicyFields from "./KarakaraPolicyFields.vue";
 
-const { fetchConfig, putConfig, fetchSemioticEffective } = useConfigApi();
+const { fetchConfig, putConfig, fetchKarakaraEffective } = useConfigApi();
 const toast = useToast();
-const config = ref<SemioticConfig | null>(null);
+const config = ref<KarakaraConfig | null>(null);
 const effective = ref<{ system: EffectiveSystemPolicy; agents: EffectiveAgentPolicy[] } | null>(
   null,
 );
@@ -36,7 +36,7 @@ const highlightAgent = ref<string | null>(null);
 let loaded = false;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-const defaultPolicy = (): SemioticPolicy => ({
+const defaultPolicy = (): KarakaraPolicy => ({
   enabled: false,
   mode: "dry_run",
   enforceMinTier: 2,
@@ -44,7 +44,7 @@ const defaultPolicy = (): SemioticPolicy => ({
   strictCitationAnchors: true,
 });
 
-function normalizeConfig(raw: Partial<SemioticConfig>): SemioticConfig {
+function normalizeConfig(raw: Partial<KarakaraConfig>): KarakaraConfig {
   return {
     ...defaultPolicy(),
     ...raw,
@@ -54,7 +54,7 @@ function normalizeConfig(raw: Partial<SemioticConfig>): SemioticConfig {
   };
 }
 
-function globalPolicy(): SemioticPolicy {
+function globalPolicy(): KarakaraPolicy {
   const c = config.value!;
   return {
     enabled: c.enabled,
@@ -97,7 +97,7 @@ function setAgentOverrideEnabled(agentPkg: string, enabled: boolean) {
   }
 }
 
-function agentPolicy(agentPkg: string): SemioticPolicy {
+function agentPolicy(agentPkg: string): KarakaraPolicy {
   ensureOverrides();
   if (!config.value!.overrides!.agent![agentPkg]) {
     config.value!.overrides!.agent![agentPkg] = { ...globalPolicy() };
@@ -123,7 +123,7 @@ const filteredAgents = computed(() => {
 });
 
 async function refreshEffective() {
-  const result = await fetchSemioticEffective();
+  const result = await fetchKarakaraEffective();
   if ("error" in result) return;
   effective.value = { system: result.data.system, agents: result.data.agents };
 }
@@ -148,13 +148,13 @@ onMounted(async () => {
     // non-fatal
   }
 
-  const result = await fetchConfig("semiotic");
+  const result = await fetchConfig("karakara");
   if ("error" in result) {
     error.value = result.error.detail ?? result.error.title;
     return;
   }
   version.value = result.data.version;
-  config.value = normalizeConfig(result.data.config as Partial<SemioticConfig>);
+  config.value = normalizeConfig(result.data.config as Partial<KarakaraConfig>);
   await refreshEffective();
   setTimeout(() => {
     loaded = true;
@@ -177,18 +177,18 @@ watch(
   { deep: true },
 );
 
-async function doSave(payload: SemioticConfig) {
-  const result = await putConfig("semiotic", payload as unknown as Record<string, unknown>, version.value);
+async function doSave(payload: KarakaraConfig) {
+  const result = await putConfig("karakara", payload as unknown as Record<string, unknown>, version.value);
   if ("error" in result) {
     saveStatus.value = "error";
     error.value = result.error.detail ?? result.error.title;
-    toast.error("Semiotic gate config save failed");
+    toast.error("Karakara gate config save failed");
     return;
   }
   version.value = result.data.version;
   saveStatus.value = "saved";
   await refreshEffective();
-  toast.success("Semiotic gate config saved");
+  toast.success("Karakara gate config saved");
   setTimeout(() => {
     if (saveStatus.value === "saved") saveStatus.value = "idle";
   }, 2000);
@@ -199,7 +199,7 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
 
 <template>
   <div v-if="error" class="settings-error" role="alert">{{ error }}</div>
-  <div v-else-if="config" class="config-semiotic-form">
+  <div v-else-if="config" class="config-karakara-form">
     <div class="config-autosave-bar">
       <span v-if="saveStatus === 'saving'" class="config-autosave-saving">Saving…</span>
       <span v-else-if="saveStatus === 'saved'" class="config-autosave-saved">Saved (v{{ version }})</span>
@@ -207,12 +207,12 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
     </div>
 
     <div>
-      <h3 class="config-section-title">Semiotic gate</h3>
-      <p class="config-semiotic-lede">
+      <h3 class="config-section-title">Karakara gate</h3>
+      <p class="config-karakara-lede">
         Pre-action structural gate for tier&ge;2 tool calls. Dry-run records decisions without blocking.
         Per-agent overrides inherit the system default unless customized below.
         <a
-          class="config-semiotic-doc-link"
+          class="config-karakara-doc-link"
           href="https://github.com/semiotic-agentium/agentium-os/blob/main/docs/assertions/semiotic-gate.md"
           target="_blank"
           rel="noopener noreferrer"
@@ -229,7 +229,7 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
         <span :class="postureChipClass(systemPosture)">{{ postureLabel(systemPosture) }}</span>
       </div>
       <div class="config-routing-block-body">
-        <SemioticPolicyFields :policy="config" />
+        <KarakaraPolicyFields :policy="config" />
       </div>
     </div>
 
@@ -243,7 +243,7 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
       <div class="config-routing-block-body">
         <input
           v-model="agentSearch"
-          class="config-input semiotic-agent-search"
+          class="config-input karakara-agent-search"
           type="search"
           placeholder="Filter agents…"
           aria-label="Filter agents"
@@ -298,13 +298,13 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
               v-if="hasAgentOverride(agent.agent_package) && isExpanded(agent.agent_package)"
               class="config-agent-override-body config-routing-block-body"
             >
-              <SemioticPolicyFields :policy="agentPolicy(agent.agent_package)" />
+              <KarakaraPolicyFields :policy="agentPolicy(agent.agent_package)" />
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <SemioticActivityPanel :search-filter="agentSearch.trim() || null" />
+    <KarakaraActivityPanel :search-filter="agentSearch.trim() || null" />
   </div>
 </template>

@@ -327,13 +327,13 @@ async fn episode_includes_drift_summary_citations_and_rendered_section() {
             },
             2_000,
             Outcome::Success,
-            Some(baml_rt_semiotic::CitationIntegrityAssessment {
-                per_citation: vec![baml_rt_semiotic::CitationIntegrityEntry {
+            Some(baml_rt_karakara::CitationIntegrityAssessment {
+                per_citation: vec![baml_rt_karakara::CitationIntegrityEntry {
                     raw: "#1".into(),
                     n: 1,
                     is_history: true,
                     negated: false,
-                    status: baml_rt_semiotic::IntegrityStatus::Resolved,
+                    status: baml_rt_karakara::IntegrityStatus::Resolved,
                     activity_anchor: Some("prov-1900000000300".into()),
                     content_preview: Some("analyze data...".into()),
                 }],

@@ -11,11 +11,11 @@ use baml_rt_core::{
     ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
 };
 use baml_rt_interceptor::{InterceptorDecision, ToolCallContext, ToolInterceptor};
-use baml_rt_semiotic::{
-    config::{SemioticConfig, SemioticMode, SemioticPolicy},
+use baml_rt_karakara::{
+    config::{KarakaraConfig, KarakaraMode, KarakaraPolicy},
     gate::{AmbiguityAwareGate, GateAction, GatePolicy},
-    global::set_global_semiotic_config,
-    interceptor::SemioticToolInterceptor,
+    global::set_global_karakara_config,
+    interceptor::KarakaraToolInterceptor,
     schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact, Postcondition},
     store::GroundingStore,
     tier::Tier,
@@ -180,21 +180,21 @@ fn tool_ctx_for_agent(
     ctx
 }
 
-fn enforced_interceptor(store: Arc<GroundingStore>) -> SemioticToolInterceptor {
-    set_global_semiotic_config(SemioticConfig {
-        default: SemioticPolicy {
+fn enforced_interceptor(store: Arc<GroundingStore>) -> KarakaraToolInterceptor {
+    set_global_karakara_config(KarakaraConfig {
+        default: KarakaraPolicy {
             enabled: true,
-            mode: SemioticMode::Enforce,
+            mode: KarakaraMode::Enforce,
             enforce_min_tier: 2,
             ..Default::default()
         },
         overrides: Default::default(),
     });
-    SemioticToolInterceptor::new(store)
+    KarakaraToolInterceptor::new(store)
 }
 
 async fn intercept(
-    interceptor: &SemioticToolInterceptor,
+    interceptor: &KarakaraToolInterceptor,
     tool_name: &str,
     args: serde_json::Value,
     access: ToolAccess,
@@ -286,10 +286,10 @@ async fn grounded_tier3_requires_authorization() {
 async fn per_agent_override_enforces_while_global_dry_run() {
     let _guard = conformance_lock().lock().await;
     let store = Arc::new(GroundingStore::new());
-    set_global_semiotic_config(SemioticConfig {
-        default: SemioticPolicy {
+    set_global_karakara_config(KarakaraConfig {
+        default: KarakaraPolicy {
             enabled: true,
-            mode: SemioticMode::DryRun,
+            mode: KarakaraMode::DryRun,
             enforce_min_tier: 2,
             ..Default::default()
         },
@@ -297,17 +297,17 @@ async fn per_agent_override_enforces_while_global_dry_run() {
             let mut agent = std::collections::HashMap::new();
             agent.insert(
                 "deploy-agent".to_string(),
-                SemioticPolicy {
+                KarakaraPolicy {
                     enabled: true,
-                    mode: SemioticMode::Enforce,
+                    mode: KarakaraMode::Enforce,
                     enforce_min_tier: 2,
                     ..Default::default()
                 },
             );
-            baml_rt_semiotic::config::SemioticOverrides { agent }
+            baml_rt_karakara::config::KarakaraOverrides { agent }
         },
     });
-    let gate = SemioticToolInterceptor::new(store);
+    let gate = KarakaraToolInterceptor::new(store);
     let t2_cmd = json!({"command": "rm -rf /tmp/test"});
     let decision = gate
         .intercept_tool_call(&tool_ctx_for_agent(

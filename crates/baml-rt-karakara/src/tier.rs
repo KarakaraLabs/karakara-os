@@ -53,7 +53,7 @@ impl Default for ToolTierMeta {
 
 pub fn classify_tier(meta: &ToolTierMeta) -> Tier {
     for tag in &meta.tags {
-        if let Some(rest) = tag.strip_prefix("semiotic:tier=")
+        if let Some(rest) = tag.strip_prefix("karakara:tier=")
             && let Ok(n) = rest.parse::<u8>()
         {
             return Tier::from_u8(n);
@@ -92,7 +92,7 @@ mod tests {
         assert_eq!(
             classify_tier(&ToolTierMeta {
                 access_level: ToolAccess::Delete,
-                tags: vec!["semiotic:tier=1".into()],
+                tags: vec!["karakara:tier=1".into()],
                 ..Default::default()
             }),
             Tier::Routine

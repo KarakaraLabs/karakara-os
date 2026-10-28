@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end A2A path: tier-3 semiotic gate → INPUT_REQUIRED + gateAuthorization → approve resume → tool executes.
+//! End-to-end A2A path: tier-3 karakara gate → INPUT_REQUIRED + gateAuthorization → approve resume → tool executes.
 
 #![allow(clippy::redundant_closure)] // test helpers take &Value; iterators often yield &&Value
 
@@ -13,9 +13,9 @@ use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, collect_a2a_stream_one_shot, collect_a2a_stream_until_one_shot,
     ids::{ContextId, ExternalId, MessageId, TaskId},
 };
-use baml_rt_semiotic::{
-    config::{SemioticConfig, SemioticMode, SemioticPolicy},
-    global::{global_grounding_store, set_global_semiotic_config, submit_grounding},
+use baml_rt_karakara::{
+    config::{KarakaraConfig, KarakaraMode, KarakaraPolicy},
+    global::{global_grounding_store, set_global_karakara_config, submit_grounding},
     schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact, Postcondition},
 };
 use baml_rt_tools::{
@@ -215,10 +215,10 @@ fn input_required_prompt_from_chunks(chunks: &[&Value]) -> Option<String> {
 }
 
 async fn setup_gate_agent() -> A2aAgent {
-    set_global_semiotic_config(SemioticConfig {
-        default: SemioticPolicy {
+    set_global_karakara_config(KarakaraConfig {
+        default: KarakaraPolicy {
             enabled: true,
-            mode: SemioticMode::Enforce,
+            mode: KarakaraMode::Enforce,
             enforce_min_tier: 2,
             ..Default::default()
         },

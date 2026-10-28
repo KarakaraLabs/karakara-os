@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Semiotic compiler gate — deterministic pre-action grounding (P4 policy).
+//! Karakara compiler gate — deterministic pre-action grounding (P4 policy).
 
 pub mod config;
 pub mod covers;
@@ -24,22 +24,22 @@ pub mod tier;
 pub mod trojan;
 
 pub use config::{
-    EffectiveAgentPolicy, EffectiveSystemPolicy, SEMIOTIC_CONFIG_BUNDLE_NAME, SemioticConfig,
-    SemioticMode, SemioticOverrides, SemioticPolicy, SemioticPosture,
+    EffectiveAgentPolicy, EffectiveSystemPolicy, KARAKARA_CONFIG_BUNDLE_NAME, KarakaraConfig,
+    KarakaraMode, KarakaraOverrides, KarakaraPolicy, KarakaraPosture,
 };
 pub use gate::{AmbiguityAwareGate, GateAction, GateDecision, GatePolicy};
 pub use gate_outcome::{GateOutcome, GateOutcomeStore};
 pub use global::{
     global_denied_recent_store, global_gate_outcome_store, global_grounding_store,
-    global_pending_gate_auth_store, global_semiotic_config, grant_pending_gate_authorization,
-    resolve_pending_gate_authorization, resolve_semiotic_policy, set_global_semiotic_config,
+    global_pending_gate_auth_store, global_karakara_config, grant_pending_gate_authorization,
+    resolve_pending_gate_authorization, resolve_karakara_policy, set_global_karakara_config,
     submit_grounding,
 };
 pub use integrity::{CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus};
-pub use interceptor::{SemioticToolInterceptor, TrojanLintLLMInterceptor};
+pub use interceptor::{KarakaraToolInterceptor, TrojanLintLLMInterceptor};
 pub use pending_auth::ResumeAction;
 pub use postcondition::{PostconditionKind, PostconditionRun};
 pub use schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact, Template};
-pub use schema_export::semiotic_bundle_schema;
+pub use schema_export::karakara_bundle_schema;
 pub use store_loader::load_stored_config;
 pub use tier::{Tier, ToolTierMeta, classify_tier};

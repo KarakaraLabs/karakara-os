@@ -116,7 +116,7 @@ pub struct DriftedCallDetail {
     pub citations: Vec<CitationDetail>,
 }
 
-/// Summary of semiotic gate decisions for a task.
+/// Summary of karakara gate decisions for a task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskGateSummary {
@@ -178,7 +178,7 @@ pub struct TaskPlanningSnapshot {
     pub intent_history: Vec<PlanningIntentRecord>,
     pub plan_history: Vec<PlanningPlanRecord>,
     pub step_summary: PlanningStepSummary,
-    /// Semiotic gate summary. `None` when no gate evaluations exist.
+    /// Karakara gate summary. `None` when no gate evaluations exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<TaskGateSummary>,
     /// Plan-anchored drift summary. Deprecated — use `gate` and citation integrity.

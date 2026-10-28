@@ -13,13 +13,13 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::{
-    config::SemioticPolicy,
+    config::KarakaraPolicy,
     covers::covers_match,
     gate::{AmbiguityAwareGate, GateAction, GatePolicy},
     gate_outcome::GateOutcome,
     global::{
         global_denied_recent_store, global_gate_outcome_store, global_grounding_store,
-        global_pending_gate_auth_store, resolve_semiotic_policy,
+        global_pending_gate_auth_store, resolve_karakara_policy,
     },
     lint::lint,
     postcondition::run_postconditions,
@@ -32,8 +32,8 @@ use crate::{
 const ARTIFACT_TTL: Duration = Duration::from_secs(30 * 60);
 const UNKNOWN_AGENT_PACKAGE: &str = "unknown";
 
-/// Pre-tool semiotic gate interceptor.
-pub struct SemioticToolInterceptor {
+/// Pre-tool karakara gate interceptor.
+pub struct KarakaraToolInterceptor {
     pub store: Arc<GroundingStore>,
     gate: AmbiguityAwareGate,
 }
@@ -44,7 +44,7 @@ struct GateVerdict {
     block_msg: Option<String>,
 }
 
-impl SemioticToolInterceptor {
+impl KarakaraToolInterceptor {
     pub fn new(store: Arc<GroundingStore>) -> Self {
         Self {
             store,
@@ -52,19 +52,19 @@ impl SemioticToolInterceptor {
         }
     }
 
-    fn config_for(&self, context: &ToolCallContext) -> SemioticPolicy {
+    fn config_for(&self, context: &ToolCallContext) -> KarakaraPolicy {
         let pkg = context.agent_package.as_deref();
         if pkg == Some(UNKNOWN_AGENT_PACKAGE) {
-            tracing::debug!("semiotic policy: agent_package is placeholder 'unknown'");
+            tracing::debug!("karakara policy: agent_package is placeholder 'unknown'");
         }
-        resolve_semiotic_policy(pkg)
+        resolve_karakara_policy(pkg)
     }
 
     fn evaluate(
         &self,
         ctx: &ToolCallContext,
         meta: &ToolTierMeta,
-        policy: &SemioticPolicy,
+        policy: &KarakaraPolicy,
     ) -> GateVerdict {
         let tier = classify_tier(meta);
         if tier.as_u8() <= 1 {
@@ -158,7 +158,7 @@ impl SemioticToolInterceptor {
     }
 
     fn apply_policy(
-        policy: &SemioticPolicy,
+        policy: &KarakaraPolicy,
         verdict: &GateVerdict,
         ctx: &ToolCallContext,
     ) -> InterceptorDecision {
@@ -173,7 +173,7 @@ impl SemioticToolInterceptor {
                 return InterceptorDecision::RequireAuthorization(prompt);
             }
             if !policy.should_enforce(verdict.tier.as_u8()) {
-                tracing::debug!(tier = verdict.tier.as_u8(), "semiotic gate dry-run pass");
+                tracing::debug!(tier = verdict.tier.as_u8(), "karakara gate dry-run pass");
             }
             return InterceptorDecision::Allow;
         }
@@ -196,7 +196,7 @@ impl SemioticToolInterceptor {
         tracing::debug!(
             tier = verdict.tier.as_u8(),
             reason = verdict.reason.as_str(),
-            "semiotic gate dry-run would deny"
+            "karakara gate dry-run would deny"
         );
         InterceptorDecision::Allow
     }
@@ -254,7 +254,7 @@ impl SemioticToolInterceptor {
 }
 
 #[async_trait]
-impl ToolInterceptor for SemioticToolInterceptor {
+impl ToolInterceptor for KarakaraToolInterceptor {
     async fn intercept_tool_call(&self, context: &ToolCallContext) -> Result<InterceptorDecision> {
         let config = self.config_for(context);
         if !config.enabled {
@@ -309,7 +309,7 @@ impl ToolInterceptor for SemioticToolInterceptor {
             gate.gate_authorization = Some(true);
         }
         if let Ok(v) = serde_json::to_value(gate) {
-            obj.insert("semiotic_gate".to_string(), v);
+            obj.insert("karakara_gate".to_string(), v);
         }
     }
 

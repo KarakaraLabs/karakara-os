@@ -288,7 +288,7 @@ impl ToolExecutionContext {
             context_id = %context_id,
             has_emitter = self.effect_emitter.is_some(),
             has_gate_meta = metadata
-                .get("semiotic_gate")
+                .get("karakara_gate")
                 .is_some(),
             "emit_gate_blocked_effect"
         );

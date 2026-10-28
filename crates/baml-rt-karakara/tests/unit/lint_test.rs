@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use baml_rt_semiotic::lint::lint;
-use baml_rt_semiotic::schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact};
+use baml_rt_karakara::lint::lint;
+use baml_rt_karakara::schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact};
 
 fn art(instruction: &str, nodes: Vec<Node>) -> ParseArtifact {
     ParseArtifact {

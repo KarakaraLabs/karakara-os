@@ -9,12 +9,12 @@ use baml_rt_llm_config::{LLM_CONFIG_BUNDLE_NAME, LlmProvider};
 use http_api_problem::HttpApiProblem;
 use serde_json::Value;
 
-use super::semiotic;
+use super::karakara;
 
 pub(crate) type HttpResult<T> = Result<Json<T>, HttpApiProblem>;
 
 pub(crate) fn is_builtin_config_bundle(name: &str) -> bool {
-    name == LLM_CONFIG_BUNDLE_NAME || semiotic::is_bundle(name)
+    name == LLM_CONFIG_BUNDLE_NAME || karakara::is_bundle(name)
 }
 
 /// Build an HTTP problem. Invalid status codes are logged and replaced with 500.

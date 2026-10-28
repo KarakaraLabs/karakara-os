@@ -185,7 +185,7 @@ async fn effect_bus_gate_blocked_failure_materializes_tool_ops_row() {
         "live-task:ctx-1783676100000-1:msg-gate-test".to_string(),
     ));
     let agent_id = agent();
-    let semiotic_gate = json!({
+    let karakara_gate = json!({
         "toolName": "support/clickup",
         "tier": 3,
         "decision": "deny",
@@ -202,7 +202,7 @@ async fn effect_bus_gate_blocked_failure_materializes_tool_ops_row() {
             "task_id": task_id.as_str(),
             "agent_id": agent_id.as_str(),
             "agent_package": "clickup-agent",
-            "semiotic_gate": semiotic_gate,
+            "karakara_gate": karakara_gate,
         }),
         delegation_target: None,
         tool_backend: None,

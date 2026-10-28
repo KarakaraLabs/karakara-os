@@ -5,7 +5,7 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::{
-    config::{SemioticConfig, SemioticPolicy},
+    config::{KarakaraConfig, KarakaraPolicy},
     denied_recent::DeniedRecentStore,
     gate_outcome::GateOutcomeStore,
     pending_auth::PendingGateAuthStore,
@@ -17,11 +17,11 @@ static GLOBAL_STORE: OnceLock<Arc<GroundingStore>> = OnceLock::new();
 static GLOBAL_GATE_OUTCOMES: OnceLock<Arc<GateOutcomeStore>> = OnceLock::new();
 static GLOBAL_DENIED_RECENT: OnceLock<Arc<DeniedRecentStore>> = OnceLock::new();
 static GLOBAL_PENDING_AUTH: OnceLock<Arc<PendingGateAuthStore>> = OnceLock::new();
-static GLOBAL_CONFIG: OnceLock<Arc<RwLock<SemioticConfig>>> = OnceLock::new();
+static GLOBAL_CONFIG: OnceLock<Arc<RwLock<KarakaraConfig>>> = OnceLock::new();
 
-fn config_handle() -> Arc<RwLock<SemioticConfig>> {
+fn config_handle() -> Arc<RwLock<KarakaraConfig>> {
     GLOBAL_CONFIG
-        .get_or_init(|| Arc::new(RwLock::new(SemioticConfig::default())))
+        .get_or_init(|| Arc::new(RwLock::new(KarakaraConfig::default())))
         .clone()
 }
 
@@ -72,19 +72,19 @@ pub fn grant_pending_gate_authorization(scope: &baml_rt_core::context::RuntimeSc
     let _ = resolve_pending_gate_authorization(scope, "approve");
 }
 
-/// Current semiotic gate bundle (hot-reloaded from `PUT /config/semiotic`).
-pub fn global_semiotic_config() -> crate::config::SemioticConfig {
+/// Current karakara gate bundle (hot-reloaded from `PUT /config/karakara`).
+pub fn global_karakara_config() -> crate::config::KarakaraConfig {
     config_handle()
         .read()
-        .expect("semiotic config lock")
+        .expect("karakara config lock")
         .clone()
 }
 
 /// Resolved policy for the executing agent package.
-pub fn resolve_semiotic_policy(agent_package: Option<&str>) -> SemioticPolicy {
-    global_semiotic_config().resolve(agent_package)
+pub fn resolve_karakara_policy(agent_package: Option<&str>) -> KarakaraPolicy {
+    global_karakara_config().resolve(agent_package)
 }
 
-pub fn set_global_semiotic_config(config: crate::config::SemioticConfig) {
-    *config_handle().write().expect("semiotic config lock") = config;
+pub fn set_global_karakara_config(config: crate::config::KarakaraConfig) {
+    *config_handle().write().expect("karakara config lock") = config;
 }

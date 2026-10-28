@@ -196,8 +196,8 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
                 .context("Failed to open config store (config.db)")?,
         ),
     };
-    let semiotic_config = baml_rt_semiotic::load_stored_config(config_service.as_ref()).await;
-    baml_rt_semiotic::set_global_semiotic_config(semiotic_config);
+    let karakara_config = baml_rt_karakara::load_stored_config(config_service.as_ref()).await;
+    baml_rt_karakara::set_global_karakara_config(karakara_config);
     let fnox_resolver = Arc::new(FnoxFileSecretResolver::default_path_resolver());
     let overlay = Arc::new(OverlaySecretResolver::new(fnox_resolver.clone()));
     let link_state: SecretLinksState =

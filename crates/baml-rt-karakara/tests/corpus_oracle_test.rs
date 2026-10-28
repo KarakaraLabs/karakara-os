@@ -4,14 +4,14 @@
 
 //! Oracle test: corpus ground-truth labels vs P4 ambiguity-aware gate decisions.
 
-use baml_rt_semiotic::{
+use baml_rt_karakara::{
     gate::{AmbiguityAwareGate, GateAction, GatePolicy},
     schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact},
     tier::Tier,
 };
 use serde_json::Value;
 
-const CORPUS: &str = include_str!("../../../tests/fixtures/semiotic/corpus.json");
+const CORPUS: &str = include_str!("../../../tests/fixtures/karakara/corpus.json");
 
 fn corpus_entry_to_artifact(entry: &Value) -> ParseArtifact {
     let nodes = entry["nodes"]

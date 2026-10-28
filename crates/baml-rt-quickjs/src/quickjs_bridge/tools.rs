@@ -188,7 +188,7 @@ impl QuickJSBridge {
                                     );
                                     let error_msg =
                                         format!("Tool execution error: Gate authorization required: {prompt}");
-                                    tracing::warn!("semiotic tier-3 gate suspended for authorization");
+                                    tracing::warn!("karakara tier-3 gate suspended for authorization");
                                     Err(quickjs_runtime::jsutils::JsError::new_str(&error_msg))
                                 }
                                 Err(e) => {
@@ -267,7 +267,7 @@ impl QuickJSBridge {
                                     );
                                     let error_msg =
                                         format!("Tool execution error: Gate authorization required: {prompt}");
-                                    tracing::warn!("semiotic tier-3 gate suspended for authorization");
+                                    tracing::warn!("karakara tier-3 gate suspended for authorization");
                                     Err(quickjs_runtime::jsutils::JsError::new_str(&error_msg))
                                 }
                                 Err(e) => {

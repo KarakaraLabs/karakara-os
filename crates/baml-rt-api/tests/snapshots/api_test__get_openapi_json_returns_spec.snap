@@ -461,13 +461,13 @@ expression: snapshot
           ]
         }
       },
-      "/config/semiotic/activity": {
+      "/config/karakara/activity": {
         "get": {
           "tags": [
             "config"
           ],
           "summary": "Provenance-backed gate activity for operator incident diagnosis.",
-          "operationId": "get_semiotic_activity",
+          "operationId": "get_karakara_activity",
           "parameters": [
             {
               "name": "windowHours",
@@ -519,16 +519,16 @@ expression: snapshot
           ]
         }
       },
-      "/config/semiotic/effective": {
+      "/config/karakara/effective": {
         "get": {
           "tags": [
             "config"
           ],
-          "summary": "Resolved semiotic policies for system default and each agent package.",
-          "operationId": "get_semiotic_effective",
+          "summary": "Resolved karakara policies for system default and each agent package.",
+          "operationId": "get_karakara_effective",
           "responses": {
             "200": {
-              "description": "Resolved semiotic gate policies"
+              "description": "Resolved karakara gate policies"
             },
             "401": {
               "description": "Missing or invalid runner token"

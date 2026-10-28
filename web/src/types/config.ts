@@ -146,41 +146,41 @@ export interface ResolvedClientBudgets {
 
 export const LLM_BUNDLE_NAME = "llm";
 
-export const SEMIOTIC_BUNDLE_NAME = "semiotic";
+export const KARAKARA_BUNDLE_NAME = "karakara";
 
-export type SemioticMode = "dry_run" | "enforce";
+export type KarakaraMode = "dry_run" | "enforce";
 
-export interface SemioticPolicy {
+export interface KarakaraPolicy {
   enabled: boolean;
-  mode: SemioticMode;
+  mode: KarakaraMode;
   enforceMinTier: number;
   requirePostconditionsT3: boolean;
   strictCitationAnchors: boolean;
 }
 
-export interface SemioticConfig extends SemioticPolicy {
+export interface KarakaraConfig extends KarakaraPolicy {
   overrides?: {
-    agent?: Record<string, SemioticPolicy>;
+    agent?: Record<string, KarakaraPolicy>;
   };
 }
 
-export type SemioticPosture = "off" | "audit" | "enforce";
+export type KarakaraPosture = "off" | "audit" | "enforce";
 
 export interface EffectiveSystemPolicy {
-  policy: SemioticPolicy;
-  posture: SemioticPosture;
+  policy: KarakaraPolicy;
+  posture: KarakaraPosture;
   summary: string;
 }
 
 export interface EffectiveAgentPolicy {
   agentPackage: string;
   hasOverride: boolean;
-  policy: SemioticPolicy;
-  posture: SemioticPosture;
+  policy: KarakaraPolicy;
+  posture: KarakaraPosture;
   summary: string;
 }
 
-export interface SemioticEffectiveDto {
+export interface KarakaraEffectiveDto {
   version: number;
   system: EffectiveSystemPolicy;
   agents: EffectiveAgentPolicy[];
@@ -206,7 +206,7 @@ export interface GateIncidentDrill {
   toolCallAnchor: string;
 }
 
-export interface SemioticIncidentRow {
+export interface KarakaraIncidentRow {
   occurredAtMs: number;
   contextId: string;
   taskId: string;
@@ -220,17 +220,17 @@ export interface SemioticIncidentRow {
   drill: GateIncidentDrill;
 }
 
-export interface SemioticAgentActivityDto {
+export interface KarakaraAgentActivityDto {
   agentPackage: string;
-  effective: { posture: SemioticPosture; summary: string };
+  effective: { posture: KarakaraPosture; summary: string };
   counts: AgentGateCounts;
   preventionRatio?: number | null;
   topReasonCodes: RankedCount[];
   topDeficientNodes: RankedCount[];
-  recentIncidents: SemioticIncidentRow[];
+  recentIncidents: KarakaraIncidentRow[];
 }
 
-export interface SemioticFleetActivityDto {
+export interface KarakaraFleetActivityDto {
   denyCount: number;
   askCount: number;
   frictionDenialCount: number;
@@ -239,12 +239,12 @@ export interface SemioticFleetActivityDto {
   agentsWithActivity: number;
 }
 
-export interface SemioticActivityDto {
+export interface KarakaraActivityDto {
   windowHours: number;
   sinceMs: number;
   untilMs: number;
   configVersion: number;
-  fleet: SemioticFleetActivityDto;
+  fleet: KarakaraFleetActivityDto;
   emptyReason?: string | null;
-  agents: SemioticAgentActivityDto[];
+  agents: KarakaraAgentActivityDto[];
 }

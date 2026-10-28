@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! JSON Schema for Settings / `PUT /config/semiotic` validation.
+//! JSON Schema for Settings / `PUT /config/karakara` validation.
 
 use serde_json::Value;
 
-/// Minimal JSON Schema for [`crate::config::SemioticConfig`].
-pub fn semiotic_bundle_schema() -> Value {
+/// Minimal JSON Schema for [`crate::config::KarakaraConfig`].
+pub fn karakara_bundle_schema() -> Value {
     let policy = serde_json::json!({
         "type": "object",
         "properties": {

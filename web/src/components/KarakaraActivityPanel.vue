@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useConfigApi } from "../composables/useConfigApi";
-import type { SemioticActivityDto, SemioticAgentActivityDto } from "../types/config";
+import type { KarakaraActivityDto, KarakaraAgentActivityDto } from "../types/config";
 import {
   formatIncidentTime,
   incidentSeverityClass,
-} from "../chat/semioticPolicyUi";
+} from "../chat/karakaraPolicyUi";
 import { preventionRatioLabel } from "../utils/gateHelpers";
 import { navigateToGateIncident } from "../events/operatorRoute";
 
@@ -20,15 +20,15 @@ const props = defineProps<{
   searchFilter?: string | null;
 }>();
 
-const { fetchSemioticActivity } = useConfigApi();
-const activity = ref<SemioticActivityDto | null>(null);
+const { fetchKarakaraActivity } = useConfigApi();
+const activity = ref<KarakaraActivityDto | null>(null);
 const error = ref<string | null>(null);
 const loading = ref(false);
 
 async function load() {
   loading.value = true;
   error.value = null;
-  const result = await fetchSemioticActivity({
+  const result = await fetchKarakaraActivity({
     windowHours: 24,
     limit: 20,
   });
@@ -47,20 +47,20 @@ const fleetAlert = computed(
   () => (activity.value?.fleet.frictionDenialCount ?? 0) > 0,
 );
 
-const visibleAgents = computed((): SemioticAgentActivityDto[] => {
+const visibleAgents = computed((): KarakaraAgentActivityDto[] => {
   const agents = activity.value?.agents ?? [];
   const q = props.searchFilter?.trim().toLowerCase();
   if (!q) return agents;
   return agents.filter((a) => a.agentPackage.toLowerCase().includes(q));
 });
 
-function openIncident(agentPackage: string, incident: SemioticAgentActivityDto["recentIncidents"][number]) {
+function openIncident(agentPackage: string, incident: KarakaraAgentActivityDto["recentIncidents"][number]) {
   navigateToGateIncident(incident.drill, agentPackage);
 }
 </script>
 
 <template>
-  <div class="config-routing-block semiotic-activity-panel">
+  <div class="config-routing-block karakara-activity-panel">
     <div class="config-routing-block-header">
       <div>
         <h3 class="config-section-title">Recent gate activity</h3>
@@ -72,10 +72,10 @@ function openIncident(agentPackage: string, incident: SemioticAgentActivityDto["
     </div>
 
     <div v-if="error" class="settings-error" role="alert">{{ error }}</div>
-    <p v-else-if="loading && !activity" class="semiotic-activity-empty">Loading activity…</p>
+    <p v-else-if="loading && !activity" class="karakara-activity-empty">Loading activity…</p>
     <template v-else-if="activity">
       <div
-        :class="['semiotic-activity-fleet', { 'semiotic-activity-fleet--alert': fleetAlert }]"
+        :class="['karakara-activity-fleet', { 'karakara-activity-fleet--alert': fleetAlert }]"
       >
         <span>{{ activity.fleet.denyCount }} deny</span>
         <span>{{ activity.fleet.askCount }} ask</span>
@@ -84,17 +84,17 @@ function openIncident(agentPackage: string, incident: SemioticAgentActivityDto["
         <span>Prevention {{ preventionRatioLabel(activity.fleet.preventionRatio) }}</span>
         <span>{{ activity.fleet.agentsWithActivity }} agents with activity</span>
       </div>
-      <p v-if="activity.emptyReason" class="semiotic-activity-empty">{{ activity.emptyReason }}</p>
+      <p v-if="activity.emptyReason" class="karakara-activity-empty">{{ activity.emptyReason }}</p>
 
       <div v-for="agent in visibleAgents" :key="agent.agentPackage" class="config-agent-override-card">
         <div class="config-agent-override-header">
           <span class="config-agent-override-name">{{ agent.agentPackage }}</span>
           <span class="config-agent-summary">{{ agent.effective.summary }}</span>
         </div>
-        <div v-if="agent.recentIncidents.length === 0" class="semiotic-activity-empty">
+        <div v-if="agent.recentIncidents.length === 0" class="karakara-activity-empty">
           No incidents in window.
         </div>
-        <table v-else class="semiotic-incident-table">
+        <table v-else class="karakara-incident-table">
           <thead>
             <tr>
               <th>Time</th>
@@ -119,7 +119,7 @@ function openIncident(agentPackage: string, incident: SemioticAgentActivityDto["
               <td>
                 <button
                   type="button"
-                  class="btn btn--ghost btn--sm semiotic-incident-open"
+                  class="btn btn--ghost btn--sm karakara-incident-open"
                   @click="openIncident(agent.agentPackage, incident)"
                 >
                   Open in Provenance

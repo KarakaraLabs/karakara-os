@@ -4,7 +4,7 @@
 
 //! Shared parsing and deny-stack telemetry matching for gate tool_call ops rows.
 
-use baml_rt_semiotic::denied_recent::{self, TelemetryVerdict};
+use baml_rt_karakara::denied_recent::{self, TelemetryVerdict};
 use serde_json::Value;
 
 use crate::ops_types::ProvenanceOpsRow;

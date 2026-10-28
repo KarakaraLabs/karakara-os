@@ -892,13 +892,13 @@ async fn seeded_provenance_store() -> Arc<baml_rt_provenance::SurrealProvenanceS
             },
             181,
             Outcome::Success,
-            Some(baml_rt_semiotic::CitationIntegrityAssessment {
-                per_citation: vec![baml_rt_semiotic::CitationIntegrityEntry {
+            Some(baml_rt_karakara::CitationIntegrityAssessment {
+                per_citation: vec![baml_rt_karakara::CitationIntegrityEntry {
                     raw: "#1".into(),
                     n: 1,
                     is_history: true,
                     negated: false,
-                    status: baml_rt_semiotic::IntegrityStatus::Unresolved,
+                    status: baml_rt_karakara::IntegrityStatus::Unresolved,
                     activity_anchor: None,
                     content_preview: None,
                 }],
@@ -3203,7 +3203,7 @@ fn handlers_do_not_use_block_in_place() {
 }
 
 #[tokio::test]
-async fn get_semiotic_effective_returns_resolved_policies() {
+async fn get_karakara_effective_returns_resolved_policies() {
     let app = authed_test_router(None, ClusterMode::Standalone).await;
 
     let put_resp = app
@@ -3211,7 +3211,7 @@ async fn get_semiotic_effective_returns_resolved_policies() {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/config/semiotic")
+                .uri("/config/karakara")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"enabled":true,"mode":"enforce","enforceMinTier":2,"requirePostconditionsT3":true,"strictCitationAnchors":true,"overrides":{"agent":{}}}"#,
@@ -3226,7 +3226,7 @@ async fn get_semiotic_effective_returns_resolved_policies() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/config/semiotic/effective")
+                .uri("/config/karakara/effective")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -3242,13 +3242,13 @@ async fn get_semiotic_effective_returns_resolved_policies() {
 }
 
 #[tokio::test]
-async fn get_semiotic_activity_without_provenance_returns_503() {
+async fn get_karakara_activity_without_provenance_returns_503() {
     let app = authed_test_router(None, ClusterMode::Standalone).await;
     let resp = app
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/config/semiotic/activity")
+                .uri("/config/karakara/activity")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -3325,7 +3325,7 @@ impl ProvenanceOpsService for MockGateActivityProvenance {
 }
 
 #[tokio::test]
-async fn get_semiotic_activity_returns_gate_rollups_from_provenance_rows() {
+async fn get_karakara_activity_returns_gate_rollups_from_provenance_rows() {
     let registry: Arc<dyn AgentRegistry> =
         Arc::new(MockRegistry::with_entries(vec![discovery_entry(
             "gate-test-agent",
@@ -3348,7 +3348,7 @@ async fn get_semiotic_activity_returns_gate_rollups_from_provenance_rows() {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/config/semiotic")
+                .uri("/config/karakara")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"enabled":true,"mode":"enforce","enforceMinTier":2,"requirePostconditionsT3":true,"strictCitationAnchors":true,"overrides":{"agent":{}}}"#,
@@ -3363,7 +3363,7 @@ async fn get_semiotic_activity_returns_gate_rollups_from_provenance_rows() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/config/semiotic/activity")
+                .uri("/config/karakara/activity")
                 .body(Body::empty())
                 .unwrap(),
         )

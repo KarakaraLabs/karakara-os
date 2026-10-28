@@ -1,10 +1,10 @@
 [package]
-name = "baml-rt-semiotic"
+name = "baml-rt-karakara"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
 publish = false
-description = "Semiotic compiler gate — P4 ambiguity-aware pre-action grounding"
+description = "Karakara compiler gate — P4 ambiguity-aware pre-action grounding"
 
 [dependencies]
 serde = { workspace = true }

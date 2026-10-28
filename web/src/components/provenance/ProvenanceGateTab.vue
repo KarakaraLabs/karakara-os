@@ -33,17 +33,17 @@ const emit = defineEmits<{
 
 <template>
   <div class="provenance-section-title gate-section-title">
-    Semiotic gate
+    Karakara gate
     <span class="gate-help gate-tab-help" :data-tooltip="gateHelp.gateTab">&#9432;</span>
   </div>
   <p class="gate-tab-lede">
     Structural grounding before action — pass / deny / ask / pass_gated by tier. Does not catch deliberate misparse.
   </p>
   <div v-if="planningTasks.length === 0" class="provenance-empty">
-    No planning data available. Gate summaries require committed tasks when semiotic is enabled.
+    No planning data available. Gate summaries require committed tasks when karakara is enabled.
   </div>
   <div v-else-if="gateTasks.length === 0" class="provenance-empty">
-    No gate evaluations yet (tier&ge;1 tool calls when semiotic enabled).
+    No gate evaluations yet (tier&ge;1 tool calls when karakara enabled).
   </div>
   <div v-else class="gate-task-list">
     <article

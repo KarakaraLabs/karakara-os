@@ -1,24 +1,24 @@
-/* ── Semiotic gate (Settings → Trust) ── */
+/* ── Karakara gate (Settings → Trust) ── */
 
-.config-semiotic-form {
+.config-karakara-form {
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.config-semiotic-lede {
+.config-karakara-lede {
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.5;
   max-width: 72ch;
 }
 
-.config-semiotic-doc-link {
+.config-karakara-doc-link {
   color: var(--primary);
   text-decoration: none;
 }
 
-.config-semiotic-doc-link:hover {
+.config-karakara-doc-link:hover {
   text-decoration: underline;
 }
 
@@ -43,31 +43,31 @@
   margin-top: 2px;
 }
 
-.semiotic-policy-fields {
+.karakara-policy-fields {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.semiotic-policy-fieldset {
+.karakara-policy-fieldset {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 12px 14px 8px;
   margin: 0;
 }
 
-.semiotic-policy-legend {
+.karakara-policy-legend {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   padding: 0 4px;
 }
 
-.semiotic-field-hint {
+.karakara-field-hint {
   margin-top: 2px;
 }
 
-.semiotic-posture-chip {
+.karakara-posture-chip {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
@@ -77,17 +77,17 @@
   color: var(--text-secondary);
 }
 
-.semiotic-posture-chip--off {
+.karakara-posture-chip--off {
   color: var(--text-muted);
 }
 
-.semiotic-posture-chip--audit {
+.karakara-posture-chip--audit {
   border-color: var(--status-amber, #d97706);
   color: var(--status-amber, #d97706);
   background: color-mix(in srgb, var(--status-amber, #d97706) 12%, transparent);
 }
 
-.semiotic-posture-chip--enforce {
+.karakara-posture-chip--enforce {
   border-color: var(--primary);
   color: var(--primary);
   background: var(--primary-subtle);
@@ -104,17 +104,17 @@
   box-shadow: 0 0 0 1px var(--primary-subtle);
 }
 
-.semiotic-agent-search {
+.karakara-agent-search {
   margin-bottom: 8px;
 }
 
-.semiotic-activity-panel {
+.karakara-activity-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.semiotic-activity-fleet {
+.karakara-activity-fleet {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 16px;
@@ -126,43 +126,43 @@
   background: var(--bg-subtle);
 }
 
-.semiotic-activity-fleet--alert {
+.karakara-activity-fleet--alert {
   border-color: var(--status-amber, #d97706);
 }
 
-.semiotic-activity-empty {
+.karakara-activity-empty {
   font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
 }
 
-.semiotic-incident-table {
+.karakara-incident-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
 
-.semiotic-incident-table th,
-.semiotic-incident-table td {
+.karakara-incident-table th,
+.karakara-incident-table td {
   text-align: left;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: top;
 }
 
-.semiotic-incident--critical {
+.karakara-incident--critical {
   color: var(--status-red, #dc2626);
 }
 
-.semiotic-incident--warning {
+.karakara-incident--warning {
   color: var(--status-amber, #d97706);
 }
 
-.semiotic-incident--info {
+.karakara-incident--info {
   color: var(--text-secondary);
 }
 
-.semiotic-incident-open {
+.karakara-incident-open {
   font-size: 11px;
   padding: 2px 8px;
 }

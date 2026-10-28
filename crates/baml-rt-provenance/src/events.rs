@@ -18,7 +18,7 @@ use baml_rt_core::{
         TaskId,
     },
 };
-use baml_rt_semiotic::CitationIntegrityAssessment;
+use baml_rt_karakara::CitationIntegrityAssessment;
 use baml_rt_tools::prompt_message_char_count;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Value as JsonValue};

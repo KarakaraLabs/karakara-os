@@ -522,10 +522,10 @@ pub fn api_router_with_services_and_deploy(
             config_handlers::llm_budgets::refresh_llm_model_budgets
         ))
         .routes(utoipa_axum::routes!(
-            crate::config_handlers::semiotic::get_semiotic_effective
+            crate::config_handlers::karakara::get_karakara_effective
         ))
         .routes(utoipa_axum::routes!(
-            crate::config_handlers::semiotic::get_semiotic_activity
+            crate::config_handlers::karakara::get_karakara_activity
         ))
         .routes(utoipa_axum::routes!(handlers::post_deploy))
         .routes(utoipa_axum::routes!(handlers::post_undeploy))

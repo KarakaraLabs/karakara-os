@@ -8,9 +8,9 @@ import {
   postureChipClass,
   postureLabel,
   preventionRatioLabel,
-} from "./semioticPolicyUi";
+} from "./karakaraPolicyUi";
 
-describe("semioticPolicyUi", () => {
+describe("karakaraPolicyUi", () => {
   it("maps posture labels", () => {
     expect(postureLabel("off")).toBe("Off");
     expect(postureLabel("audit")).toBe("Audit");

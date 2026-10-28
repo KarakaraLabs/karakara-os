@@ -42,7 +42,7 @@ pub(crate) fn stamp_tool_effect_metadata_scope(
     }
 }
 
-/// Stamp registry-derived tier hints for semiotic gate classification.
+/// Stamp registry-derived tier hints for karakara gate classification.
 pub(crate) fn stamp_tool_registry_metadata(
     tool_registry: &ConcreteToolRegistry,
     tool_name: &str,

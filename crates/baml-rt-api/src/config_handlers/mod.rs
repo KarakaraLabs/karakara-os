@@ -6,7 +6,7 @@
 //!
 //! Config is keyed by bundle name; tools in a bundle share the same config.
 
-pub mod semiotic;
+pub mod karakara;
 
 pub mod bundles;
 pub mod common;

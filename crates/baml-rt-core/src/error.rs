@@ -235,7 +235,7 @@ pub enum BamlRtError {
     #[error("Tool execution error: {0}")]
     ToolExecution(String),
 
-    /// Semiotic tier-3 gate requires human authorization (A2A InputRequired).
+    /// Karakara tier-3 gate requires human authorization (A2A InputRequired).
     #[error("Gate authorization required: {prompt}")]
     GateAuthorizationRequired { prompt: String },
 

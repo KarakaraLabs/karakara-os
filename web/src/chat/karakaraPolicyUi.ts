@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SemioticPosture } from "../types/config";
+import type { KarakaraPosture } from "../types/config";
 
-export function postureLabel(posture: SemioticPosture): string {
+export function postureLabel(posture: KarakaraPosture): string {
   switch (posture) {
     case "off":
       return "Off";
@@ -17,27 +17,27 @@ export function postureLabel(posture: SemioticPosture): string {
   }
 }
 
-export function postureChipClass(posture: SemioticPosture): string {
+export function postureChipClass(posture: KarakaraPosture): string {
   switch (posture) {
     case "off":
-      return "semiotic-posture-chip semiotic-posture-chip--off";
+      return "karakara-posture-chip karakara-posture-chip--off";
     case "audit":
-      return "semiotic-posture-chip semiotic-posture-chip--audit";
+      return "karakara-posture-chip karakara-posture-chip--audit";
     case "enforce":
-      return "semiotic-posture-chip semiotic-posture-chip--enforce";
+      return "karakara-posture-chip karakara-posture-chip--enforce";
     default:
-      return "semiotic-posture-chip";
+      return "karakara-posture-chip";
   }
 }
 
 export function incidentSeverityClass(severity: string): string {
   switch (severity) {
     case "critical":
-      return "semiotic-incident--critical";
+      return "karakara-incident--critical";
     case "warning":
-      return "semiotic-incident--warning";
+      return "karakara-incident--warning";
     default:
-      return "semiotic-incident--info";
+      return "karakara-incident--info";
   }
 }
 
