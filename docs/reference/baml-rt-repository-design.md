@@ -1,6 +1,6 @@
 # baml-rt-hash & baml-rt-repository — Design Document
 
-Two crates that give Agentium OS a **content-addressable package repository** with lineage tracking, versioning, and search.
+Two crates that give Karakara OS a **content-addressable package repository** with lineage tracking, versioning, and search.
 
 - **`baml-rt-hash`** — standalone canonical hashing (SHA-256 over a length-delimited section format with deterministic JSON key ordering). Depends only on `sha2`, `serde_json`, `thiserror`.
 - **`baml-rt-repository`** — SurrealDB-backed repository: publish, fork, search, lineage DAG, tagging, and an Axum HTTP API.
@@ -91,7 +91,7 @@ Neither the repository version nor compiled `dist/**` output is included, so
 republishing identical content and toolchain-only rebuilds keep the same
 identity.
 
-`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+`AgentId` is `UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + digest)`.
 `ArtifactHash` covers the stored blob, so two artifacts can share one `AgentId`
 while shipping different executable bytes.
 

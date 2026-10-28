@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -48,18 +49,18 @@ const K8S_NAMESPACE_NAME_KEY: &str = "k8s.namespace.name";
 const DEPLOYMENT_ENVIRONMENT_KEY: &str = "deployment.environment";
 
 /// Default `service.name` for a runner when no env override is provided.
-const DEFAULT_SERVICE_NAME: &str = "agentium-runner";
+const DEFAULT_SERVICE_NAME: &str = "karakara-runner";
 /// Default `service.namespace` for the pilot contract.
-const DEFAULT_SERVICE_NAMESPACE: &str = "agentium";
+const DEFAULT_SERVICE_NAMESPACE: &str = "karakara";
 /// Default `deployment.environment` when neither the chart nor the env supplies a value.
 const DEFAULT_DEPLOYMENT_ENVIRONMENT: &str = "pilot";
 
 /// Canonical OTEL `Resource` for a runner in the K8s pilot.
 ///
 /// Composes:
-/// - `service.name` (default `agentium-runner`, override via `OTEL_SERVICE_NAME` or
+/// - `service.name` (default `karakara-runner`, override via `OTEL_SERVICE_NAME` or
 ///   `OTEL_RESOURCE_ATTRIBUTES.service.name`).
-/// - `service.namespace` (default `agentium`, override via `OTEL_RESOURCE_ATTRIBUTES`).
+/// - `service.namespace` (default `karakara`, override via `OTEL_RESOURCE_ATTRIBUTES`).
 /// - `service.instance.id` via [`service_instance_id`] — same derivation used by every
 ///   `*_service_instance_id` span/metric dimension, so the two cannot drift.
 /// - `k8s.namespace.name` from `POD_NAMESPACE` (downward API) when set.
@@ -337,11 +338,11 @@ mod tests {
         let r = build_runner_resource_with_instance_id("instance-a");
         assert_eq!(
             resource_value(&r, "service.name").as_deref(),
-            Some("agentium-runner"),
+            Some("karakara-runner"),
         );
         assert_eq!(
             resource_value(&r, "service.namespace").as_deref(),
-            Some("agentium"),
+            Some("karakara"),
         );
         assert_eq!(
             resource_value(&r, "service.instance.id").as_deref(),
@@ -396,13 +397,13 @@ mod tests {
         let mut env = EnvScope::new();
         env.set("OTEL_SERVICE_NAME", None);
         env.set("OTEL_RESOURCE_ATTRIBUTES", None);
-        env.set("POD_NAMESPACE", Some("agentium-pilot"));
+        env.set("POD_NAMESPACE", Some("karakara-pilot"));
         env.set("OTEL_DEPLOYMENT_ENVIRONMENT", None);
 
         let r = build_runner_resource_with_instance_id("instance-d");
         assert_eq!(
             resource_value(&r, "k8s.namespace.name").as_deref(),
-            Some("agentium-pilot"),
+            Some("karakara-pilot"),
         );
     }
 
@@ -427,7 +428,7 @@ mod tests {
         env.set("OTEL_SERVICE_NAME", None);
         env.set(
             "OTEL_RESOURCE_ATTRIBUTES",
-            Some("operator.team=platform,operator.contact=pager@agentium"),
+            Some("operator.team=platform,operator.contact=pager@karakara"),
         );
         env.set("POD_NAMESPACE", None);
         env.set("OTEL_DEPLOYMENT_ENVIRONMENT", None);
@@ -439,12 +440,12 @@ mod tests {
         );
         assert_eq!(
             resource_value(&r, "operator.contact").as_deref(),
-            Some("pager@agentium"),
+            Some("pager@karakara"),
         );
         // Our pilot defaults still apply.
         assert_eq!(
             resource_value(&r, "service.name").as_deref(),
-            Some("agentium-runner"),
+            Some("karakara-runner"),
         );
         assert_eq!(
             resource_value(&r, "service.instance.id").as_deref(),

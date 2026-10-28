@@ -91,7 +91,7 @@ Helper scripts are scaffolded at:
 ```
 
 This script wraps `sandbox-bind-sync` to build `adapter/Dockerfile`, export bind
-rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/agentium/tool-bundle.json`),
+rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/karakara/tool-bundle.json`),
 and run `check-external-tool`.
 
 > Bind rootfs mode copies filesystem contents only. Docker image config
@@ -143,7 +143,7 @@ the runner.
 You can also call the command directly:
 
 ```bash
-cargo run -q -p agentium -- sandbox-bind-sync \
+cargo run -q -p karakara-os -- sandbox-bind-sync \
   --tool-dir . \
   --rootfs ./.tmp/bind-rootfs \
   --dockerfile adapter/Dockerfile \

@@ -87,8 +87,8 @@ repos:
         pass_filenames: false
         files: |
           (?x)^(
-            deploy/helm/agentium-os/templates/runner-statefulset\.yaml|
-            deploy/helm/agentium-os/values\.yaml|
+            deploy/helm/karakara-os/templates/runner-statefulset\.yaml|
+            deploy/helm/karakara-os/values\.yaml|
             scripts/test-helm-runner-probes\.sh
           )$
 

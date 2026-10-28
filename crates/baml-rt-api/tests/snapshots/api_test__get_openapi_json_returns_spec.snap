@@ -1,6 +1,5 @@
 ---
 source: crates/baml-rt-api/tests/api_test.rs
-assertion_line: 1546
 expression: snapshot
 ---
 {
@@ -8,11 +7,11 @@ expression: snapshot
   "body": {
     "openapi": "3.1.0",
     "info": {
-      "title": "Agentium OS Runner API",
-      "description": "HTTP API for the Agentium OS agent runner: agent discovery, A2A JSON-RPC forwarding, deployment lifecycle, tool configuration, and provenance-backed observability.",
+      "title": "Karakara OS Runner API",
+      "description": "HTTP API for the Karakara OS agent runner: agent discovery, A2A JSON-RPC forwarding, deployment lifecycle, tool configuration, and provenance-backed observability.",
       "contact": {
-        "name": "Agentium OS",
-        "url": "https://github.com/semiotic-agentium/agentium-os"
+        "name": "Karakara OS",
+        "url": "https://github.com/karakara-labs/karakara-os"
       },
       "license": {
         "name": "Apache-2.0"
@@ -258,6 +257,89 @@ expression: snapshot
           ]
         }
       },
+      "/config/karakara/activity": {
+        "get": {
+          "tags": [
+            "config"
+          ],
+          "summary": "Provenance-backed gate activity for operator incident diagnosis.",
+          "operationId": "get_karakara_activity",
+          "parameters": [
+            {
+              "name": "windowHours",
+              "in": "query",
+              "description": "Rolling lookback hours (max 168)",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            {
+              "name": "agentPackage",
+              "in": "query",
+              "description": "Filter to one agent package",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Max recent incidents per agent (max 50)",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Gate activity rollup"
+            },
+            "401": {
+              "description": "Missing or invalid runner token"
+            },
+            "503": {
+              "description": "Provenance or config unavailable"
+            }
+          },
+          "security": [
+            {
+              "RunnerToken": []
+            }
+          ]
+        }
+      },
+      "/config/karakara/effective": {
+        "get": {
+          "tags": [
+            "config"
+          ],
+          "summary": "Resolved karakara policies for system default and each agent package.",
+          "operationId": "get_karakara_effective",
+          "responses": {
+            "200": {
+              "description": "Resolved karakara gate policies"
+            },
+            "401": {
+              "description": "Missing or invalid runner token"
+            },
+            "503": {
+              "description": "Config service not available"
+            }
+          },
+          "security": [
+            {
+              "RunnerToken": []
+            }
+          ]
+        }
+      },
       "/config/llm/model-budgets": {
         "get": {
           "tags": [
@@ -452,89 +534,6 @@ expression: snapshot
             },
             "501": {
               "description": "Runtime secret store not available"
-            }
-          },
-          "security": [
-            {
-              "RunnerToken": []
-            }
-          ]
-        }
-      },
-      "/config/semiotic/activity": {
-        "get": {
-          "tags": [
-            "config"
-          ],
-          "summary": "Provenance-backed gate activity for operator incident diagnosis.",
-          "operationId": "get_semiotic_activity",
-          "parameters": [
-            {
-              "name": "windowHours",
-              "in": "query",
-              "description": "Rolling lookback hours (max 168)",
-              "required": false,
-              "schema": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
-              }
-            },
-            {
-              "name": "agentPackage",
-              "in": "query",
-              "description": "Filter to one agent package",
-              "required": false,
-              "schema": {
-                "type": "string"
-              }
-            },
-            {
-              "name": "limit",
-              "in": "query",
-              "description": "Max recent incidents per agent (max 50)",
-              "required": false,
-              "schema": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
-              }
-            }
-          ],
-          "responses": {
-            "200": {
-              "description": "Gate activity rollup"
-            },
-            "401": {
-              "description": "Missing or invalid runner token"
-            },
-            "503": {
-              "description": "Provenance or config unavailable"
-            }
-          },
-          "security": [
-            {
-              "RunnerToken": []
-            }
-          ]
-        }
-      },
-      "/config/semiotic/effective": {
-        "get": {
-          "tags": [
-            "config"
-          ],
-          "summary": "Resolved semiotic policies for system default and each agent package.",
-          "operationId": "get_semiotic_effective",
-          "responses": {
-            "200": {
-              "description": "Resolved semiotic gate policies"
-            },
-            "401": {
-              "description": "Missing or invalid runner token"
-            },
-            "503": {
-              "description": "Config service not available"
             }
           },
           "security": [
@@ -4190,7 +4189,7 @@ expression: snapshot
             },
             "target_runner_endpoint": {
               "type": "string",
-              "description": "HTTP endpoint of the target runner (e.g. http://runner-1.runner.agentium.svc:18080)."
+              "description": "HTTP endpoint of the target runner (e.g. http://runner-1.runner.karakara.svc:18080)."
             }
           }
         },

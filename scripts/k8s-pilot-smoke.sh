@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -21,8 +22,8 @@ Usage:
   bash scripts/k8s-pilot-smoke.sh [options]
 
 Options:
-  --namespace <ns>     Kubernetes namespace (default: agentium)
-  --release <name>     Helm release / instance label (default: agentium).
+  --namespace <ns>     Kubernetes namespace (default: karakara)
+  --release <name>     Helm release / instance label (default: karakara).
                        Used to discover the runner StatefulSet so the
                        install publishes the fixture to every runner
                        pod's local repository.
@@ -33,7 +34,7 @@ Options:
                        the lifetime of the script and close it on exit.
                        Overrides --url to http://localhost:<local-port>.
   --service <name>     API service name for --port-forward
-                       (default: agentium-agentium-os-runner-api)
+                       (default: karakara-karakara-os-runner-api)
   --local-port <port>  Local port for --port-forward (default: 18080).
                        Pick a different port if localhost:18080 is already
                        in use (e.g. by a local dev runner).
@@ -58,12 +59,12 @@ Exit codes:
 EOF
 }
 
-NAMESPACE="agentium"
-RELEASE_NAME="agentium"
+NAMESPACE="karakara"
+RELEASE_NAME="karakara"
 RUNNER_URL="http://localhost:18080"
 SECRET_NAME="runner-token"
 SECRET_KEY="token"
-API_SERVICE="agentium-agentium-os-runner-api"
+API_SERVICE="karakara-karakara-os-runner-api"
 API_PORT=18080
 LOCAL_PORT=18080
 DO_PORT_FORWARD=0
@@ -103,9 +104,9 @@ require_cmd curl
 require_cmd jq
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AGENTIUM_BIN="${AGENTIUM_BIN:-${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/agentium}"
-if [[ ! -x "$AGENTIUM_BIN" ]]; then
-  fail "agentium binary not found at ${AGENTIUM_BIN} (build with: RUSTUP_TOOLCHAIN=stable cargo build --release -p agentium --all-features)" 1
+KARAKARA_BIN="${KARAKARA_BIN:-${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak}"
+if [[ ! -x "$KARAKARA_BIN" ]]; then
+  fail "karak binary not found at ${KARAKARA_BIN} (build with: RUSTUP_TOOLCHAIN=stable cargo build --release -p karakara-os --all-features)" 1
 fi
 
 if [[ ! -d "$FIXTURE_PATH" ]]; then
@@ -210,7 +211,7 @@ for ((i=0; i<replicas; i++)); do
   pod_url="http://localhost:${pod_port}"
   wait_pilot_port_forward_ready "$pod_pid" "$pod_port" "$pod_pf_log"
 
-  publish_output="$("$AGENTIUM_BIN" publish \
+  publish_output="$("$KARAKARA_BIN" publish \
     --agent-dir "$FIXTURE_PATH" \
     --repository-url "${pod_url}/repository" \
     --runner-token "$RUNNER_TOKEN" 2>&1)" || {

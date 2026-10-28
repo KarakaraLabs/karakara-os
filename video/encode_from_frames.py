@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +7,7 @@
 Quick encoder: render scenes (with frame cache) and produce output MP4s.
 
 Usage:
-    python video/encode_from_frames.py          # render both scenes → agentium_os.mp4
+    python video/encode_from_frames.py          # render both scenes → karakara_os.mp4
     python video/encode_from_frames.py --scene 1  # scene 1 only
     python video/encode_from_frames.py --scene 2  # scene 2 only
 """
@@ -49,6 +50,6 @@ if __name__ == "__main__":
     elif args.scene == 5:
         render_scene_05("video/output/scene_05.mp4", include_audio=True, cache_dir=cache_s5)
     else:
-        render_all("video/output/agentium_os.mp4", include_audio=True,
+        render_all("video/output/karakara_os.mp4", include_audio=True,
                    cache_dir_s1=cache_s1, cache_dir_s2=cache_s2, cache_dir_s3=cache_s3,
                    cache_dir_s4c=cache_s4c, cache_dir_s4=cache_s4, cache_dir_s5=cache_s5)

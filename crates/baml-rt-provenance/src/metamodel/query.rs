@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -676,7 +677,7 @@ impl<S: ScopeState> GraphQuery<labels::ToolCall, S> {
         self
     }
 
-    /// Restrict to tool calls that recorded a semiotic gate decision on the node.
+    /// Restrict to tool calls that recorded a karakara gate decision on the node.
     pub fn with_recorded_gate_decision(mut self) -> Self {
         self.push_opaque("props.a2a_gate IS NOT NONE".to_string(), vec![]);
         self

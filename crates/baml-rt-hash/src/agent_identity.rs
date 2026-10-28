@@ -110,7 +110,7 @@ pub fn compute_agent_identity_digest(
         }
     }
 
-    let mut payload = b"urn:agentium:agent-identity\n".to_vec();
+    let mut payload = b"urn:karakara:agent-identity\n".to_vec();
     for entry in entries {
         payload.extend_from_slice(entry.path.as_bytes());
         payload.push(0);

@@ -5842,7 +5842,7 @@ select.config-input {
   margin-bottom: 6px;
 }
 
-/* Semiotic gate surfaces (layout aligned with drift tokens during cutover) */
+/* Karakara gate surfaces (layout aligned with drift tokens during cutover) */
 .gate-decision-ok,
 .gate-posture-ok {
   color: var(--color-success);

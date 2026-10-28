@@ -28,13 +28,13 @@ API keys: `fnox.toml` in project root (via `FnoxFileSecretResolver`). LLM test m
 |------|-----|
 | **Doc index** | [`docs/README.md`](docs/README.md) |
 | Agent author | [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) |
-| Runtime thesis / invariants | [`docs/assertions/agentium-runtime-thesis.md`](docs/assertions/agentium-runtime-thesis.md) |
+| Runtime thesis / invariants | [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md) |
 | Conversation spec | [`docs/assertions/baml-rt-conversation-spec.md`](docs/assertions/baml-rt-conversation-spec.md) |
 | Rust review canon | [`docs/assertions/production-rust.md`](docs/assertions/production-rust.md) |
 | Testing philosophy | [`docs/assertions/testing-handbook.md`](docs/assertions/testing-handbook.md) |
 | Runner / HTTP API | [`docs/reference/agent-runner.md`](docs/reference/agent-runner.md) |
-| CLI (`agentium`) | [`docs/reference/agentium-cli.md`](docs/reference/agentium-cli.md) |
-| Host tools / MCP | [`docs/reference/host-tool-guide.md`](docs/reference/host-tool-guide.md), [`docs/reference/agentium-mcp-support.md`](docs/reference/agentium-mcp-support.md) |
+| CLI (`karak`) | [`docs/reference/karakara-cli.md`](docs/reference/karakara-cli.md) |
+| Host tools / MCP | [`docs/reference/host-tool-guide.md`](docs/reference/host-tool-guide.md), [`docs/reference/karakara-mcp-support.md`](docs/reference/karakara-mcp-support.md) |
 | K8s operator | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
 | OTel metrics | [`docs/reference/metrics-inventory.md`](docs/reference/metrics-inventory.md) |
 | Architecture overview | [`README.md`](README.md) |
@@ -53,15 +53,15 @@ API keys: `fnox.toml` in project root (via `FnoxFileSecretResolver`). LLM test m
 | baml-rt-repository | Content-addressable agent packages |
 | baml-rt-api | HTTP API surface |
 | baml-rt-builder | Agent build pipeline |
-| baml-agent-runner | A2A host library (boot via `agentium serve`) |
-| agentium | Unified platform + developer SDK binary |
+| baml-agent-runner | A2A host library (boot via `karak serve`) |
+| karakara | Unified platform + developer SDK binary |
 
 Full crate tree and runtime flows: [`README.md`](README.md).
 
 ## Key conventions (pointers only)
 
 - **Host tools:** session FSM in Rust; JS never mediates execution — [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) §3
-- **Graph-first reads:** traverse edges, never parse node ID prefixes — [`docs/assertions/agentium-runtime-thesis.md`](docs/assertions/agentium-runtime-thesis.md)
+- **Graph-first reads:** traverse edges, never parse node ID prefixes — [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md)
 - **Best conversation example:** `tests/fixtures/agents/task-lifecycle-demo/src/index.ts`
 - **Regen fixtures:** `just regen-fixtures` after BAML/tool contract changes
 - **CI:** single nextest workspace job; doc-only changes skip Rust CI (`docs/**`)

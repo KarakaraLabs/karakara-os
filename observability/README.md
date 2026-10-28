@@ -38,8 +38,8 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 To separate concurrent runners/agents cleanly, set resource attributes per process:
 
 ```bash
-export OTEL_SERVICE_NAME=agentium-runner
-export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=local,service.namespace=agentium,service.instance.id=$(hostname)-$$"
+export OTEL_SERVICE_NAME=karakara-runner
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=local,service.namespace=karakara,service.instance.id=$(hostname)-$$"
 ```
 
 Use a different `service.instance.id` per process. The runtime also emits the canonical per-metric identity labels (`ingress_service_instance_id`, `serving_service_instance_id`, `target_service_instance_id`) regardless of resource-attr overrides — see [Pilot observability contract](#pilot-observability-contract) below.
@@ -47,7 +47,7 @@ Use a different `service.instance.id` per process. The runtime also emits the ca
 Then run your process, e.g.:
 
 ```bash
-cargo run -p agentium -- serve
+cargo run -p karakara-os -- serve
 ```
 
 ## Grafana dashboard
@@ -67,7 +67,7 @@ The dashboard links out to Grafana Explore for trace correlation against the pro
 
 ## Pilot observability contract
 
-The shipped runner emits these OpenTelemetry **resource attributes** on every signal: `service.name=agentium-runner`, `service.namespace=agentium`, `service.instance.id=<runner identity>`, `deployment.environment=<Helm value>`, `k8s.namespace.name=<pod namespace>`. Full derivation details live in [docs/reference/metrics-inventory.md § Runner identity labels](../docs/reference/metrics-inventory.md#runner-identity-labels).
+The shipped runner emits these OpenTelemetry **resource attributes** on every signal: `service.name=karakara-runner`, `service.namespace=karakara`, `service.instance.id=<runner identity>`, `deployment.environment=<Helm value>`, `k8s.namespace.name=<pod namespace>`. Full derivation details live in [docs/reference/metrics-inventory.md § Runner identity labels](../docs/reference/metrics-inventory.md#runner-identity-labels).
 
 - **Resource attributes are not automatically Prometheus labels.** The collector config shipped in this directory ([`otel-collector-config.yaml`](./otel-collector-config.yaml)) runs a `transform/runner_identity` processor that promotes `service.instance.id` → datapoint attr `service_instance_id` and `k8s.namespace.name` → `k8s_namespace_name`. Operators running their own collector must replicate that transform or rely on the explicit per-metric identity labels below.
 - **Explicit identity labels** on metrics — available regardless of collector transforms:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -37,7 +38,7 @@ if [[ "$parsed" != "$ver" ]]; then
   exit 1
 fi
 
-chart_app="$(awk '/^appVersion:/ { gsub(/"/, "", $2); print $2; exit }' "${root}/deploy/helm/agentium-os/Chart.yaml")"
+chart_app="$(awk '/^appVersion:/ { gsub(/"/, "", $2); print $2; exit }' "${root}/deploy/helm/karakara-os/Chart.yaml")"
 if [[ -n "$chart_app" && "$chart_app" != "$ver" ]]; then
   echo "verify-release-tag: Chart.yaml appVersion ${chart_app} != workspace ${ver}" >&2
   exit 1

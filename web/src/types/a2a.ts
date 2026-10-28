@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -342,7 +343,7 @@ export interface ChatMessage {
   awaitingInput?: boolean;
   /** Optional prompt from the agent (e.g. from awaitInput(prompt)); show as hint/placeholder */
   inputRequiredPrompt?: string;
-  /** Tier-3 semiotic gate authorization suspend (host-injected InputRequired). */
+  /** Tier-3 karakara gate authorization suspend (host-injected InputRequired). */
   gateAuthorization?: boolean;
   /** A2A message metadata (if present in the inbound message) */
   metadata?: Record<string, unknown>;

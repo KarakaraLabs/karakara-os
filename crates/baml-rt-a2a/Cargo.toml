@@ -18,7 +18,7 @@ baml-rt-llm-config = { path = "../baml-rt-llm-config" }
 baml-rt-quickjs = { path = "../baml-rt-quickjs" }
 baml-rt-observability = { path = "../baml-rt-observability" }
 baml-rt-provenance = { path = "../baml-rt-provenance" }
-baml-rt-semiotic = { path = "../baml-rt-semiotic" }
+baml-rt-karakara = { path = "../baml-rt-karakara" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

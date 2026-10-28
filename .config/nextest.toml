@@ -116,7 +116,7 @@ retries = { backoff = "fixed", count = 2, delay = "5s" }
 
 
 [[profile.ci.overrides]]
-filter = 'package(baml-rt-semiotic) and test(corpus_p4_gate_oracle)'
+filter = 'package(baml-rt-karakara) and test(corpus_p4_gate_oracle)'
 test-group = "llm-heavy"
 slow-timeout = { period = "120s", terminate-after = 2 }
 
@@ -217,9 +217,9 @@ test-group = "llm-heavy"
 slow-timeout = { period = "360s", terminate-after = 2 }
 retries = { backoff = "fixed", count = 2, delay = "5s" }
 
-# Semiotic corpus oracle — pure-function gate decisions.
+# Karakara corpus oracle — pure-function gate decisions.
 [[profile.ci-merged.overrides]]
-filter = 'package(baml-rt-semiotic) and test(corpus_p4_gate_oracle)'
+filter = 'package(baml-rt-karakara) and test(corpus_p4_gate_oracle)'
 test-group = "llm-heavy"
 slow-timeout = { period = "120s", terminate-after = 2 }
 

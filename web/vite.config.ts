@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +7,7 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import type { ProxyOptions } from "vite";
 
-// Must match `justfile` `runner_http_bind` / typical local `agentium serve --serve-http`.
+// Must match `justfile` `runner_http_bind` / typical local `karak serve --serve-http`.
 const RUNNER_ORIGIN = "http://127.0.0.1:18080";
 
 /** Proxy to baml-agent-runner; disable gzip on agent/API routes so SSE (`POST .../a2a`) is not buffered. */

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -81,11 +82,11 @@ case "$cmd" in
     runner)
         free_port
         mkdir -p "$STATE_DIR" "$REPOSITORY_DIR"
-        log_step "Starting agentium serve on ${RUNNER_URL} (deploy-health datasource active; event-driven, no chat)"
+        log_step "Starting karak serve on ${RUNNER_URL} (deploy-health datasource active; event-driven, no chat)"
         echo "    Terminal 2: scripts/ext_webhook_demo.sh push      # deploy the consumer agent (once)"
         echo "    Terminal 2: scripts/ext_webhook_demo.sh trigger   # POST a deploy-health event"
         exec env RUST_LOG="${RUST_LOG:-info,baml_rt_a2a=debug}" \
-            cargo run -p agentium -- serve \
+            cargo run -p karakara-os -- serve \
             --serve-http "127.0.0.1:${PORT}" \
             --runner-config "$DATASOURCE_CONFIG" \
             --state-dir "$STATE_DIR" \
@@ -95,7 +96,7 @@ case "$cmd" in
         ;;
     push)
         log_step "Publishing + deploying ${AGENT_DIR} into ${RUNNER_URL}"
-        exec cargo run -q -p agentium -- install agent \
+        exec cargo run -q -p karakara-os -- install agent \
             --path "$AGENT_DIR" \
             --repository-url "$REPOSITORY_URL" \
             --url "$RUNNER_URL" \

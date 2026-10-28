@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -522,10 +523,10 @@ pub fn api_router_with_services_and_deploy(
             config_handlers::llm_budgets::refresh_llm_model_budgets
         ))
         .routes(utoipa_axum::routes!(
-            crate::config_handlers::semiotic::get_semiotic_effective
+            crate::config_handlers::karakara::get_karakara_effective
         ))
         .routes(utoipa_axum::routes!(
-            crate::config_handlers::semiotic::get_semiotic_activity
+            crate::config_handlers::karakara::get_karakara_activity
         ))
         .routes(utoipa_axum::routes!(handlers::post_deploy))
         .routes(utoipa_axum::routes!(handlers::post_undeploy))
@@ -627,16 +628,16 @@ pub fn api_router_with_services_and_deploy(
     // personal contact — which would ship verbatim in the published spec.
     {
         use utoipa::openapi::{Contact, Info, License};
-        let mut info = Info::new("Agentium OS Runner API", env!("CARGO_PKG_VERSION"));
+        let mut info = Info::new("Karakara OS Runner API", env!("CARGO_PKG_VERSION"));
         info.description = Some(
-            "HTTP API for the Agentium OS agent runner: agent discovery, A2A JSON-RPC \
+            "HTTP API for the Karakara OS agent runner: agent discovery, A2A JSON-RPC \
              forwarding, deployment lifecycle, tool configuration, and provenance-backed \
              observability."
                 .to_string(),
         );
         let mut contact = Contact::new();
-        contact.name = Some("Agentium OS".to_string());
-        contact.url = Some("https://github.com/semiotic-agentium/agentium-os".to_string());
+        contact.name = Some("Karakara OS".to_string());
+        contact.url = Some("https://github.com/karakara-labs/karakara-os".to_string());
         info.contact = Some(contact);
         info.license = Some(License::new("Apache-2.0"));
         openapi.info = info;
@@ -808,7 +809,7 @@ pub async fn serve_with_services_and_deploy(
 /// HTTP listener gracefully shut down after that delay and return `Ok(())`,
 /// simulating a silent listener-task death. The hook itself is gated behind
 /// `cfg(debug_assertions)` and is stripped from release binaries.
-pub const LISTENER_EXIT_AFTER_SECS_ENV: &str = "AGENTIUM_TEST_LISTENER_EXIT_AFTER_SECS";
+pub const LISTENER_EXIT_AFTER_SECS_ENV: &str = "KARAKARA_TEST_LISTENER_EXIT_AFTER_SECS";
 
 /// Build the OpenAPI spec fragment for all `/repository/*` routes.
 ///

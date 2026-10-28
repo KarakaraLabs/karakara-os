@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -368,7 +369,7 @@ impl InterceptorRegistry {
         Ok(InterceptorDecision::Allow)
     }
 
-    /// Merge tool interceptor metadata stamps (e.g. semiotic gate outcomes) into effect metadata.
+    /// Merge tool interceptor metadata stamps (e.g. karakara gate outcomes) into effect metadata.
     pub async fn stamp_tool_metadata(&self, context: &ToolCallContext, metadata: &mut Value) {
         for interceptor in self.tool_pipeline.interceptors() {
             interceptor.stamp_tool_metadata(context, metadata).await;

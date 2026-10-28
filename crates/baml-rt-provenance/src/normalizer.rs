@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1161,7 +1162,7 @@ fn normalize_event_with_registry(
             if let Some(phase) = metadata_string_field(metadata, "phase") {
                 attrs.insert(a2a::PHASE.to_string(), Value::String(phase));
             }
-            if let Some(gate) = metadata.get("semiotic_gate") {
+            if let Some(gate) = metadata.get("karakara_gate") {
                 attrs.insert("a2a_gate".to_string(), gate.clone());
             }
             let start_time_ms = Some(event.timestamp_ms());
@@ -1283,7 +1284,7 @@ fn normalize_event_with_registry(
             if let Some(phase) = metadata_string_field(metadata, "phase") {
                 attrs.insert(a2a::PHASE.to_string(), Value::String(phase));
             }
-            if let Some(gate) = metadata.get("semiotic_gate") {
+            if let Some(gate) = metadata.get("karakara_gate") {
                 attrs.insert("a2a_gate".to_string(), gate.clone());
             }
             if let Some(result) = metadata_json_field(metadata, "result") {

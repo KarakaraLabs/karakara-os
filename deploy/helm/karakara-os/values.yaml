@@ -1,0 +1,226 @@
+# Karakara OS Helm chart — pilot values.
+#
+# Required values (the chart will fail at render time without these):
+#   runner.image.repository   — No published runner image exists yet.
+#   runner.image.tag          — Operators must build and push their own.
+#   runner.auth.existingSecret — Cluster mode requires a runner token.
+#   surrealdb.auth.existingSecret — SurrealDB credentials secret.
+
+# -- Global settings.
+global:
+  # -- Environment label applied to all resources as
+  # app.kubernetes.io/environment (e.g., "development", "production").
+  environment: ""
+
+# -- Helm naming overrides.
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Runner configuration.
+runner:
+  # -- Runner container image.
+  # REQUIRED: no default repository or tag. The runner image is not
+  # published to a public registry. Operators must build and push
+  # their own image, then set these values.
+  image:
+    # -- Container image repository (REQUIRED).
+    repository: ""
+    # -- Container image tag (REQUIRED).
+    tag: ""
+    # -- Image pull policy. Defaults to `Always` because no runner image is
+    # published and operators rebuild under their own tag; `IfNotPresent`
+    # would silently reuse the layer cached on the node after a same-tag
+    # rebuild + `kubectl rollout restart`.
+    pullPolicy: Always
+
+  # -- Number of runner replicas.
+  replicaCount: 2
+
+  # -- Runner authentication (operator token).
+  # REQUIRED: cluster mode fails closed without a token.
+  auth:
+    # -- Name of an existing Secret containing the runner token.
+    existingSecret: ""
+    # -- Key within the secret containing the token value.
+    secretKey: "token"
+
+  # -- Runner service configuration.
+  service:
+    # -- Headless service for StatefulSet pod DNS and peer discovery.
+    headless:
+      port: 18080
+    # -- ClusterIP service for operator access (kubectl port-forward target).
+    api:
+      type: ClusterIP
+      port: 18080
+
+  # -- Runner persistent storage.
+  persistence:
+    # -- PVC size for runner data (state-dir + repository-dir).
+    size: 1Gi
+    # -- StorageClass name. Leave empty for cluster default.
+    storageClass: ""
+
+  # -- Runner container resources.
+  # `POST /deploy` is the binding constraint on memory; 5Gi is the
+  # empirically observed floor for publishing a real multi-agent set
+  # end-to-end. See deploy/helm/karakara-os/README.md.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 5Gi
+
+  # -- Runner logging.
+  logging:
+    # -- Value for the runner container's RUST_LOG env var. When empty, no
+    # RUST_LOG is set and the runner uses its compiled default. Targeted
+    # single-key seam for validation and debugging (e.g.
+    # "info,baml_rt_router=debug"); prefer this over post-install
+    # `kubectl set env`.
+    rustLog: ""
+
+  # -- Runner startup probe (HTTP GET /healthz). The kubelet suppresses
+  # liveness and readiness probes while the startup probe is running, so
+  # the runner's slow first-boot window (HTTP-bind delayed by the
+  # in-process SurrealDB connect retry — see issue #381 / PR #396) does
+  # not surface as `Warning Unhealthy` events from liveness or readiness.
+  # `initialDelaySeconds` is deliberately set past the typical HTTP-bind
+  # time so the first probe succeeds on first attempt during cold install
+  # and no startup-probe Warnings are emitted either. See the "Runner
+  # probes" section of `deploy/helm/karakara-os/README.md` for the
+  # underlying timing model.
+  startupProbe:
+    # -- Seconds before the first probe is issued. Set to comfortably
+    # exceed the worst-case HTTP-bind on cold install (typical ~15 s under
+    # the SurrealDB-retry budget) so the first probe lands after the
+    # listener is up.
+    initialDelaySeconds: 20
+    # -- Probe interval.
+    periodSeconds: 10
+    # -- Per-probe HTTP timeout.
+    timeoutSeconds: 5
+    # -- Consecutive failures before the startup probe is considered
+    # failing. At that point the kubelet restarts the container, which is
+    # the correct outcome if startup genuinely cannot complete.
+    # `initialDelaySeconds` + `failureThreshold * periodSeconds` = 80 s
+    # total budget — covers the worst-case SurrealDB retry (~23 s of
+    # sleeps plus per-attempt connect time) with headroom for image-load
+    # and process-init slop.
+    failureThreshold: 6
+
+  # -- Runner liveness probe (HTTP GET /healthz).
+  # Defaults are deliberately more forgiving than Kubernetes' own defaults
+  # (timeoutSeconds=1, failureThreshold=3). The runner's `POST /deploy` path
+  # does meaningful synchronous work (QuickJS init, BAML schema parse, tool
+  # wrapping, agent boot) that can starve the HTTP server long enough for
+  # tight probes to fail under contention (CI nodes, modest VMs, k3d). When
+  # the readiness probe fails, the kubelet removes the pod from the runner
+  # Service endpoints and any in-flight Service-routed client connection is
+  # reset mid-deploy.
+  livenessProbe:
+    # -- Seconds before the first probe is issued.
+    initialDelaySeconds: 10
+    # -- Probe interval.
+    periodSeconds: 15
+    # -- Per-probe HTTP timeout. Kubernetes default is 1s; raised here so
+    # the slow `/deploy` path does not flap the probe.
+    timeoutSeconds: 5
+    # -- Consecutive failures before the probe is considered failing.
+    # Kubernetes default is 3; raised here for the same reason as
+    # `timeoutSeconds`.
+    failureThreshold: 6
+
+  # -- Runner readiness probe (HTTP GET /readyz).
+  # Same rationale as `livenessProbe`; readiness failures additionally remove
+  # the pod from Service endpoints, so under-tuned values break Service-routed
+  # clients (including `kubectl port-forward svc/...`).
+  readinessProbe:
+    # -- Seconds before the first probe is issued.
+    initialDelaySeconds: 5
+    # -- Probe interval.
+    periodSeconds: 10
+    # -- Per-probe HTTP timeout. See `livenessProbe.timeoutSeconds` for
+    # rationale.
+    timeoutSeconds: 5
+    # -- Consecutive failures before the probe is considered failing. See
+    # `livenessProbe.failureThreshold` for rationale.
+    failureThreshold: 6
+
+# -- SurrealDB configuration (shared provenance store).
+# The pilot packages SurrealDB directly rather than depending on
+# the upstream Helm chart, which is unproven for v3
+# (see surrealdb/helm-charts#32).
+surrealdb:
+  image:
+    # -- SurrealDB image repository.
+    repository: surrealdb/surrealdb
+    # -- SurrealDB image tag (known-good v3 version).
+    tag: v3.0.4
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+
+  # -- SurrealDB authentication.
+  # REQUIRED: the chart fails at render time without this.
+  auth:
+    # -- Name of an existing Secret containing SurrealDB credentials.
+    existingSecret: ""
+    # -- Key within the secret for the username.
+    usernameKey: "username"
+    # -- Key within the secret for the password.
+    passwordKey: "password"
+
+  # -- SurrealDB service.
+  service:
+    port: 8000
+
+  # -- SurrealDB persistent storage.
+  persistence:
+    # -- PVC size for SurrealDB data.
+    size: 1Gi
+    # -- StorageClass name. Leave empty for cluster default.
+    storageClass: ""
+
+  # -- SurrealDB container resources.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Observability / OpenTelemetry configuration.
+#
+# When enabled, the runner emits OTLP traces and metrics with the pilot identity
+# contract: service.name=karakara-runner, service.instance.id=$POD_NAME,
+# k8s.namespace.name=$POD_NAMESPACE, deployment.environment=<environment>.
+# See docs/reference/docs/reference/otel-trace-instrumentation-guide.md and
+# docs/reference/docs/reference/otel-metrics-instrumentation-guide.md.
+observability:
+  # -- Toggle injection of OTEL_* env vars on the runner container.
+  enabled: true
+  # -- deployment.environment resource attribute value. When empty, falls back to
+  # global.environment so the Kubernetes labels and the OTEL resource identity stay
+  # in sync. Set explicitly only when the operator needs to distinguish multiple
+  # runner deployments that share a cluster environment (e.g. two pilot releases
+  # labelled global.environment=production but observability.environment=pilot-a
+  # vs pilot-b).
+  environment: ""
+  # -- OTLP gRPC endpoint for traces and metrics. When empty, OTLP export stays
+  # off (the runtime skips installing exporters without a configured endpoint).
+  # Example: "http://otel-collector.observability.svc.cluster.local:4317"
+  otlpEndpoint: ""
+
+# -- fnox LLM configuration.
+fnox:
+  config:
+    # -- Name of an existing ConfigMap containing fnox.toml.
+    # When set, mounts fnox.toml at /config/fnox.toml and sets BAML_FNOX_CONFIG.
+    existingConfigMap: ""
+    # -- Key within the ConfigMap that contains the fnox.toml content.
+    key: "fnox.toml"
+  # NOTE: LLM API keys must be supplied via fnox.toml (see above).
+  # The runner does not read LLM credentials from environment variables.

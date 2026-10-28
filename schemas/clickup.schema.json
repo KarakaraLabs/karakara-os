@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://semiotic.ai/schemas/clickup.schema.json",
+  "$id": "https://karakara.dev/schemas/clickup.schema.json",
   "tool_abi_version": "1",
   "name": "support/clickup",
   "description": "Interact with ClickUp: navigate workspaces (teams, spaces, lists) and manage tasks.",

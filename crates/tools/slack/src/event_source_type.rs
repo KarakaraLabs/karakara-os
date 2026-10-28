@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -29,7 +30,7 @@ fn slack_sample_payload() -> serde_json::Value {
         source: SlackNormalizedSource {
             source_kind: "slack".to_string(),
             source_key: source_key.clone(),
-            source_label: "#agentium-eng".to_string(),
+            source_label: "#karakara-eng".to_string(),
         },
         transport: None,
         records: vec![SlackNormalizedRecord::message(

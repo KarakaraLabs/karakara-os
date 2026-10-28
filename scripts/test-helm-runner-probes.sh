@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CHART_DIR="${REPO_ROOT}/deploy/helm/agentium-os"
+CHART_DIR="${REPO_ROOT}/deploy/helm/karakara-os"
 
 if ! command -v helm &>/dev/null; then
   echo "FAIL: helm is required" >&2
@@ -31,7 +32,7 @@ fi
 # Required values that the chart fails closed without. The image repo/tag
 # values are placeholders; this script never installs anything.
 REQUIRED_VALUES=(
-  --set runner.image.repository=agentium-runner
+  --set runner.image.repository=karakara-runner
   --set runner.image.tag=test
   --set runner.auth.existingSecret=runner-token
   --set surrealdb.auth.existingSecret=surrealdb-credentials

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: runner
-  namespace: agentium
+  namespace: karakara
 spec:
   selector:
     app: runner
@@ -15,7 +15,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: runner
-  namespace: agentium
+  namespace: karakara
 spec:
   serviceName: runner
   replicas: 2
@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: runner
-          image: agentium-runner:demo
+          image: karakara-runner:demo
           imagePullPolicy: Never
           securityContext:
             runAsNonRoot: true
@@ -42,7 +42,7 @@ spec:
             - "0.0.0.0:18080"
             - --surreal-endpoint
             # Production deployments should use wss:// with TLS termination.
-            - "ws://surrealdb.agentium.svc:8000"
+            - "ws://surrealdb.karakara.svc:8000"
             - --state-dir
             - /data/runner-state
             - --repository-dir
@@ -55,7 +55,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: RUNNER_ENDPOINT
-              value: "http://$(POD_NAME).runner.agentium.svc:18080"
+              value: "http://$(POD_NAME).runner.karakara.svc:18080"
             - name: SURREAL_USER
               valueFrom:
                 secretKeyRef:

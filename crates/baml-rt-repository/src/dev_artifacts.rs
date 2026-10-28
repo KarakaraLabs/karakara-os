@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -22,7 +23,7 @@ pub struct DevArtifactsBundle {
 /// Deterministic blob key for dev artifacts associated with a package content hash.
 pub fn dev_artifacts_blob_hash(package_hash: &ContentHash) -> ContentHash {
     let mut hasher = Sha256::new();
-    hasher.update(b"agentium:dev-artifacts:v1\0");
+    hasher.update(b"karakara:dev-artifacts:v1\0");
     hasher.update(package_hash.as_str().as_bytes());
     let hex: String = hasher
         .finalize()

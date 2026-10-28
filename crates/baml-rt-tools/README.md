@@ -1,6 +1,6 @@
 # baml-rt-tools
 
-**Tool system primitives** for the Agentium OS workspace: naming, metadata, session FSMs, schema/codegen hooks, error classification, and prompt projection inputs.
+**Tool system primitives** for the Karakara OS workspace: naming, metadata, session FSMs, schema/codegen hooks, error classification, and prompt projection inputs.
 
 This crate defines **contracts** between BAML/LLM session plans and host integrations. Runtimes (`baml-rt-quickjs`, runners, API) **execute** those contracts; vendor tools **implement** `ToolHandler` / `BamlTool`.
 

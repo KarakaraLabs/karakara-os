@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a defect in Agentium OS
+about: Report a defect in Karakara OS
 title: ""
 labels: bug
 assignees: ""

@@ -1,6 +1,6 @@
 # Security Policy
 
-Agentium OS executes agents, brokers tools, and handles secrets and provenance
+Karakara OS executes agents, brokers tools, and handles secrets and provenance
 data, so we take security reports seriously and appreciate coordinated
 disclosure.
 
@@ -11,7 +11,7 @@ report discloses the problem to everyone before a fix exists.
 
 Instead, report privately through GitHub's private vulnerability reporting:
 
-- Go to the [**Security** tab](https://github.com/semiotic-agentium/agentium-os/security/advisories/new)
+- Go to the [**Security** tab](https://github.com/karakara-labs/karakara-os/security/advisories/new)
   and open a new draft advisory, or
 - Use the **Report a vulnerability** button on the repository's Security tab.
 
@@ -37,4 +37,4 @@ time.
 - Coordination with you on disclosure timing once a fix is available, and
   credit in the advisory if you would like it.
 
-Thank you for helping keep Agentium OS and its users safe.
+Thank you for helping keep Karakara OS and its users safe.

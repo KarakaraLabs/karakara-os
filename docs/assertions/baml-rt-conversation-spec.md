@@ -9,7 +9,7 @@ stable `AgentId`, not by a process or boot. `AgentId` is derived from the agent'
 behavior-defining source content:
 
 ```text
-AgentId = UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + AgentIdentityDigest)
+AgentId = UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + AgentIdentityDigest)
 ```
 
 The identity digest covers the packaged `manifest.json` projection (without

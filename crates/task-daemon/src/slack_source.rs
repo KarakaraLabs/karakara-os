@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -78,7 +79,7 @@ pub struct SlackSourceConfig {
 impl Default for SlackSourceConfig {
     fn default() -> Self {
         Self {
-            channel: SlackChannelSelector::ChannelName("agentium-eng".to_string()),
+            channel: SlackChannelSelector::ChannelName("karakara-eng".to_string()),
             history_limit: 200,
             max_pages: DEFAULT_MAX_PAGES,
             auth_preference: SlackAuthPreference::Auto,
@@ -573,10 +574,10 @@ mod tests {
 
     #[test]
     fn parses_channel_selector() {
-        let by_name = SlackChannelSelector::parse("#agentium-eng").expect("selector by name");
+        let by_name = SlackChannelSelector::parse("#karakara-eng").expect("selector by name");
         assert!(matches!(
             by_name,
-            SlackChannelSelector::ChannelName(ref name) if name == "agentium-eng"
+            SlackChannelSelector::ChannelName(ref name) if name == "karakara-eng"
         ));
 
         let by_id = SlackChannelSelector::parse("C123ABCDEF").expect("selector by id");

@@ -1,0 +1,53 @@
+# Design partner / production-like values.
+#
+# Prerequisites: see deploy/helm/karakara-os/README.md
+#
+# Install:
+#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#     --namespace karak --create-namespace \
+#     -f deploy/helm/karakara-os/examples/design-partner-values.yaml
+
+global:
+  environment: production
+
+runner:
+  image:
+    # Replace with your registry. There is no published Karakara runner
+    # image yet — you must build and push your own.
+    repository: your-registry.example.com/karakara-runner
+    tag: "v0.1.0"
+    pullPolicy: Always
+  replicaCount: 2
+  auth:
+    existingSecret: runner-token
+  persistence:
+    size: 5Gi
+  # Inherits runner.resources from values.yaml (requests 2Gi / limits 5Gi).
+  # 5Gi is the empirically observed floor for publishing a real multi-agent
+  # set end-to-end; raise the limit further for heavier workloads.
+
+surrealdb:
+  auth:
+    existingSecret: surrealdb-credentials
+  persistence:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+fnox:
+  config:
+    existingConfigMap: fnox-config
+
+# Observability / OpenTelemetry — operators point this at their own OTLP collector.
+# Leaving otlpEndpoint empty (the default) keeps the runner silent on OTLP; fill it in
+# when the collector is reachable from the runner pods. `deployment.environment`
+# resolves to `global.environment` above (i.e. "production" here) unless
+# `observability.environment` is set explicitly.
+observability:
+  enabled: true
+  # otlpEndpoint: "http://otel-collector.observability.svc.cluster.local:4317"

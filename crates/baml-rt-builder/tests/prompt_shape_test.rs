@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -95,7 +96,7 @@ function Synthesize(user_message: string) -> SynthesisReply {{
 }
 
 #[tokio::test]
-async fn coordinator_style_intent_prompt_renders_kind_hint_for_agentium_july_case() {
+async fn coordinator_style_intent_prompt_renders_kind_hint_for_karakara_july_case() {
     let prompt = rewrite_prompt(&format!(
         r##"class CoordinatorReadyIntent {{
   kind "ready"

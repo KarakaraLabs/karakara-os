@@ -18,7 +18,7 @@ baml-rt-observability = { path = "../baml-rt-observability" }
 baml-rt-builder = { path = "../baml-rt-builder" }
 baml-rt-llm-config = { path = "../baml-rt-llm-config" }
 baml-rt-provenance = { path = "../baml-rt-provenance" }
-baml-rt-semiotic = { path = "../baml-rt-semiotic" }
+baml-rt-karakara = { path = "../baml-rt-karakara" }
 baml-rt-repository = { path = "../baml-rt-repository" }
 baml-rt-tools = { path = "../baml-rt-tools" }
 # Static tool crates are force-linked only so repository-side publish/typegen

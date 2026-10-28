@@ -2,7 +2,7 @@
 
 **Patterns for instrumenting Rust crates with production-grade OTel spans.**
 
-Based on Agentium OS crates (`baml-rt-observability`, `baml-rt-core`, `baml-rt-api`): orthogonal span module, structured attributes, async propagation, and testability.
+Based on Karakara OS crates (`baml-rt-observability`, `baml-rt-core`, `baml-rt-api`): orthogonal span module, structured attributes, async propagation, and testability.
 
 ---
 

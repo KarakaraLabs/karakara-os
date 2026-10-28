@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -11,7 +12,7 @@ ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SERVER_ID="meteo"
 SERVER_DIR="examples/external-mcp-servers/meteo-mcp"
 SERVER_CONFIG_TMPL="$SERVER_DIR/mcp-servers.json.tmpl"
-SERVER_CONFIG="$HOME/.agentium-os/mcp-servers.json"
+SERVER_CONFIG="$HOME/.karakara-os/mcp-servers.json"
 AGENT_DIR="examples/agents/meteo-mcp-agent"
 AGENT_NAME="meteo-mcp-agent"
 RUNNER_URL="${RUNNER_URL:-http://127.0.0.1:18080}"
@@ -31,9 +32,9 @@ Commands:
   config    Render MCP server runtime config only
   enable    Discover/approve meteo MCP schema directly into the repository registry
   prepare   Render config and enable registry schema
-  runner    Render config, then start agentium serve on $HTTP_BIND
+  runner    Render config, then start karak serve on $HTTP_BIND
   push      Enable registry schema, then publish+deploy $AGENT_DIR to $RUNNER_URL
-  chat      Run push, then connect to $AGENT_NAME with agentium chat
+  chat      Run push, then connect to $AGENT_NAME with karak chat
   review    Show registry state for the meteo MCP server
 
 Typical flow:
@@ -51,10 +52,10 @@ Environment:
 
 Notes:
   - The registry is now the schema source of truth for this demo.
-  - ~/.agentium-os/mcp-servers.json remains local runtime config: command,
+  - ~/.karakara-os/mcp-servers.json remains local runtime config: command,
     args, non-secret env, and secret env var names.
   - Schema snapshots are written to the repository registry, not
-    ~/.agentium-os/mcp.
+    ~/.karakara-os/mcp.
   - For the normal two-terminal demo, start runner first, then run chat/push so
     the repository endpoint is available for MCP enable + publish.
 EOF
@@ -65,7 +66,7 @@ log_step() {
 }
 
 agent_platform() {
-    cargo run -q -p agentium -- "$@"
+    cargo run -q -p karakara-os -- "$@"
 }
 
 render_config() {
@@ -124,9 +125,9 @@ case "$cmd" in
         ;;
     runner)
         render_config
-        log_step "Starting agentium serve on $HTTP_BIND"
+        log_step "Starting karak serve on $HTTP_BIND"
         echo "    In another terminal, run: scripts/meteo_mcp.sh chat"
-        exec cargo run -p agentium --all-features -- serve \
+        exec cargo run -p karakara-os --all-features -- serve \
             --a2a-stdio \
             --serve-http "$HTTP_BIND" \
             --provenance-db provenance.db
@@ -137,7 +138,7 @@ case "$cmd" in
     chat)
         push_agent
         log_step "Connecting to $AGENT_NAME"
-        exec cargo run -q -p agentium -- chat --agent "$AGENT_NAME" --url "$RUNNER_URL"
+        exec cargo run -q -p karakara-os -- chat --agent "$AGENT_NAME" --url "$RUNNER_URL"
         ;;
     review)
         review

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -244,7 +245,7 @@ export interface ContextPlanningTaskSnapshot {
   /** Prior intents for this task (`intent_history`). */
   intentHistory?: PlanningIntentView[];
   stepSummary: PlanningStepSummary;
-  /** Semiotic gate summary for tier≥1 tool calls. */
+  /** Karakara gate summary for tier≥1 tool calls. */
   gate?: TaskGateSummary;
   /** @deprecated Use `gate` — retained for one-release API shim. */
   drift?: TaskPlanDriftSummary;

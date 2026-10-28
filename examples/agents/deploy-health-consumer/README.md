@@ -1,5 +1,6 @@
 <!--
 SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+SPDX-FileCopyrightText: 2026 Karakara Labs
 
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -31,7 +32,7 @@ POST webhook → runner enqueue → producer drain → dispatch → THIS agent.o
 ## Build
 
 ```bash
-agentium build --path examples/agents/deploy-health-consumer
+karak build --path examples/agents/deploy-health-consumer
 ```
 
 ## Run the full two-part demo
@@ -40,7 +41,7 @@ agentium build --path examples/agents/deploy-health-consumer
    can be deployed into it):
 
    ```bash
-   cargo run -p agentium -- serve -- \
+   cargo run -p karakara-os -- serve -- \
      --serve-http 127.0.0.1:18087 \
      --runner-config examples/external-tools/deploy-health-datasource/runner.toml \
      --state-dir ./.runner-state-demo \

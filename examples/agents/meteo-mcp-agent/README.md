@@ -19,13 +19,13 @@ resolver wiring, and live `tools/call` over stdio.
 
    ```bash
    ROOT_DIR=$(git rev-parse --show-toplevel)
-   mkdir -p ~/.agentium-os
+   mkdir -p ~/.karakara-os
    sed "s|\\${ROOT_DIR}|${ROOT_DIR}|g" \
      examples/external-mcp-servers/meteo-mcp/mcp-servers.json.tmpl \
-     > ~/.agentium-os/mcp-servers.json
+     > ~/.karakara-os/mcp-servers.json
 
-   agentium mcp enable meteo \
-     --config ~/.agentium-os/mcp-servers.json \
+   karak mcp enable meteo \
+     --config ~/.karakara-os/mcp-servers.json \
      --repository-url http://127.0.0.1:18080/repository \
      --yes
    ```
@@ -45,10 +45,10 @@ BAML_REGISTRY_URL=http://127.0.0.1:18080/repository \
     --output /tmp/meteo-mcp-agent.tar.gz
 ```
 
-With `agentium`:
+With `karak`:
 
 ```bash
-agentium build \
+karak build \
   --path examples/agents/meteo-mcp-agent \
   --repository-url http://127.0.0.1:18080/repository
 ```
@@ -61,7 +61,7 @@ projected from the approved registry snapshot (`McpMeteoGetMeteo`,
 ## Run
 
 ```bash
-agentium install agent \
+karak install agent \
   --agent-dir examples/agents/meteo-mcp-agent \
   --repository-url http://127.0.0.1:18080/repository \
   --deploy-url http://127.0.0.1:18080 \

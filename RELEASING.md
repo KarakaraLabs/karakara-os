@@ -1,10 +1,10 @@
-# Releasing Agentium OS
+# Releasing Karakara OS
 
 Releases are driven by Release Please. One SemVer must stay consistent across:
 
 - `Cargo.toml` `[workspace.package].version`
 - `Cargo.lock` workspace package entries
-- `deploy/helm/agentium-os/Chart.yaml` `version` and `appVersion`
+- `deploy/helm/karakara-os/Chart.yaml` `version` and `appVersion`
 - `.release-please-manifest.json`
 
 ## Normal release flow
@@ -21,8 +21,8 @@ Do not manually bump versions or create release tags during normal releases.
 
 Expected release assets:
 
-- `agentium-os-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
-- `agentium-os-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz`
+- `karakara-os-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `karakara-os-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz`
 - `SHA256SUMS`
 
 ## Manual fallback
@@ -33,7 +33,7 @@ Use only if Release Please is unavailable.
 git checkout main
 git pull
 just bump-version patch   # or minor | major
-git add Cargo.toml Cargo.lock deploy/helm/agentium-os/Chart.yaml
+git add Cargo.toml Cargo.lock deploy/helm/karakara-os/Chart.yaml
 git commit -m "release: v$(just workspace-version)"
 git push origin main
 

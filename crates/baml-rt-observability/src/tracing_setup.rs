@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -113,7 +114,7 @@ pub fn init_tracing() {
 /// with the supplied [`Resource`].
 ///
 /// The runner calls this with [`crate::otel_env::build_runner_resource()`] so its spans
-/// and metrics adopt the pilot identity contract (`service.name=agentium-runner`,
+/// and metrics adopt the pilot identity contract (`service.name=karakara-runner`,
 /// `service.instance.id=$POD_NAME`, etc.). Other binaries (builder CLI, task-daemon,
 /// tests) should stay on [`init_tracing`] to inherit `Resource::default()` and avoid
 /// being mislabeled as runner telemetry.

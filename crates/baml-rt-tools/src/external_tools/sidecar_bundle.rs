@@ -13,9 +13,9 @@ use super::{
     runtime::ToolRuntime,
 };
 
-pub const SIDECAR_DIR_ABS: &str = "/etc/agentium";
-pub const SIDECAR_BUNDLE_ABS_PATH: &str = "/etc/agentium/tool-bundle.json";
-pub const SIDECAR_BUNDLE_REL_PATH: &str = "etc/agentium/tool-bundle.json";
+pub const SIDECAR_DIR_ABS: &str = "/etc/karakara";
+pub const SIDECAR_BUNDLE_ABS_PATH: &str = "/etc/karakara/tool-bundle.json";
+pub const SIDECAR_BUNDLE_REL_PATH: &str = "etc/karakara/tool-bundle.json";
 pub const DEFAULT_SCHEMA_CONTENT_TYPE: &str = "application/schema+json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

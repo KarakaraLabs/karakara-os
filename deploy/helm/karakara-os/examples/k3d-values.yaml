@@ -1,0 +1,32 @@
+# Local k3d development values.
+#
+# Prerequisites: see deploy/helm/karakara-os/README.md
+#
+# Install:
+#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#     --namespace karak --create-namespace \
+#     -f deploy/helm/karakara-os/examples/k3d-values.yaml
+
+global:
+  environment: development
+
+runner:
+  image:
+    repository: karakara-runner
+    tag: demo
+    pullPolicy: Never
+  replicaCount: 2
+  auth:
+    existingSecret: runner-token
+  persistence:
+    size: 1Gi
+
+surrealdb:
+  auth:
+    existingSecret: surrealdb-credentials
+  persistence:
+    size: 1Gi
+
+fnox:
+  config:
+    existingConfigMap: fnox-config

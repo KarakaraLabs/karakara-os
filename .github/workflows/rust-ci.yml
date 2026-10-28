@@ -74,10 +74,10 @@ jobs:
               - 'crates/baml-rt-tools/tests/fixtures/external-tools/sandbox_echo/adapter/**'
               - 'tests/fixtures/sandbox-conformance/**'
               - 'crates/baml-rt-tools/src/external_tools/metadata.rs'
-              - 'crates/cargo-agent-platform/src/commands/sandbox_bind_sync.rs'
-              - 'crates/cargo-agent-platform/src/commands/sandbox_oci_prepare.rs'
-              - 'crates/cargo-agent-platform/src/commands/mod.rs'
-              - 'crates/cargo-agent-platform/src/main.rs'
+              - 'crates/karakara-os/src/commands/sandbox_bind_sync.rs'
+              - 'crates/karakara-os/src/commands/sandbox_oci_prepare.rs'
+              - 'crates/karakara-os/src/commands/mod.rs'
+              - 'crates/karakara-os/src/main.rs'
               - '.github/workflows/rust-ci.yml'
 
   nextest:
@@ -409,8 +409,8 @@ jobs:
 
       - name: Sandbox sidecar parity checks (bind + OCI)
         run: |
-          cargo test -p agentium write_runtime_sidecars_materializes_expected_files --locked -- --ignored --nocapture
-          cargo test -p agentium sandbox_oci_prepare --locked -- --ignored --nocapture
+          cargo test -p karakara-os write_runtime_sidecars_materializes_expected_files --locked -- --ignored --nocapture
+          cargo test -p karakara-os sandbox_oci_prepare --locked -- --ignored --nocapture
         env:
           RUSTUP_TOOLCHAIN: stable
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"

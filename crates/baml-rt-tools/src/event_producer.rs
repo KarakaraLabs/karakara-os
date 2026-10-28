@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -60,7 +61,7 @@ pub struct ProducerPoll {
 /// the trait has a clean seam for that.
 #[async_trait]
 pub trait EventProducer: Send + Sync {
-    /// Stable identifier for this producer instance (e.g. `slack:C_agentium-eng`).
+    /// Stable identifier for this producer instance (e.g. `slack:C_karakara-eng`).
     ///
     /// Used as the key for checkpoint persistence. Must be unique across all
     /// registered producers.

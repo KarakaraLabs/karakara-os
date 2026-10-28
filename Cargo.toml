@@ -2,7 +2,7 @@
 members = [
   "crates/baml-agent-runner",
   "crates/baml-derive-tests",
-  "crates/agentium",
+  "crates/karakara-os",
   "crates/baml-tool-links",
   "crates/integrations/clickup-client",
   "crates/integrations/github-client",
@@ -15,7 +15,7 @@ members = [
   "crates/baml-rt-citation",
   "crates/baml-rt-conversation",
   "crates/baml-rt-core",
-  "crates/baml-rt-semiotic",
+  "crates/baml-rt-karakara",
   "crates/baml-rt-hash",
   "crates/baml-rt-id",
   "crates/baml-rt-interceptor",
@@ -65,11 +65,11 @@ resolver = "2"
 [workspace.package]
 version = "0.2.2"
 edition = "2024"
-authors = ["Semiotic AI, Inc."]
-description = "Agentium OS — a Rust runtime for executing BAML functions, running JavaScript agents, and serving the A2A protocol"
+authors = ["Karakara Labs"]
+description = "Karakara OS — a Rust runtime for executing BAML functions, running JavaScript agents, and serving the A2A protocol"
 license = "Apache-2.0"
-repository = "https://github.com/semiotic-agentium/agentium-os"
-homepage = "https://semiotic.ai"
+repository = "https://github.com/karakara-labs/karakara-os"
+homepage = "https://karakara.dev"
 
 [workspace.dependencies]
 # Core

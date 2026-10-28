@@ -1,6 +1,6 @@
 # Documentation map
 
-Agentium OS docs are split by purpose. **Assertions** are normative rules for agents and
+Karakara OS docs are split by purpose. **Assertions** are normative rules for agents and
 reviewers. **Reference** describes current behavior. **Runbooks** cover install, test, demo, and
 operations.
 
@@ -14,7 +14,7 @@ Rules that must hold — guide agentic workflow, codegen, and review.
 
 | Doc | Purpose |
 |-----|---------|
-| [agentium-runtime-thesis.md](assertions/agentium-runtime-thesis.md) | Core runtime boundary, host-mediated effects, graph-first reads |
+| [karakara-runtime-thesis.md](assertions/karakara-runtime-thesis.md) | Core runtime boundary, host-mediated effects, graph-first reads |
 | [how-to-write-agents.md](assertions/how-to-write-agents.md) | Primary agent-author onboarding |
 | [agent-patterns.md](assertions/agent-patterns.md) | High-leverage agent patterns (structured tool output vs UX) |
 | [intent-based-planning-and-session-prompting.md](assertions/intent-based-planning-and-session-prompting.md) | Plan-anchored prompting and session template ordering |
@@ -34,9 +34,9 @@ System-as-is: APIs, contracts, and current behavior.
 | Doc | Purpose |
 |-----|---------|
 | [agent-runner.md](reference/agent-runner.md) | Runner CLI, HTTP API, deploy, auth tiers |
-| [agentium-cli.md](reference/agentium-cli.md) | `agentium` command reference (`serve`, install, eval, …) |
+| [karakara-cli.md](reference/karakara-cli.md) | `karak` command reference (`serve`, install, eval, …) |
 | [host-tool-guide.md](reference/host-tool-guide.md) | External, sandbox, and static host tools |
-| [agentium-mcp-support.md](reference/agentium-mcp-support.md) | MCP config, registry, build, runtime, pooling |
+| [karakara-mcp-support.md](reference/karakara-mcp-support.md) | MCP config, registry, build, runtime, pooling |
 | [repository-api-contract.md](reference/repository-api-contract.md) | Publish/entries/blob HTTP contract |
 | [deployment-lifecycle-contract.md](reference/deployment-lifecycle-contract.md) | Deploy semantics and restore policy |
 | [baml-rt-repository-design.md](reference/baml-rt-repository-design.md) | Repository and hash crate design |

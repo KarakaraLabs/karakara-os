@@ -6,12 +6,12 @@
 #   openssl rand -hex 32
 #
 # Then create the secret:
-#   kubectl -n agentium create secret generic runner-token --from-literal=token=<your-token>
+#   kubectl -n karakara create secret generic runner-token --from-literal=token=<your-token>
 apiVersion: v1
 kind: Secret
 metadata:
   name: runner-token
-  namespace: agentium
+  namespace: karakara
 type: Opaque
 stringData:
   token: "REPLACE_ME_WITH_GENERATED_TOKEN"

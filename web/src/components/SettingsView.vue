@@ -1,5 +1,6 @@
 <!--
 SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+SPDX-FileCopyrightText: 2026 Karakara Labs
 
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -7,10 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useConfigApi } from "../composables/useConfigApi";
-import { LLM_BUNDLE_NAME, SEMIOTIC_BUNDLE_NAME } from "../types/config";
+import { LLM_BUNDLE_NAME, KARAKARA_BUNDLE_NAME } from "../types/config";
 import type { ToolConfigSchemaDto } from "../types/config";
 import ConfigLlmView from "./ConfigLlmView.vue";
-import ConfigSemioticView from "./ConfigSemioticView.vue";
+import ConfigKarakaraView from "./ConfigKarakaraView.vue";
 import ConfigSecretsView from "./ConfigSecretsView.vue";
 import ConfigToolBundleEditor from "./ConfigToolBundleEditor.vue";
 import DeploymentPanel from "./DeploymentPanel.vue";
@@ -22,13 +23,13 @@ const activeTab = ref<"llm" | "trust" | "tools" | "secrets" | "deployments">("ll
 const selectedToolBundle = ref<string | null>(null);
 
 const llmBundle = computed(() => configList.value?.find((b) => b.tool_name === LLM_BUNDLE_NAME));
-const semioticBundle = computed(() =>
-  configList.value?.find((b) => b.tool_name === SEMIOTIC_BUNDLE_NAME),
+const karakaraBundle = computed(() =>
+  configList.value?.find((b) => b.tool_name === KARAKARA_BUNDLE_NAME),
 );
 const toolBundles = computed(
   () =>
     configList.value?.filter(
-      (b) => b.tool_name !== LLM_BUNDLE_NAME && b.tool_name !== SEMIOTIC_BUNDLE_NAME,
+      (b) => b.tool_name !== LLM_BUNDLE_NAME && b.tool_name !== KARAKARA_BUNDLE_NAME,
     ) ?? [],
 );
 
@@ -130,8 +131,8 @@ function closeToolEditor() {
           </div>
 
           <div v-else-if="activeTab === 'trust'" class="settings-panel">
-            <ConfigSemioticView v-if="semioticBundle" />
-            <p v-else class="settings-empty">Semiotic gate config bundle not available.</p>
+            <ConfigKarakaraView v-if="karakaraBundle" />
+            <p v-else class="settings-empty">Karakara gate config bundle not available.</p>
           </div>
 
           <div v-else-if="activeTab === 'tools'" class="settings-panel">

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -37,7 +38,7 @@ Usage:
   bash scripts/k8s-pilot-assert-placement-consistency.sh [options]
 
 Options:
-  --namespace <ns>     Kubernetes namespace (default: agentium)
+  --namespace <ns>     Kubernetes namespace (default: karakara)
   --url <base-url>     Runner base URL (default: http://localhost:18080)
   --secret <name>      Runner token secret name (default: runner-token)
   --secret-key <key>   Key within the runner token secret (default: token)
@@ -45,7 +46,7 @@ Options:
                        the lifetime of the script and close it on exit.
                        Overrides --url to http://localhost:<local-port>.
   --service <name>     API service name for --port-forward
-                       (default: agentium-agentium-os-runner-api)
+                       (default: karakara-karakara-os-runner-api)
   --local-port <port>  Local port for --port-forward (default: 18080).
   --heartbeat-threshold-ms <ms>
                        Max permitted heartbeat lag per runner (default 30000).
@@ -64,11 +65,11 @@ Exit codes:
 EOF
 }
 
-NAMESPACE="agentium"
+NAMESPACE="karakara"
 RUNNER_URL="http://localhost:18080"
 SECRET_NAME="runner-token"
 SECRET_KEY="token"
-API_SERVICE="agentium-agentium-os-runner-api"
+API_SERVICE="karakara-karakara-os-runner-api"
 API_PORT=18080
 LOCAL_PORT=18080
 DO_PORT_FORWARD=0

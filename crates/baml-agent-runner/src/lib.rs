@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Agentium platform runtime library.
+//! Karakara platform runtime library.
 //!
 //! Starts the runner, restores previously-deployed agents from --state-dir,
-//! and serves HTTP / stdio / event poll loop. Invoked via `agentium serve`.
+//! and serves HTTP / stdio / event poll loop. Invoked via `karak serve`.
 
 #![recursion_limit = "256"]
 
@@ -101,7 +102,7 @@ fn resolve_claude_workspaces_base(cli: &Cli) -> Option<PathBuf> {
     })
 }
 
-/// Start the Agentium platform (HTTP / stdio / event poll loop).
+/// Start the Karakara platform (HTTP / stdio / event poll loop).
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let claude_workspaces_base = resolve_claude_workspaces_base(&cli);
     run_inner(cli, claude_workspaces_base).await
@@ -116,12 +117,12 @@ fn validate_cluster_endpoint(endpoint: &str) -> anyhow::Result<()> {
             Some("0.0.0.0") => anyhow::bail!(
                 "cluster endpoint {endpoint} uses 0.0.0.0 which is not routable from other pods; \
                  set RUNNER_ENDPOINT (or --runner-endpoint) to a pod-specific address \
-                 (e.g. http://$(POD_NAME).runner.agentium.svc:18080)"
+                 (e.g. http://$(POD_NAME).runner.karakara.svc:18080)"
             ),
             Some("127.0.0.1") | Some("localhost") => anyhow::bail!(
                 "cluster endpoint {endpoint} uses a loopback address which is not routable from \
                  other pods; set RUNNER_ENDPOINT (or --runner-endpoint) to a pod-specific address \
-                 (e.g. http://$(POD_NAME).runner.agentium.svc:18080)"
+                 (e.g. http://$(POD_NAME).runner.karakara.svc:18080)"
             ),
             _ => {}
         }
@@ -196,8 +197,8 @@ async fn run_inner(cli: Cli, claude_workspaces_base: Option<PathBuf>) -> anyhow:
                 .context("Failed to open config store (config.db)")?,
         ),
     };
-    let semiotic_config = baml_rt_semiotic::load_stored_config(config_service.as_ref()).await;
-    baml_rt_semiotic::set_global_semiotic_config(semiotic_config);
+    let karakara_config = baml_rt_karakara::load_stored_config(config_service.as_ref()).await;
+    baml_rt_karakara::set_global_karakara_config(karakara_config);
     let fnox_resolver = Arc::new(FnoxFileSecretResolver::default_path_resolver());
     let overlay = Arc::new(OverlaySecretResolver::new(fnox_resolver.clone()));
     let link_state: SecretLinksState =
@@ -2364,7 +2365,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[test]
     fn cluster_endpoint_accepts_pod_dns() {
-        let result = super::validate_cluster_endpoint("http://runner-0.runner.agentium.svc:18080");
+        let result = super::validate_cluster_endpoint("http://runner-0.runner.karakara.svc:18080");
         assert!(result.is_ok());
     }
 

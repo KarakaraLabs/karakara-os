@@ -12,7 +12,7 @@ publish = false
  [dependencies]
  baml-rt-conversation = { path = "../baml-rt-conversation" }
 baml-rt-core = { path = "../baml-rt-core" }
-baml-rt-semiotic = { path = "../baml-rt-semiotic" }
+baml-rt-karakara = { path = "../baml-rt-karakara" }
 baml-rt-id = { path = "../baml-rt-id" }
  baml-rt-interceptor = { path = "../baml-rt-interceptor" }
 baml-rt-llm-config = { path = "../baml-rt-llm-config" }

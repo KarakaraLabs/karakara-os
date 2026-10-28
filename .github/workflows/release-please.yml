@@ -20,7 +20,7 @@ jobs:
   release-please:
     name: Open/update release PR or create release
     runs-on: ubuntu-latest
-    if: github.repository == 'semiotic-agentium/agentium-os'
+    if: github.repository == 'karakara-labs/karakara-os'
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}

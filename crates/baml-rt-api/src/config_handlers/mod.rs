@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +7,7 @@
 //!
 //! Config is keyed by bundle name; tools in a bundle share the same config.
 
-pub mod semiotic;
+pub mod karakara;
 
 pub mod bundles;
 pub mod common;

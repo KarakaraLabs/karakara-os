@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -33,9 +34,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/lib.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/agentium"
+BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak"
 
-THROTTLE_OVERLAY="${REPO_ROOT}/deploy/helm/agentium-os/examples/cpu-throttle-test-values.yaml"
+THROTTLE_OVERLAY="${REPO_ROOT}/deploy/helm/karakara-os/examples/cpu-throttle-test-values.yaml"
 FIXTURE_NAME="cpu-peg-agent"
 PROBE_DURATION_SECS=15
 HEAD_START_SECS=1
@@ -347,7 +348,7 @@ assert_invariants() {
 }
 
 main() {
-  echo "=== Agentium OS cgroup-throttled deploy harness ==="
+  echo "=== Karakara OS cgroup-throttled deploy harness ==="
   echo ""
 
   preflight

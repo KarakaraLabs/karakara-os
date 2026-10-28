@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -13,18 +14,18 @@ SCENARIO_OUT="${ROOT}/deploy/values/generated/scenario.yaml"
 mkdir -p "$(dirname "${OUT}")"
 
 LAST_TAG_FILE="${ROOT}/deploy/values/generated/.last-image-tag"
-TAG="${AGENTIUM_IMAGE_TAG:-}"
+TAG="${KARAKARA_IMAGE_TAG:-}"
 if [[ -f "${LAST_TAG_FILE}" ]]; then
   TAG="$(tr -d '[:space:]' <"${LAST_TAG_FILE}")"
 fi
 if [[ -z "${TAG}" ]]; then
-  echo "render-values: no image tag — run just image-tag-nonce or set AGENTIUM_IMAGE_TAG" >&2
+  echo "render-values: no image tag — run just image-tag-nonce or set KARAKARA_IMAGE_TAG" >&2
   exit 1
 fi
 
-REGISTRY_CONTAINER_HOST="${REGISTRY_CONTAINER_HOST:-k3d-agentium-registry}"
+REGISTRY_CONTAINER_HOST="${REGISTRY_CONTAINER_HOST:-k3d-karakara-registry}"
 REGISTRY_CONTAINER_PORT="${REGISTRY_CONTAINER_PORT:-5000}"
-IMAGE_NAME="${IMAGE_NAME:-agentium-runner}"
+IMAGE_NAME="${IMAGE_NAME:-karakara-runner}"
 IN_CLUSTER_REGISTRY="${IN_CLUSTER_REGISTRY:-${REGISTRY_CONTAINER_HOST}:${REGISTRY_CONTAINER_PORT}}"
 
 cat >"${OUT}" <<EOF

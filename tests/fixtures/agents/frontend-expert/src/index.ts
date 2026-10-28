@@ -3,7 +3,7 @@
  * Frontend Expert Agent
  * --------------------
  * Specialist agent for frontend development: proposes UI features, reviews
- * Vue/CSS code, and provides structured code proposals for the Agentium dashboard.
+ * Vue/CSS code, and provides structured code proposals for the Karakara dashboard.
  *
  * Flow: AnalyzeFrontend (structured JSON) → emit artifact → ChooseClaudeDevAction
  *       loop (applies changes via claude/dev) → FormatProposal (readable summary).
@@ -104,7 +104,7 @@ __chat_register({
     if (!text) {
       return {
         message:
-          "I'm the frontend expert for the Agentium dashboard. Describe a UI feature, design improvement, or code change you'd like me to analyze and I'll provide a structured proposal with implementable code.",
+          "I'm the frontend expert for the Karakara dashboard. Describe a UI feature, design improvement, or code change you'd like me to analyze and I'll provide a structured proposal with implementable code.",
       };
     }
 
@@ -132,7 +132,7 @@ __chat_register({
 
       // Step 3: Build spec from proposal for claude/dev
       const specText = [
-        "Apply the following frontend code changes to the Agentium dashboard (web/src/).",
+        "Apply the following frontend code changes to the Karakara dashboard (web/src/).",
         "",
         `Summary: ${proposal.summary}`,
         "",

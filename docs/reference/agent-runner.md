@@ -1,6 +1,6 @@
 # Agent Runner Reference
 
-The `baml-agent-runner` crate provides the core A2A (Agent-to-Agent) host library that powers the Agentium OS runtime. It's instantiated via `agentium serve` and handles agent lifecycle, conversation management, and tool execution.
+The `baml-agent-runner` crate provides the core A2A (Agent-to-Agent) host library that powers the Karakara OS runtime. It's instantiated via `karak serve` and handles agent lifecycle, conversation management, and tool execution.
 
 ## Configuration
 
@@ -95,7 +95,7 @@ the persisted deployment artifact hash against the repository entry before
 booting.
 
 Cluster placements require an artifact hash. Forwarded A2A requests carry
-`X-Agentium-Expected-Artifact-Hash`; the receiving runner compares it with the
+`X-Karakara-Expected-Artifact-Hash`; the receiving runner compares it with the
 exact `BootedAgent` selected for dispatch before creating a task, and returns
 `412 Precondition Failed` on mismatch.
 `AutoGenerate` identity is limited to ephemeral tests and development agents;
@@ -180,7 +180,7 @@ tool_timeout_seconds = 300
 ### Command Line Options
 
 ```bash
-agentium serve \
+karak serve \
   --port 8080 \
   --surreal-endpoint ws://localhost:8000/rpc \
   --agent-path ./my-agent \

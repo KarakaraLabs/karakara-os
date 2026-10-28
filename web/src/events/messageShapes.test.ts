@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -31,7 +32,7 @@ const slackSourceShape: AgentDeliverableMessageShape = {
         source: {
           source_kind: "slack",
           source_key: "slack:C012TEST001",
-          source_label: "#agentium-eng",
+          source_label: "#karakara-eng",
         },
         records: [],
       },

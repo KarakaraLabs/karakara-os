@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 # SPDX-License-Identifier: Apache-2.0
 #
 # Collect tier-3 gate E2E evidence artifacts into e2e-evidence/gate-tier3/
@@ -23,11 +24,11 @@ log "=== 2. Web gate UI unit tests ==="
 cd "${ROOT}/web"
 npm test -- --run gateAuthorization GateAuthorization 2>&1 | tee "${OUT}/web-vitest-${TS}.log"
 
-log "=== 3. Runner HTTP + semiotic config API ==="
+log "=== 3. Runner HTTP + karakara config API ==="
 if curl -sf "${RUNNER}/healthz" >/dev/null 2>&1; then
   curl -s "${RUNNER}/healthz" | tee "${OUT}/healthz-${TS}.json"
-  curl -s "${RUNNER}/config/semiotic" | tee "${OUT}/semiotic-get-before-${TS}.json"
-  curl -s -X PUT "${RUNNER}/config/semiotic" \
+  curl -s "${RUNNER}/config/karakara" | tee "${OUT}/karakara-get-before-${TS}.json"
+  curl -s -X PUT "${RUNNER}/config/karakara" \
     -H 'Content-Type: application/json' \
     -d '{
       "enabled": true,
@@ -36,8 +37,8 @@ if curl -sf "${RUNNER}/healthz" >/dev/null 2>&1; then
       "requirePostconditionsT3": true,
       "strictCitationAnchors": true,
       "overrides": { "agent": {} }
-    }' | tee "${OUT}/semiotic-put-${TS}.json"
-  curl -s "${RUNNER}/config/semiotic" | tee "${OUT}/semiotic-get-after-${TS}.json"
+    }' | tee "${OUT}/karakara-put-${TS}.json"
+  curl -s "${RUNNER}/config/karakara" | tee "${OUT}/karakara-get-after-${TS}.json"
   curl -s "${RUNNER}/repository/agents" | tee "${OUT}/repository-agents-${TS}.json"
   curl -s "${RUNNER}/deployments" | tee "${OUT}/deployments-${TS}.json"
 else

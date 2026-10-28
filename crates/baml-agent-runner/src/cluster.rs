@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -58,13 +59,13 @@ pub(crate) struct RunnerId(String);
 impl RunnerId {
     /// UUID v5 namespace for the `cluster_runners.runner_id` domain. Derived
     /// from `NAMESPACE_OID` and the literal byte string
-    /// `agentium.cluster.runner.id` so the seed is reproducible from source
+    /// `karakara.cluster.runner.id` so the seed is reproducible from source
     /// and anyone can audit it with `Uuid::new_v5(&NAMESPACE_OID, b"…")`.
     /// Editing this seed re-keys every runner row across the cluster.
     fn namespace() -> &'static uuid::Uuid {
         static NS: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
         NS.get_or_init(|| {
-            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"agentium.cluster.runner.id")
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"karakara.cluster.runner.id")
         })
     }
 
@@ -790,28 +791,28 @@ mod tests {
         RunnerIdentity::derived(
             format!("http://runner-{n}:18080"),
             format!("runner-{n}-sid"),
-            "agentium",
-            &format!("agentium-agentium-os-runner-{n}"),
+            "karakara",
+            &format!("karakara-karakara-os-runner-{n}"),
         )
     }
 
     #[test]
     fn derive_is_deterministic_for_same_inputs() {
-        let a = RunnerId::derive("agentium", "agentium-agentium-os-runner-0");
-        let b = RunnerId::derive("agentium", "agentium-agentium-os-runner-0");
+        let a = RunnerId::derive("karakara", "karakara-karakara-os-runner-0");
+        let b = RunnerId::derive("karakara", "karakara-karakara-os-runner-0");
         assert_eq!(a, b);
     }
 
     #[test]
     fn derive_distinguishes_pod_name() {
-        let a = RunnerId::derive("agentium", "agentium-agentium-os-runner-0");
-        let b = RunnerId::derive("agentium", "agentium-agentium-os-runner-1");
+        let a = RunnerId::derive("karakara", "karakara-karakara-os-runner-0");
+        let b = RunnerId::derive("karakara", "karakara-karakara-os-runner-1");
         assert_ne!(a, b);
     }
 
     #[test]
     fn derive_distinguishes_namespace() {
-        let a = RunnerId::derive("agentium", "runner-0");
+        let a = RunnerId::derive("karakara", "runner-0");
         let b = RunnerId::derive("other-tenant", "runner-0");
         assert_ne!(a, b);
     }
@@ -829,7 +830,7 @@ mod tests {
         db.query(
             "CREATE cluster_runners SET \
                runner_id = '00000000-0000-4000-8000-000000000000', \
-               pod_name = 'agentium-agentium-os-runner-0', \
+               pod_name = 'karakara-karakara-os-runner-0', \
                endpoint = 'http://stale:18080', \
                last_heartbeat_ms = 0",
         )
@@ -879,7 +880,7 @@ mod tests {
         db.query(
             "CREATE cluster_runners:`orphan-seed` SET \
                runner_id = 'orphan-seed', \
-               pod_name = 'agentium-agentium-os-runner-0', \
+               pod_name = 'karakara-karakara-os-runner-0', \
                endpoint = 'http://orphan:18080', \
                last_heartbeat_ms = time::millis(time::now()), \
                last_heartbeat_at = time::now()",

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -14,10 +15,10 @@ use baml_rt_core::{
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
     llm_text::{extract_response_text, llm_completion_should_materialize_assistant_message},
 };
-use baml_rt_observability::metrics::{self, LlmCallMetrics};
-use baml_rt_semiotic::{
-    CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus, resolve_semiotic_policy,
+use baml_rt_karakara::{
+    CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus, resolve_karakara_policy,
 };
+use baml_rt_observability::metrics::{self, LlmCallMetrics};
 use baml_rt_tools::{
     ToolRegistry,
     archive_refs::RefTable,
@@ -646,7 +647,7 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     .metadata
                     .get("agent_package")
                     .and_then(Value::as_str);
-                let citation_policy = resolve_semiotic_policy(agent_package);
+                let citation_policy = resolve_karakara_policy(agent_package);
                 let citation_principal = agent_id_from_metadata(&metadata.metadata)
                     .map(ProvenanceReadPrincipal::Agent)
                     .unwrap_or(ProvenanceReadPrincipal::Operator);

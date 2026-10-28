@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +11,7 @@
 #   pack-target-tarball.sh --target TRIPLE [--output-dir DIR]
 #
 # Expects binaries at target/<TRIPLE>/release-dist/<bin> (see build-release-binaries.sh).
-# Writes dist/release/agentium-os-v<version>-<TRIPLE>.tar.gz by default.
+# Writes dist/release/karak-os-v<version>-<TRIPLE>.tar.gz by default.
 
 set -euo pipefail
 
@@ -100,7 +101,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
-staging="$(mktemp -d "${TMPDIR:-/tmp}/agentium-release-pack.XXXXXX")"
+staging="$(mktemp -d "${TMPDIR:-/tmp}/karakara-release-pack.XXXXXX")"
 cleanup() {
   rm -rf "$staging"
 }
@@ -118,7 +119,7 @@ install -m 644 "$install_md" "${staging}/INSTALL.md"
 chmod 644 "${staging}/SHA256SUMS"
 
 mkdir -p "$output_dir"
-archive_name="agentium-os-v${version}-${target}.tar.gz"
+archive_name="karakara-os-v${version}-${target}.tar.gz"
 archive_path="${output_dir}/${archive_name}"
 
 # Reproducible archive: stable entry order, no uid/gid/mtime leakage, and

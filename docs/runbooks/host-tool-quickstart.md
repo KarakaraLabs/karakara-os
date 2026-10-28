@@ -13,7 +13,7 @@ security see [`../reference/host-tool-guide.md`](../reference/host-tool-guide.md
 ## 1. Scaffold a sandboxed external tool
 
 ```bash
-cargo run -p agentium -- new-tool meteo-tool \
+cargo run -p karakara-os -- new-tool meteo-tool \
   --bundle dev \
   --lang python \
   --access read \
@@ -34,7 +34,7 @@ cargo run -p agentium -- new-tool meteo-tool \
 ## 3. Materialize bind rootfs
 
 ```bash
-cargo run -p agentium -- sandbox-bind-sync \
+cargo run -p karakara-os -- sandbox-bind-sync \
   --tool-dir examples/external-tools/meteo-tool \
   --image dev-meteo-sandbox:local \
   --force \
@@ -52,21 +52,21 @@ export BAML_SANDBOX_BIND_ROOTS="$(pwd)/examples/external-tools/meteo-tool/.tmp"
 ## 5. Scaffold and wire the agent
 
 ```bash
-cargo run -p agentium -- new-agent meteo-agent \
+cargo run -p karakara-os -- new-agent meteo-agent \
   --template basic-tools \
   --tools "dev/meteo" \
   --tags "dev,meteo" \
   --description "An agent to handle meteo prompts"
 ```
 
-After schema changes: `BAML_EXTERNAL_TOOLS_DIR=... cargo run -p agentium -- regen meteo-agent`
+After schema changes: `BAML_EXTERNAL_TOOLS_DIR=... cargo run -p karakara-os -- regen meteo-agent`
 
 ## 6. Publish, deploy, chat
 
 ```bash
-cargo run -p agentium -- publish --agent-dir agents/meteo-agent
-cargo run -p agentium -- deploy --hash <HASH>
-cargo run -p agentium -- chat --agent meteo-agent
+cargo run -p karakara-os -- publish --agent-dir agents/meteo-agent
+cargo run -p karakara-os -- deploy --hash <HASH>
+cargo run -p karakara-os -- chat --agent meteo-agent
 ```
 
 ## Troubleshooting

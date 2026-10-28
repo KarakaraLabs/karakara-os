@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
 //! Grafana alert webhook intake — parses Alertmanager-shape payloads,
-//! resolves Agentium `context_id` via the mapping store, and enqueues an
+//! resolves Karakara `context_id` via the mapping store, and enqueues an
 //! [`IngressItem`] per alert for the producer to drain.
 
 use baml_rt_core::{

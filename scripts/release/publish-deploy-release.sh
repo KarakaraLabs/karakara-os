@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -34,7 +35,7 @@ _want_git_tag() {
   [[ "${GIT_REF}" == v* ]] && [[ "${GIT_REF}" != */* ]]
 }
 
-DRY="${AGENTIUM_RELEASE_DRY_RUN:-0}"
+DRY="${KARAKARA_RELEASE_DRY_RUN:-0}"
 TRACK="${ROOT}/deploy/argocd/track.json"
 IMAGES="${ROOT}/deploy/values/dev/images.yaml"
 
@@ -50,11 +51,11 @@ if _want_git_tag; then
   bash "${ROOT}/scripts/release/verify-release-tag-matches-workspace-version.sh" \
     || die "tag ${GIT_REF} must match Cargo.toml workspace version"
   if git rev-parse "${GIT_REF}" >/dev/null 2>&1; then
-    if [[ "${AGENTIUM_RELEASE_RETAG:-0}" == "1" ]]; then
+    if [[ "${KARAKARA_RELEASE_RETAG:-0}" == "1" ]]; then
       git tag -d "${GIT_REF}"
       git push origin ":refs/tags/${GIT_REF}" 2>/dev/null || true
     else
-      die "tag ${GIT_REF} already exists (use AGENTIUM_RELEASE_RETAG=1 to replace)"
+      die "tag ${GIT_REF} already exists (use KARAKARA_RELEASE_RETAG=1 to replace)"
     fi
   fi
   git tag -a "${GIT_REF}" -m "Release ${GIT_REF}"

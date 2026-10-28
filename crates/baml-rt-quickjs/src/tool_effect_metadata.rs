@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -42,7 +43,7 @@ pub(crate) fn stamp_tool_effect_metadata_scope(
     }
 }
 
-/// Stamp registry-derived tier hints for semiotic gate classification.
+/// Stamp registry-derived tier hints for karakara gate classification.
 pub(crate) fn stamp_tool_registry_metadata(
     tool_registry: &ConcreteToolRegistry,
     tool_name: &str,

@@ -35,22 +35,22 @@ printf '%s\n%s\n%s\n' \
 
 ## Operator config
 
-The runner reads `$HOME/.agentium-os/mcp-servers.json`. Render the
+The runner reads `$HOME/.karakara-os/mcp-servers.json`. Render the
 in-tree template (substituting the repo root):
 
 ```bash
 ROOT_DIR=$(git rev-parse --show-toplevel)
-mkdir -p ~/.agentium-os
+mkdir -p ~/.karakara-os
 sed "s|\\${ROOT_DIR}|${ROOT_DIR}|g" \
   examples/external-mcp-servers/meteo-mcp/mcp-servers.json.tmpl \
-  > ~/.agentium-os/mcp-servers.json
+  > ~/.karakara-os/mcp-servers.json
 ```
 
 Then approve the import into the repository registry:
 
 ```bash
-agentium mcp enable meteo \
-  --config ~/.agentium-os/mcp-servers.json \
+karak mcp enable meteo \
+  --config ~/.karakara-os/mcp-servers.json \
   --repository-url http://127.0.0.1:18080/repository \
   --yes
 ```
@@ -61,7 +61,7 @@ This creates an immutable approved MCP registry snapshot for `meteo` and its
 ## Where this fits
 
 - Snapshot types and the fake stdio fixture model MCP server/tool identity.
-- `agentium mcp enable` imports an approved registry snapshot.
+- `karak mcp enable` imports an approved registry snapshot.
 - The builder projects registry snapshots into the builder catalog (so agents
   can declare `mcp/meteo/get_meteo` in `manifest.json`).
 - The runtime resolver binds package MCP artifacts to a live MCP

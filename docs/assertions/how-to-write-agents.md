@@ -1,6 +1,6 @@
 # How to write agents
 
-This guide is the **primary onboarding path** for agent authors in Agentium OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **citable history / citations**. Deep dives stay in linked docs; start here, then follow "Further reading."
+This guide is the **primary onboarding path** for agent authors in Karakara OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **citable history / citations**. Deep dives stay in linked docs; start here, then follow "Further reading."
 
 A single **worked example** — a business reporting agent with CRM and email tools — threads through the entire document so you can follow the flow from manifest → BAML → step executor → projected history → citations → `StructuredReply`.
 
@@ -657,7 +657,7 @@ different questions, and only one of them is the agent's identity.
 | `AgentIdentityDigest` → `AgentId` | Behavior-defining packaged content | Authored source changes |
 | `ArtifactHash` | Every byte of the stored `.tar.gz` | The build or packaging output changes |
 
-`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+`AgentId` is `UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + digest)`.
 It is stable across boots, replicas, relocations, and republishes of identical
 content. That stability is what lets history stay attached to one agent.
 

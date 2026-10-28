@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
 """Inspect tool adapter contract.
 
 For `describe` and `schema`, this script reads the bind runtime artifact:
-  <rootfs>/etc/agentium/tool-bundle.json
+  <rootfs>/etc/karakara/tool-bundle.json
 
 For `invoke`, it sends framed TSRPC JSON-RPC to an adapter command you provide
 after `--`.
@@ -29,7 +30,7 @@ DEFAULT_ROOTFS = pathlib.Path(__file__).resolve().parent / ".tmp" / "dev-meteo-t
 
 
 def _read_bundle(rootfs: pathlib.Path) -> dict:
-    bundle_path = rootfs / "etc" / "agentium" / "tool-bundle.json"
+    bundle_path = rootfs / "etc" / "karakara" / "tool-bundle.json"
     if not bundle_path.exists():
         raise SystemExit(
             f"missing sidecar bundle at {bundle_path}\n"

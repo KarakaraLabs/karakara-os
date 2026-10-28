@@ -14,7 +14,7 @@
   "capabilities": {},
   "runtime": {
     "kind": "sandbox",
-    "image": "ghcr.io/agentium/sandbox-echo@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "image": "ghcr.io/karakara-labs/sandbox-echo@sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "entrypoint": [
       "/tool-adapter"
     ]

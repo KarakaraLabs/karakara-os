@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -12,8 +13,8 @@ GENERATED_DIR="${ROOT}/deploy/values/generated"
 LAST_TAG_FILE="${GENERATED_DIR}/.last-image-tag"
 mkdir -p "${GENERATED_DIR}"
 
-if [[ -n "${AGENTIUM_FIXED_TAG:-}" ]]; then
-  TAG="${AGENTIUM_FIXED_TAG}"
+if [[ -n "${KARAKARA_FIXED_TAG:-}" ]]; then
+  TAG="${KARAKARA_FIXED_TAG}"
 else
   nonce="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-6 || true)"
   if [[ -z "${nonce}" ]]; then

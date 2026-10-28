@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -19,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/e2e-k8s/lib.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/agentium"
+BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak"
 
 SKIP_BUILD=false
 KEEP_CLUSTER=false
@@ -44,10 +45,10 @@ Options:
   -h, --help            Show this message and exit
 
 Environment:
-  AGENTIUM_IMAGE_TAG    Same as --image-tag
+  KARAKARA_IMAGE_TAG    Same as --image-tag
 
 Verifies:
-  1. Argo CD installs agentium-os with registry-backed runner image
+  1. Argo CD installs karakara-os with registry-backed runner image
   2. Both runner pods reach Ready (/readyz 200)
   3. Runner pod imageIDs match pushed registry digest
   4. k8s-pilot-smoke.sh succeeds
@@ -61,7 +62,7 @@ while [[ $# -gt 0 ]]; do
     --no-build)            SKIP_BUILD=true; shift ;;
     --keep-cluster)        KEEP_CLUSTER=true; shift ;;
     --smoke-keep-deployed) SMOKE_KEEP_DEPLOYED=true; shift ;;
-    --image-tag)           AGENTIUM_IMAGE_TAG="$2"; shift 2 ;;
+    --image-tag)           KARAKARA_IMAGE_TAG="$2"; shift 2 ;;
     --local-port)          LOCAL_PORT="$2"; shift 2 ;;
     --values)              EXTRA_VALUES+=("$2"); shift 2 ;;
     -h|--help)             usage; exit 0 ;;
@@ -115,15 +116,15 @@ build_image() {
     -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
 }
 
-ensure_agentium_bin() {
+ensure_karak_bin() {
   if [[ -x "$BUILDER_BIN" ]]; then
-    log_info "agentium already built at ${BUILDER_BIN}"
+    log_info "karakara already built at ${BUILDER_BIN}"
     return
   fi
-  log_step "Building agentium for k8s-pilot-smoke (stable toolchain; avoids nightly ICE on host publish)"
+  log_step "Building karakara for k8s-pilot-smoke (stable toolchain; avoids nightly ICE on host publish)"
   (
     cd "$REPO_ROOT"
-    RUSTUP_TOOLCHAIN=stable cargo build --release -p agentium --all-features
+    RUSTUP_TOOLCHAIN=stable cargo build --release -p karakara-os --all-features
   )
   if [[ ! -x "$BUILDER_BIN" ]]; then
     log_fail "Build completed but ${BUILDER_BIN} is missing"
@@ -154,7 +155,7 @@ run_smoke() {
   (
     cd "$REPO_ROOT"
     RUNNER_TOKEN="$E2E_TOKEN" \
-    AGENTIUM_BIN="$BUILDER_BIN" \
+    KARAKARA_BIN="$BUILDER_BIN" \
     K8S_PILOT_PF_LOG_DIR="$LOG_DIR" \
       bash "${REPO_ROOT}/scripts/k8s-pilot-smoke.sh" "${smoke_args[@]}"
   )
@@ -187,14 +188,14 @@ verify_no_warn_logs() {
 
 main() {
   preflight
-  ensure_agentium_bin
+  ensure_karak_bin
   build_image
   create_or_reuse_cluster
   if ((${#EXTRA_VALUES[@]} > 0)); then
     if ((${#EXTRA_VALUES[@]} > 1)); then
       log_warn "multiple --values files; using last: ${EXTRA_VALUES[-1]}"
     fi
-    export AGENTIUM_SCENARIO_VALUES="${EXTRA_VALUES[-1]}"
+    export KARAKARA_SCENARIO_VALUES="${EXTRA_VALUES[-1]}"
   fi
   bringup_pilot_stack
   if ! verify_pod_image_digests; then

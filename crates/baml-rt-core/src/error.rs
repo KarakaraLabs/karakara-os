@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -235,7 +236,7 @@ pub enum BamlRtError {
     #[error("Tool execution error: {0}")]
     ToolExecution(String),
 
-    /// Semiotic tier-3 gate requires human authorization (A2A InputRequired).
+    /// Karakara tier-3 gate requires human authorization (A2A InputRequired).
     #[error("Gate authorization required: {prompt}")]
     GateAuthorizationRequired { prompt: String },
 

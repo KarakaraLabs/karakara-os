@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 # SPDX-License-Identifier: Apache-2.0
 #
 # Curl-driven compaction verification against a local baml-agent-runner.
@@ -19,7 +20,7 @@ AGENT="${ENTRY_AGENT:-conversational-context-auto}"
 CTX="${CONTEXT_ID:-ctx-compaction-curl-$(date +%s)}"
 N="${MESSAGE_COUNT:-5}"
 PAD_REPEAT="${PAD_REPEAT:-1500}"  # ~6k chars per turn; enough wire bytes with tuned budget
-LOG="${RUNNER_LOG:-/tmp/agentium-runner.log}"
+LOG="${RUNNER_LOG:-/tmp/karakara-runner.log}"
 
 tune_compaction_config() {
   local version

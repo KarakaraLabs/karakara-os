@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -18,7 +19,7 @@ use baml_rt_core::{
         TaskId,
     },
 };
-use baml_rt_semiotic::CitationIntegrityAssessment;
+use baml_rt_karakara::CitationIntegrityAssessment;
 use baml_rt_tools::prompt_message_char_count;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Value as JsonValue};

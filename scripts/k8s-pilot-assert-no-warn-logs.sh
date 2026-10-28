@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -29,8 +30,8 @@ Usage:
   bash scripts/k8s-pilot-assert-no-warn-logs.sh [options]
 
 Options:
-  --namespace <ns>     Kubernetes namespace (default: agentium)
-  --release <name>     Helm release / instance label (default: agentium)
+  --namespace <ns>     Kubernetes namespace (default: karakara)
+  --release <name>     Helm release / instance label (default: karakara)
   --extra-allow <re>   Append an extra regex to the allowlist (repeatable).
                        Useful for one-off operator runs where a known
                        transient WARN should not fail the assertion.
@@ -43,8 +44,8 @@ Exit codes:
 EOF
 }
 
-NAMESPACE="agentium"
-RELEASE_NAME="agentium"
+NAMESPACE="karakara"
+RELEASE_NAME="karakara"
 EXTRA_ALLOW=()
 
 while [[ $# -gt 0 ]]; do

@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -138,8 +139,8 @@ struct RunArgs {
     #[arg(long = "route", value_parser = parse_source_sink_route)]
     routes: Vec<SourceSinkRouteArg>,
 
-    /// Channel selector (`agentium-eng`, `#agentium-eng`, or `C...`).
-    #[arg(long, default_value = "agentium-eng")]
+    /// Channel selector (`karakara-eng`, `#karakara-eng`, or `C...`).
+    #[arg(long, default_value = "karakara-eng")]
     channel: String,
 
     /// Poll interval in seconds for watch mode.
@@ -160,7 +161,7 @@ struct RunArgs {
     initial_lookback_seconds: u64,
 
     /// Path to persisted daemon state (cursor + dedupe keys).
-    #[arg(long, default_value = ".agentium/task-daemon-state.json")]
+    #[arg(long, default_value = ".karakara/task-daemon-state.json")]
     state_file: PathBuf,
 
     /// Max seen task keys retained per source.
@@ -196,7 +197,7 @@ struct RunArgs {
     workspace_url: Option<String>,
 
     /// Optional project metadata config (`channel -> project/repo/clickup`).
-    #[arg(long, default_value = ".agentium/task-daemon-projects.json")]
+    #[arg(long, default_value = ".karakara/task-daemon-projects.json")]
     project_config: PathBuf,
 
     /// Override project key for this channel.

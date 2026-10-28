@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -48,7 +49,7 @@ pub enum SlackTransportConfig {
 #[serde(deny_unknown_fields)]
 pub struct SlackEventProducerConfig {
     #[baml(
-        description = "Slack channels to ingest for raw host event delivery. Entries may be channel names like `agentium-eng` or channel IDs like `C123ABC456`."
+        description = "Slack channels to ingest for raw host event delivery. Entries may be channel names like `karakara-eng` or channel IDs like `C123ABC456`."
     )]
     #[serde(default)]
     pub channels: Vec<String>,

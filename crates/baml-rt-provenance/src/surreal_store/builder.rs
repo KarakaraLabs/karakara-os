@@ -50,7 +50,7 @@ pub enum SurrealBackend {
 /// Connection config for a remote SurrealDB server.
 #[derive(Clone, Debug)]
 pub struct RemoteConfig {
-    /// WebSocket endpoint, e.g. `ws://surrealdb.agentium.svc:8000`.
+    /// WebSocket endpoint, e.g. `ws://surrealdb.karakara.svc:8000`.
     pub endpoint: String,
     /// SurrealDB namespace (defaults to `"provenance"`).
     pub namespace: String,

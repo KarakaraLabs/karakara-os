@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,8 +8,8 @@ import type {
   ConfigVersionDto,
   SecretOverviewEntryDto,
   SecretRequestDto,
-  SemioticActivityDto,
-  SemioticEffectiveDto,
+  KarakaraActivityDto,
+  KarakaraEffectiveDto,
   ToolConfigDto,
   ToolConfigSchemaDto,
 } from "../types/config";
@@ -313,14 +314,14 @@ export function useConfigApi() {
     }
   }
 
-  async function fetchSemioticEffective(): Promise<
-    { data: SemioticEffectiveDto } | { error: ConfigApiError }
+  async function fetchKarakaraEffective(): Promise<
+    { data: KarakaraEffectiveDto } | { error: ConfigApiError }
   > {
     loading.value = true;
     try {
-      const res = await fetch("/config/semiotic/effective");
+      const res = await fetch("/config/karakara/effective");
       if (!res.ok) return { error: await parseProblem(res) };
-      const data = (await res.json()) as SemioticEffectiveDto;
+      const data = (await res.json()) as KarakaraEffectiveDto;
       return { data };
     } catch (e) {
       return {
@@ -335,11 +336,11 @@ export function useConfigApi() {
     }
   }
 
-  async function fetchSemioticActivity(options?: {
+  async function fetchKarakaraActivity(options?: {
     windowHours?: number;
     agentPackage?: string | null;
     limit?: number;
-  }): Promise<{ data: SemioticActivityDto } | { error: ConfigApiError }> {
+  }): Promise<{ data: KarakaraActivityDto } | { error: ConfigApiError }> {
     loading.value = true;
     try {
       const params = new URLSearchParams();
@@ -353,9 +354,9 @@ export function useConfigApi() {
         params.set("limit", String(options.limit));
       }
       const qs = params.toString();
-      const res = await fetch(`/config/semiotic/activity${qs ? `?${qs}` : ""}`);
+      const res = await fetch(`/config/karakara/activity${qs ? `?${qs}` : ""}`);
       if (!res.ok) return { error: await parseProblem(res) };
-      const data = (await res.json()) as SemioticActivityDto;
+      const data = (await res.json()) as KarakaraActivityDto;
       return { data };
     } catch (e) {
       return {
@@ -381,7 +382,7 @@ export function useConfigApi() {
     fetchStoreKeys,
     putSecret,
     deleteSecret,
-    fetchSemioticEffective,
-    fetchSemioticActivity,
+    fetchKarakaraEffective,
+    fetchKarakaraActivity,
   };
 }

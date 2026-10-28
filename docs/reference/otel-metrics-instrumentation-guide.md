@@ -2,7 +2,7 @@
 
 **Patterns for instrumenting Rust crates with production-grade OTel metrics.**
 
-Based on Agentium OS crates (`baml-rt-core`, `baml-rt-a2a`, `baml-rt-api`): orthogonal metrics module, OpenTelemetry native API, structured attributes, and testability.
+Based on Karakara OS crates (`baml-rt-core`, `baml-rt-a2a`, `baml-rt-api`): orthogonal metrics module, OpenTelemetry native API, structured attributes, and testability.
 
 ---
 
@@ -38,7 +38,7 @@ High-signal families:
 - **task-daemon:** `baml_rt_task_daemon.run_once.*` ([`baml-rt-observability`](../crates/baml-rt-observability/src/metrics.rs)).
 
 A starter Grafana dashboard is provisioned at:
-`observability/grafana/dashboards/agent-platform-overview.json`.
+`observability/grafana/dashboards/karakara-overview.json`.
 
 ## Design Goals
 

@@ -701,13 +701,13 @@ pub async fn post_a2a(
     }
 
     let eval_model = headers
-        .get("X-Agentium-Eval-Session")
+        .get("X-Karakara-Eval-Session")
         .and_then(|v| v.to_str().ok())
         .and_then(|id| lookup_eval_session(state.as_ref(), id))
         .and_then(|spec| spec.model);
 
     let expected_agent_id = match headers
-        .get("x-agentium-expected-agent-id")
+        .get("x-karakara-expected-agent-id")
         .and_then(|value| value.to_str().ok())
     {
         Some(raw) => Some(
@@ -726,7 +726,7 @@ pub async fn post_a2a(
     };
 
     let expected_artifact_hash = match headers
-        .get("x-agentium-expected-artifact-hash")
+        .get("x-karakara-expected-artifact-hash")
         .and_then(|value| value.to_str().ok())
     {
         Some(raw) => Some(raw.parse::<ArtifactHash>().map_err(|e| {

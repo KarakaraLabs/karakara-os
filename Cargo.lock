@@ -147,42 +147,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentium"
-version = "0.2.2"
-dependencies = [
- "anyhow",
- "axum 0.8.8",
- "baml-agent-runner",
- "baml-rt-api",
- "baml-rt-builder",
- "baml-rt-core",
- "baml-rt-llm-config",
- "baml-rt-provenance",
- "baml-rt-repository",
- "baml-rt-tools",
- "clap",
- "console 0.15.11",
- "dirs",
- "futures-util",
- "indicatif",
- "inquire 0.7.5",
- "jsonschema",
- "regex",
- "reqwest 0.12.26",
- "reqwest-eventsource",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "test-support",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.8.23",
- "toml_edit 0.22.27",
- "uuid",
-]
-
-[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1409,6 +1373,7 @@ dependencies = [
  "baml-rt-conversation",
  "baml-rt-core",
  "baml-rt-hash",
+ "baml-rt-karakara",
  "baml-rt-llm-config",
  "baml-rt-mcp",
  "baml-rt-observability",
@@ -1416,7 +1381,6 @@ dependencies = [
  "baml-rt-quickjs",
  "baml-rt-repository",
  "baml-rt-router",
- "baml-rt-semiotic",
  "baml-rt-tools",
  "baml-rt-tools-claude",
  "baml-tools-calculator",
@@ -1622,11 +1586,11 @@ dependencies = [
  "baml-rt",
  "baml-rt-conversation",
  "baml-rt-core",
+ "baml-rt-karakara",
  "baml-rt-llm-config",
  "baml-rt-observability",
  "baml-rt-provenance",
  "baml-rt-quickjs",
- "baml-rt-semiotic",
  "baml-rt-tools",
  "baml-tools-calculator",
  "baml-tools-system",
@@ -1661,12 +1625,12 @@ dependencies = [
  "baml-rt-config",
  "baml-rt-conversation",
  "baml-rt-core",
+ "baml-rt-karakara",
  "baml-rt-llm-config",
  "baml-rt-observability",
  "baml-rt-provenance",
  "baml-rt-repository",
  "baml-rt-router",
- "baml-rt-semiotic",
  "baml-rt-tools",
  "baml-tools-clickup",
  "baml-tools-github",
@@ -1841,6 +1805,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "baml-rt-karakara"
+version = "0.2.2"
+dependencies = [
+ "async-trait",
+ "baml-rt-core",
+ "baml-rt-interceptor",
+ "baml-rt-tools",
+ "insta",
+ "regex",
+ "rstest 0.23.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "baml-rt-llm-config"
 version = "0.2.2"
 dependencies = [
@@ -1914,9 +1896,9 @@ dependencies = [
  "baml-rt-core",
  "baml-rt-id",
  "baml-rt-interceptor",
+ "baml-rt-karakara",
  "baml-rt-llm-config",
  "baml-rt-observability",
- "baml-rt-semiotic",
  "baml-rt-tools",
  "baml-rt-vocabulary",
  "criterion",
@@ -1948,10 +1930,10 @@ dependencies = [
  "baml-rt",
  "baml-rt-core",
  "baml-rt-interceptor",
+ "baml-rt-karakara",
  "baml-rt-llm-config",
  "baml-rt-observability",
  "baml-rt-provenance",
- "baml-rt-semiotic",
  "baml-rt-tools",
  "baml-runtime",
  "baml-types",
@@ -2027,24 +2009,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
-]
-
-[[package]]
-name = "baml-rt-semiotic"
-version = "0.2.2"
-dependencies = [
- "async-trait",
- "baml-rt-core",
- "baml-rt-interceptor",
- "baml-rt-tools",
- "insta",
- "regex",
- "rstest 0.23.0",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -7382,6 +7346,42 @@ dependencies = [
  "sha2 0.10.9",
  "signature",
  "simple_asn1",
+]
+
+[[package]]
+name = "karakara-os"
+version = "0.2.2"
+dependencies = [
+ "anyhow",
+ "axum 0.8.8",
+ "baml-agent-runner",
+ "baml-rt-api",
+ "baml-rt-builder",
+ "baml-rt-core",
+ "baml-rt-llm-config",
+ "baml-rt-provenance",
+ "baml-rt-repository",
+ "baml-rt-tools",
+ "clap",
+ "console 0.15.11",
+ "dirs",
+ "futures-util",
+ "indicatif",
+ "inquire 0.7.5",
+ "jsonschema",
+ "regex",
+ "reqwest 0.12.26",
+ "reqwest-eventsource",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "test-support",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.23",
+ "toml_edit 0.22.27",
+ "uuid",
 ]
 
 [[package]]

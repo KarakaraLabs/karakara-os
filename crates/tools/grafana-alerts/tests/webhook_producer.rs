@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -46,7 +47,7 @@ fn payload(status: &str, group_key: &str, alerts: Vec<GrafanaAlert>) -> GrafanaW
     GrafanaWebhookPayload {
         status: Some(status.to_string()),
         group_key: Some(group_key.to_string()),
-        receiver: Some("agentium-webhook".to_string()),
+        receiver: Some("karakara-webhook".to_string()),
         alerts,
     }
 }

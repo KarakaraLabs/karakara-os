@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -16,10 +17,10 @@ fi
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-NAMESPACE="agentium"
-CLUSTER_NAME="agentium"
-RELEASE_NAME="agentium"                 # helm releaseName in Argo Application
-IMAGE_NAME="agentium-runner"
+NAMESPACE="karakara"
+CLUSTER_NAME="karakara"
+RELEASE_NAME="karakara"                 # helm releaseName in Argo Application
+IMAGE_NAME="karakara-runner"
 IMAGE_TAG=""                            # set by resolve_image_tag
 IMAGE_PULL_POLICY="Always"              # local k3d registry contract
 LAST_IMAGE_TAG_FILE="deploy/values/generated/.last-image-tag"
@@ -31,9 +32,9 @@ RUNNER1_PORT=18082
 REMOTE_PORT=18080
 RUNNER_CONTAINER_PORT=18080             # chart value runner.service.headless.port
 # k3d-managed local registry contract (see deploy/k3d/cluster.yaml).
-# The cluster pulls images from k3d-agentium-registry:5000; the host
+# The cluster pulls images from k3d-karakara-registry:5000; the host
 # pushes to localhost:5400. ensure_runner_image_available wires both.
-REGISTRY_NAME="agentium-registry"
+REGISTRY_NAME="karakara-registry"
 REGISTRY_CONTAINER_HOST="k3d-${REGISTRY_NAME}"
 REGISTRY_CONTAINER_PORT="5000"
 REGISTRY_HOST_PORT="5400"
@@ -42,9 +43,9 @@ REGISTRY_HOST_PORT="5400"
 IMAGE_REPOSITORY_FOR_INSTALL="${REGISTRY_CONTAINER_HOST}:${REGISTRY_CONTAINER_PORT}/${IMAGE_NAME}"
 
 # Populated at runtime by resolve_chart_names (after helm install)
-RUNNER_FULLNAME=""      # e.g. agentium-agentium-os-runner
-SURREAL_FULLNAME=""     # e.g. agentium-agentium-os-surrealdb
-RUNNER_API_SERVICE=""   # e.g. agentium-agentium-os-runner-api
+RUNNER_FULLNAME=""      # e.g. karakara-karakara-os-runner
+SURREAL_FULLNAME=""     # e.g. karakara-karakara-os-surrealdb
+RUNNER_API_SERVICE=""   # e.g. karakara-karakara-os-runner-api
 RUNNER_POD_0=""
 RUNNER_POD_1=""
 SURREAL_POD_0=""
@@ -259,13 +260,13 @@ publish_and_deploy() {
 # SurrealDB queries
 # ---------------------------------------------------------------------------
 
-# Canonical SurrealDB namespaces defined by the agent-platform codebase.
+# Canonical SurrealDB namespaces defined by the karakara codebase.
 # Sources:
 #   cluster    — baml-agent-runner src/main.rs (cluster routing, placements)
 #   provenance — baml-rt-provenance src/surreal_store/schema.rs
 #   config     — baml-rt-config src/store.rs
 #   baml       — baml-rt-repository + baml-agent-runner deployment_state
-# See deploy/helm/agentium-os/README.md#surrealdb-namespaces for the full
+# See deploy/helm/karakara-os/README.md#surrealdb-namespaces for the full
 # NS/DB table. Update both this list and the README when a crate adds a
 # new namespace.
 readonly SURREAL_KNOWN_NAMESPACES=(cluster provenance config baml)
@@ -308,7 +309,7 @@ surreal_query() {
   if (( ns_known == 0 )); then
     local known_list
     known_list="$(IFS=,; echo "${SURREAL_KNOWN_NAMESPACES[*]}")"
-    jq -nc --arg msg "unknown namespace: '${ns}'; known: ${known_list}. See deploy/helm/agentium-os/README.md#surrealdb-namespaces." \
+    jq -nc --arg msg "unknown namespace: '${ns}'; known: ${known_list}. See deploy/helm/karakara-os/README.md#surrealdb-namespaces." \
       '[{result:[], _query_status:"failed", _error:$msg}]'
     return 1
   fi
@@ -653,10 +654,10 @@ has_llm_keys() {
 # Shared by scripts/verify-k8s-pilot-package.sh and scripts/e2e-k8s/run.sh.
 # ---------------------------------------------------------------------------
 
-# resolve_image_tag — AGENTIUM_IMAGE_TAG > .last-image-tag > error.
+# resolve_image_tag — KARAKARA_IMAGE_TAG > .last-image-tag > error.
 resolve_image_tag() {
-  if [[ -n "${AGENTIUM_IMAGE_TAG:-}" ]]; then
-    IMAGE_TAG="${AGENTIUM_IMAGE_TAG}"
+  if [[ -n "${KARAKARA_IMAGE_TAG:-}" ]]; then
+    IMAGE_TAG="${KARAKARA_IMAGE_TAG}"
     return 0
   fi
   local tag_file="${REPO_ROOT}/${LAST_IMAGE_TAG_FILE}"
@@ -665,13 +666,13 @@ resolve_image_tag() {
     return 0
   fi
   log_fail "No image tag configured."
-  echo "  Run: just image-tag-nonce   or set AGENTIUM_IMAGE_TAG" >&2
+  echo "  Run: just image-tag-nonce   or set KARAKARA_IMAGE_TAG" >&2
   return 1
 }
 
 # ensure_image_tag_or_nonce — write a fresh nonce when no tag is configured.
 ensure_image_tag_or_nonce() {
-  if [[ -n "${AGENTIUM_IMAGE_TAG:-}" ]] || [[ -f "${REPO_ROOT}/${LAST_IMAGE_TAG_FILE}" ]]; then
+  if [[ -n "${KARAKARA_IMAGE_TAG:-}" ]] || [[ -f "${REPO_ROOT}/${LAST_IMAGE_TAG_FILE}" ]]; then
     resolve_image_tag
     return $?
   fi
@@ -719,7 +720,7 @@ install_pilot_release() {
 bringup_pilot_stack() {
   ensure_runner_image_available || return 1
   create_pilot_objects || return 1
-  write_scenario_values "${AGENTIUM_SCENARIO_VALUES:-}" || return 1
+  write_scenario_values "${KARAKARA_SCENARIO_VALUES:-}" || return 1
   install_pilot_release || return 1
 }
 
@@ -813,7 +814,7 @@ ensure_runner_image_available() {
 
   local manifest_url="http://localhost:${REGISTRY_HOST_PORT}/v2/${IMAGE_NAME}/manifests/${IMAGE_TAG}"
   local hdr_file
-  hdr_file="$(mktemp -t agentium-manifest.XXXXXX.hdr)"
+  hdr_file="$(mktemp -t karakara-manifest.XXXXXX.hdr)"
   deadline=$((SECONDS + 30))
   local last_status="000"
   PUSHED_IMAGE_DIGEST=""
@@ -984,10 +985,10 @@ wait_for_runner_readyz() {
 # Manual repro of the failure path (run after a successful verify-k8s-pilot-package
 # with --keep-cluster, where verify has logged "Pushed image digest: <ORIG>"):
 #   docker tag docker.io/library/busybox:latest \
-#     localhost:5400/agentium-runner:demo
-#   docker push localhost:5400/agentium-runner:demo
-#   kubectl -n agentium rollout restart statefulset/agentium-agentium-os-runner
-#   kubectl -n agentium rollout status  statefulset/agentium-agentium-os-runner
+#     localhost:5400/karakara-runner:demo
+#   docker push localhost:5400/karakara-runner:demo
+#   kubectl -n karakara rollout restart statefulset/karakara-karakara-os-runner
+#   kubectl -n karakara rollout status  statefulset/karakara-karakara-os-runner
 #   source scripts/e2e-k8s/lib.sh
 #   PUSHED_IMAGE_DIGEST=<ORIG> RUNNER_IMAGE_STRATEGY=registry \
 #     verify_pod_image_digests
@@ -1020,7 +1021,7 @@ verify_pod_image_digests() {
   while IFS=$'\t' read -r pod image_id; do
     [[ -z "$pod" ]] && continue
     # imageID for a registry pull looks like
-    #   k3d-agentium-registry:5000/agentium-runner@sha256:<hex>
+    #   k3d-karakara-registry:5000/karakara-runner@sha256:<hex>
     # (occasionally prefixed with `docker-pullable://`). Take everything
     # after the last `@`, which is the resolved digest in every form.
     pod_digest="${image_id##*@}"

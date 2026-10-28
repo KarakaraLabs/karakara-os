@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -9,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "$ROOT_DIR"
 
-CHANNEL="${TASK_DAEMON_DEMO_CHANNEL:-agentium-eng}"
+CHANNEL="${TASK_DAEMON_DEMO_CHANNEL:-karakara-eng}"
 COORDINATOR_PORT="${TASK_DAEMON_DEMO_COORDINATOR_PORT:-8082}"
 COORDINATOR_URL="${TASK_DAEMON_DEMO_COORDINATOR_URL:-http://127.0.0.1:${COORDINATOR_PORT}}"
 PROVENANCE_DB="${TASK_DAEMON_DEMO_PROVENANCE_DB:-provenance.db}"
@@ -20,7 +21,7 @@ MERMAID_OUT="${TASK_DAEMON_DEMO_MERMAID_OUT:-/tmp/task-daemon-demo-sequence.mmd}
 METRICS_OUT="${TASK_DAEMON_DEMO_METRICS_OUT:-/tmp/task-daemon-demo-metrics.json}"
 SUMMARY_OUT="${TASK_DAEMON_DEMO_SUMMARY_OUT:-/tmp/task-daemon-demo-scoreboard.md}"
 REPORT_OUT="${TASK_DAEMON_DEMO_REPORT_OUT:-/tmp/task-daemon-demo-report.html}"
-PROJECT_CONFIG="${TASK_DAEMON_DEMO_PROJECT_CONFIG:-.agentium/task-daemon-projects.json}"
+PROJECT_CONFIG="${TASK_DAEMON_DEMO_PROJECT_CONFIG:-.karakara/task-daemon-projects.json}"
 EXTRACTOR="${TASK_DAEMON_DEMO_EXTRACTOR:-llm}"
 MAX_CANDIDATES="${TASK_DAEMON_DEMO_MAX_CANDIDATES:-4}"
 START_COORDINATOR="${TASK_DAEMON_DEMO_START_COORDINATOR:-1}"

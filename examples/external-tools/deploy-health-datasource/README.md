@@ -1,5 +1,6 @@
 <!--
 SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+SPDX-FileCopyrightText: 2026 Karakara Labs
 
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -24,7 +25,7 @@ discovery (`tool/describe` + `tool/schema`), which is how it advertises its
    next boot.
 
 To add a tool to an already-running runner instead, use the runner's
-`POST /external-tools/enable` endpoint (or the `agent-platform` CLI). Note: a
+`POST /external-tools/enable` endpoint (or the `karak` CLI). Note: a
 newly enabled **datasource** only starts serving its webhook route on the next
 boot, because webhook routes are mounted at startup.
 
@@ -33,7 +34,7 @@ boot, because webhook routes are mounted at startup.
 ```bash
 ./examples/external-tools/deploy-health-datasource/run_runner.sh
 # equivalently, from the repo root:
-#   cargo run -p agentium -- serve -- \
+#   cargo run -p karakara-os -- serve -- \
 #     --runner-config examples/external-tools/deploy-health-datasource/runner.toml \
 #     --serve-http 127.0.0.1:18080 \
 #     --event-poll-interval-secs 1

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! SQLite-backed mapping of Grafana alert identity to Agentium `context_id`.
+//! SQLite-backed mapping of Grafana alert identity to Karakara `context_id`.
 //!
 //! Identity reuse semantics (see demo_plan §Provenance Link):
 //! - First `firing` for an inactive/new fingerprint creates a new `context_id`.

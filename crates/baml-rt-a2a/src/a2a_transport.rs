@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -496,14 +497,14 @@ async fn wire_provenance_subsystems(
         effect_emitter.subscribe_effect_subscriber(subscriber).await;
     }
 
-    // Subsystem 2: ProvenanceInterceptor + SemioticToolInterceptor → tool pipeline.
+    // Subsystem 2: ProvenanceInterceptor + KarakaraToolInterceptor → tool pipeline.
     {
-        use baml_rt_semiotic::{
-            SemioticToolInterceptor, TrojanLintLLMInterceptor, global_grounding_store,
+        use baml_rt_karakara::{
+            KarakaraToolInterceptor, TrojanLintLLMInterceptor, global_grounding_store,
         };
         let mut registry = interceptor_registry.lock().await;
         registry.register_tool_interceptor(ProvenanceInterceptor::new(writer.clone()));
-        registry.register_tool_interceptor(SemioticToolInterceptor::new(global_grounding_store()));
+        registry.register_tool_interceptor(KarakaraToolInterceptor::new(global_grounding_store()));
         registry.register_llm_interceptor(TrojanLintLLMInterceptor);
     }
 
@@ -2030,7 +2031,7 @@ impl A2aAgent {
                     let user_text = parsed_resume
                         .as_ref()
                         .and_then(resume_user_message_text);
-                    let action = baml_rt_semiotic::resolve_pending_gate_authorization(
+                    let action = baml_rt_karakara::resolve_pending_gate_authorization(
                         &scope,
                         user_text.as_deref().unwrap_or("approve"),
                     );

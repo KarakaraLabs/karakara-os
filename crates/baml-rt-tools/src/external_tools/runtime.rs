@@ -136,7 +136,7 @@ pub struct SandboxRuntimeSpec {
     pub entrypoint: Vec<String>,
 
     /// Adapter dispatch config authored in metadata and materialized under
-    /// `/etc/agentium/tool-bundle.json` during bind sync.
+    /// `/etc/karakara/tool-bundle.json` during bind sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<SandboxAdapterRuntimeSpec>,
 }

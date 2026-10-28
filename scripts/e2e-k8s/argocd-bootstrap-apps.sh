@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -24,4 +25,4 @@ bash "${ROOT}/scripts/e2e-k8s/render-argocd-apps.sh"
 kubectl apply -f "${ROOT}/deploy/argocd/.rendered/project.yaml"
 kubectl apply -f "${ROOT}/deploy/argocd/.rendered/root-application.yaml"
 
-echo "argocd-bootstrap-apps: applied AppProject + agentium-os Application"
+echo "argocd-bootstrap-apps: applied AppProject + karakara-os Application"

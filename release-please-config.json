@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "package-name": "agentium-os",
+      "package-name": "karakara-os",
       "release-type": "simple",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
@@ -15,12 +15,12 @@
         },
         {
           "type": "yaml",
-          "path": "deploy/helm/agentium-os/Chart.yaml",
+          "path": "deploy/helm/karakara-os/Chart.yaml",
           "jsonpath": "$.version"
         },
         {
           "type": "yaml",
-          "path": "deploy/helm/agentium-os/Chart.yaml",
+          "path": "deploy/helm/karakara-os/Chart.yaml",
           "jsonpath": "$.appVersion"
         }
       ]
