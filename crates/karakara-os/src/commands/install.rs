@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `karakara install agent|tool` — publish source and deploy (or enable tool).
+//! `karak install agent|tool` — publish source and deploy (or enable tool).
 
 use std::path::{Path, PathBuf};
 

@@ -13,11 +13,11 @@ description: Author external Karakara tools — tool-manifest.json, JSON-RPC han
 
 ## Workflow
 
-1. `karakara new tool <name>`
-2. `karakara skill install tool` (this skill)
+1. `karak new tool <name>`
+2. `karak skill install tool` (this skill)
 3. Implement handlers; `karakara check tool <dir>`
-4. `karakara install tool <dir>` — enables on runner registry
-5. Add exact tool name to agent `manifest.json` → `karakara install agent`
+4. `karak install tool <dir>` — enables on runner registry
+5. Add exact tool name to agent `manifest.json` → `karak install agent`
 
 ## Hard rules
 
@@ -29,5 +29,5 @@ description: Author external Karakara tools — tool-manifest.json, JSON-RPC han
 
 | Command | Purpose |
 |---------|---------|
-| `karakara install tool <dir>` | Enable external tool on runner |
+| `karak install tool <dir>` | Enable external tool on runner |
 | `karakara check tool <dir>` | Validate manifest locally |

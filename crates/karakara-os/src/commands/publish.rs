@@ -118,13 +118,13 @@ pub fn run(
     println!("{}", style("To deploy this agent, run:").yellow());
     if authenticated {
         println!(
-            "  karakara deploy --hash {} --url {} --runner-token \"$RUNNER_TOKEN\"",
+            "  karak deploy --hash {} --url {} --runner-token \"$RUNNER_TOKEN\"",
             style(content_hash).cyan(),
             style(runner_url).dim()
         );
     } else {
         println!(
-            "  karakara deploy --hash {} --url {}",
+            "  karak deploy --hash {} --url {}",
             style(content_hash).cyan(),
             style(runner_url).dim()
         );

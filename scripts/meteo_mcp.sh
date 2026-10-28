@@ -34,7 +34,7 @@ Commands:
   prepare   Render config and enable registry schema
   runner    Render config, then start karak serve on $HTTP_BIND
   push      Enable registry schema, then publish+deploy $AGENT_DIR to $RUNNER_URL
-  chat      Run push, then connect to $AGENT_NAME with karakara chat
+  chat      Run push, then connect to $AGENT_NAME with karak chat
   review    Show registry state for the meteo MCP server
 
 Typical flow:

@@ -98,9 +98,9 @@ Binary lands in `target/release/karak`.
 karak serve --serve-http 127.0.0.1:18080 --repository-dir ./.repository --state-dir ./.runner-state
 
 # Terminal 2 — publish + deploy from agent source
-karakara init --with-agent --agent-name my-agent
-karakara install agent --path ./my-agent
-karakara chat --agent my-agent
+karak init --with-agent --agent-name my-agent
+karak install agent --path ./my-agent
+karak chat --agent my-agent
 ```
 
 Further reading:

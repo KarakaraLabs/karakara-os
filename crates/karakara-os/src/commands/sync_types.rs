@@ -31,7 +31,7 @@ pub fn run(path: Option<&str>, runner_token: Option<RunnerToken>) -> Result<()> 
     let resp: serde_json::Value = http.get_json(&url, "sync-types")?;
     if !matches!(resp.get("status").and_then(|v| v.as_str()), Some("ok")) {
         bail!(
-            "Dev artifacts not available (status={}). Run `karakara install agent` after publish.",
+            "Dev artifacts not available (status={}). Run `karak install agent` after publish.",
             resp.get("status")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")

@@ -11,7 +11,7 @@ provenance_coordinator_claude_notion_db := "coordinator-claude-notion-provenance
 # Default HTTP bind for `just` recipes. Port 8080 is a frequent conflict (e.g. inference gateways that 503
 # every route until a huge model loads). To use 8080, change the assignment below to `127.0.0.1:8080`.
 runner_http_bind := "127.0.0.1:18080"
-# Runner: options only — no positional packages. Agents load via `karakara install agent` + POST /deploy.
+# Runner: options only — no positional packages. Agents load via `karak install agent` + POST /deploy.
 runner_base_url := "http://" + runner_http_bind
 repository_url := runner_base_url + "/repository"
 # Seconds to wait for runner HTTP before publish/push (runner init + large restore can exceed 60s).
@@ -28,7 +28,7 @@ otel_protocol := "grpc"
 # Binaries (build with `just build` / `just build-release`; paths default to release).
 # Respect CARGO_TARGET_DIR when present (.env sets it in some dev setups).
 karak_bin := "${CARGO_TARGET_DIR:-target}/release/karak"
-karak_debug_bin := "${CARGO_TARGET_DIR:-target}/debug/karakara"
+karak_debug_bin := "${CARGO_TARGET_DIR:-target}/debug/karak"
 
 # Regenerate `_baml_runtime.baml` + `src/baml-runtime.d.ts` for every fixture under `tests/fixtures/agents/` and agent under `agents/`. Requires all tool crates (same as build-release).
 regen-fixtures:
@@ -109,7 +109,7 @@ build:
     set +a
     cargo build --release -p karakara-os --all-features
 
-# Build the runner in debug mode (binary: target/debug/karakara).
+# Build the runner in debug mode (binary: target/debug/karak).
 build-debug:
     #!/usr/bin/env bash
     set -euo pipefail

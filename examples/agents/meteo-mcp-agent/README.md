@@ -24,7 +24,7 @@ resolver wiring, and live `tools/call` over stdio.
      examples/external-mcp-servers/meteo-mcp/mcp-servers.json.tmpl \
      > ~/.karakara-os/mcp-servers.json
 
-   karakara mcp enable meteo \
+   karak mcp enable meteo \
      --config ~/.karakara-os/mcp-servers.json \
      --repository-url http://127.0.0.1:18080/repository \
      --yes
@@ -48,7 +48,7 @@ BAML_REGISTRY_URL=http://127.0.0.1:18080/repository \
 With `karak`:
 
 ```bash
-karakara build \
+karak build \
   --path examples/agents/meteo-mcp-agent \
   --repository-url http://127.0.0.1:18080/repository
 ```
@@ -61,7 +61,7 @@ projected from the approved registry snapshot (`McpMeteoGetMeteo`,
 ## Run
 
 ```bash
-karakara install agent \
+karak install agent \
   --agent-dir examples/agents/meteo-mcp-agent \
   --repository-url http://127.0.0.1:18080/repository \
   --deploy-url http://127.0.0.1:18080 \

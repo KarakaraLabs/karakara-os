@@ -32,7 +32,7 @@ POST webhook → runner enqueue → producer drain → dispatch → THIS agent.o
 ## Build
 
 ```bash
-karakara build --path examples/agents/deploy-health-consumer
+karak build --path examples/agents/deploy-health-consumer
 ```
 
 ## Run the full two-part demo

@@ -59,7 +59,7 @@ KEEP_DEPLOYED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CLI_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/debug/karakara"
+CLI_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/debug/karak"
 
 RUNNER_STS=""
 RUNNER_POD_0=""

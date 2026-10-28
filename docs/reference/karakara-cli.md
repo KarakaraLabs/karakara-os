@@ -28,7 +28,7 @@ Local dev shortcuts: `just build`, `just runner` (build + start on `127.0.0.1:18
 
 ## Project config
 
-`karakara init` creates `karakara.toml`:
+`karak init` creates `karakara.toml`:
 
 ```toml
 [runner]
@@ -61,40 +61,40 @@ All former `baml-agent-runner` flags are available on `serve` (flattened runner 
 ## Primary developer loop
 
 ```bash
-karakara init --with-agent --agent-name support-bot --tags support,demo
-karakara skill install agent
+karak init --with-agent --agent-name support-bot --tags support,demo
+karak skill install agent
 # edit agent source only (manifest, baml_src/, src/)
-karakara install agent --path ./support-bot
+karak install agent --path ./support-bot
 karakara sync-types
-karakara chat --agent support-bot --instance default
-karakara eval run --min-pass-rate 0.9
+karak chat --agent support-bot --instance default
+karak eval run --min-pass-rate 0.9
 ```
 
 | Command | Purpose |
 |---------|---------|
 | `install agent` | `POST /repository/publish` (server build) + `POST /deploy` |
 | `install tool` | Approve and register an external tool snapshot |
-| `publish` | Publish source only (no deploy); prints `karakara deploy …` hint |
+| `publish` | Publish source only (no deploy); prints `karak deploy …` hint |
 | `deploy --hash HASH --url URL` | Activate a published artifact |
 | `sync-types` | Pull `_baml_runtime.baml` + `baml-runtime.d.ts` from `GET /repository/dev-artifacts` |
 
 ## Scaffolding
 
 ```bash
-karakara new-agent my-agent --template simple --tags support,demo
-karakara new-tool weather --bundle support --lang rust
-karakara new-static-tool github   # platform-internal (monorepo contributors only)
+karak new-agent my-agent --template simple --tags support,demo
+karak new-tool weather --bundle support --lang rust
+karak new-static-tool github   # platform-internal (monorepo contributors only)
 ```
 
-Interactive mode: omit positional names (`karakara new-agent`, `karakara new-tool`, …).
+Interactive mode: omit positional names (`karak new-agent`, `karak new-tool`, …).
 
 ## Eval harness
 
 ```bash
-karakara eval init                    # writes eval/cases.toml from example
-karakara eval run --min-pass-rate 0.9
-karakara eval run --cases lifecycle-demo,smoke-one-shot
-karakara eval report                # prints eval/out/last-run.json
+karak eval init                    # writes eval/cases.toml from example
+karak eval run --min-pass-rate 0.9
+karak eval run --cases lifecycle-demo,smoke-one-shot
+karak eval report                # prints eval/out/last-run.json
 ```
 
 Eval talks to a **running** runner over HTTP:
@@ -123,8 +123,8 @@ Unchanged in role from the former SDK:
 ## Skills
 
 ```bash
-karakara skill install agent   # Cursor skill: agent authoring
-karakara skill install tool    # Cursor skill: external tool authoring
+karak skill install agent   # Cursor skill: agent authoring
+karak skill install tool    # Cursor skill: external tool authoring
 ```
 
 Bundled skills live under `crates/karakara/skills/`.

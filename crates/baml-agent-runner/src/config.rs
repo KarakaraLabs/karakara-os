@@ -90,7 +90,7 @@ pub(crate) struct RunnerConfig {
 #[command(
     about = "Run the Karakara platform. Agents are deployed exclusively via the repository API.",
     long_about = "Starts the platform and restores any previously-deployed agents from --state-dir.\n\
-                  \nTo add agents, use `karakara install agent` or POST /deploy.\n\
+                  \nTo add agents, use `karak install agent` or POST /deploy.\n\
                   Positional package paths are no longer accepted — all deployment goes through the repository.\n\
                   \nDeployment rows (what GET /agents lists after boot) live under --state-dir/state.db.\n\
                   Clearing or resetting --provenance-db alone does not undeploy agents; use POST /undeploy,\n\

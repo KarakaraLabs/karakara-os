@@ -49,7 +49,7 @@ sed "s|\\${ROOT_DIR}|${ROOT_DIR}|g" \
 Then approve the import into the repository registry:
 
 ```bash
-karakara mcp enable meteo \
+karak mcp enable meteo \
   --config ~/.karakara-os/mcp-servers.json \
   --repository-url http://127.0.0.1:18080/repository \
   --yes
@@ -61,7 +61,7 @@ This creates an immutable approved MCP registry snapshot for `meteo` and its
 ## Where this fits
 
 - Snapshot types and the fake stdio fixture model MCP server/tool identity.
-- `karakara mcp enable` imports an approved registry snapshot.
+- `karak mcp enable` imports an approved registry snapshot.
 - The builder projects registry snapshots into the builder catalog (so agents
   can declare `mcp/meteo/get_meteo` in `manifest.json`).
 - The runtime resolver binds package MCP artifacts to a live MCP

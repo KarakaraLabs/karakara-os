@@ -223,13 +223,13 @@ Snapshots are stored in the **embedded repository service** backing the runner. 
 Operator CLI (uses shared builder library; no `baml-agent-builder` subprocess):
 
 ```bash
-karakara mcp enable <server-id> \
+karak mcp enable <server-id> \
   --config ~/.karakara-os/mcp-servers.json \
   --repository-url http://127.0.0.1:18080/repository \
   [--yes] [--runner-token ...]
-karakara mcp list --repository-url http://127.0.0.1:18080/repository
-karakara mcp server meteo --repository-url ...
-karakara mcp tool mcp/meteo/get_meteo --repository-url ...
+karak mcp list --repository-url http://127.0.0.1:18080/repository
+karak mcp server meteo --repository-url ...
+karak mcp tool mcp/meteo/get_meteo --repository-url ...
 ```
 
 - **Mutating** registry enablement may require **`RUNNER_TOKEN` / `--runner-token`** when the runner enforces operator auth.
@@ -269,9 +269,9 @@ Reference example: `examples/agents/meteo-mcp-agent/manifest.json`.
 Developer commands (when using HTTP repository):
 
 ```bash
-karakara build --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
+karak build --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
 
-karakara regen --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
+karak regen --repository-url http://127.0.0.1:18080/repository --path examples/agents/meteo-mcp-agent
 ```
 
 No build/typegen path reads host-local MCP cache env vars; approved snapshots come from repository registry and are projected into `build_dir/mcp/`.

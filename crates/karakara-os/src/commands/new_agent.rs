@@ -250,7 +250,7 @@ pub fn run(
     );
     println!(
         "  3. Run {} to package the agent",
-        style("karakara install agent --path <agent-dir>").dim()
+        style("karak install agent --path <agent-dir>").dim()
     );
 
     Ok(())

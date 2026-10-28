@@ -13,12 +13,12 @@ description: Author Karakara agents — manifest.json, BAML session plans, runGe
 
 ## Workflow
 
-1. `karakara init` then `karakara new agent <name>` (or edit existing source)
-2. `karakara skill install agent` (this skill)
+1. `karak init` then `karak new agent <name>` (or edit existing source)
+2. `karak skill install agent` (this skill)
 3. Edit **source only** — do not hand-edit `_baml_runtime.baml` or `baml-runtime.d.ts`
-4. `karakara install agent` — repository builds and deploys
+4. `karak install agent` — repository builds and deploys
 5. `karakara sync-types` after install for editor types (when available)
-6. `karakara chat` / `karakara eval run` to verify
+6. `karak chat` / `karak eval run` to verify
 
 ## Hard rules
 
@@ -31,6 +31,6 @@ description: Author Karakara agents — manifest.json, BAML session plans, runGe
 
 | Command | Purpose |
 |---------|---------|
-| `karakara install agent` | Publish source + deploy (server builds) |
-| `karakara eval run` | Run eval/cases.toml against deployed agent |
-| `karakara chat` | Interactive smoke test |
+| `karak install agent` | Publish source + deploy (server builds) |
+| `karak eval run` | Run eval/cases.toml against deployed agent |
+| `karak chat` | Interactive smoke test |

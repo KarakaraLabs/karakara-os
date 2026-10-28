@@ -42,7 +42,7 @@ Commands:
   enable    Approve/import the Claude external-tool snapshot into the repository registry
   runner    Prepare the sandbox, then start baml-agent-runner on 127.0.0.1:18080
   push      Enable registry snapshot, then publish/deploy examples/agents/claude-agent
-  chat      Run push, then connect to claude-agent with karakara chat
+  chat      Run push, then connect to claude-agent with karak chat
 
 Typical flow:
   # Terminal 1
