@@ -68,7 +68,7 @@ flowchart LR
 
 ## 3. `mcp-servers.json` location
 
-- **Default:** `$HOME/.agentium-os/mcp-servers.json`
+- **Default:** `$HOME/.karakara-os/mcp-servers.json`
 - **Override:** set `BAML_MCP_SERVERS_CONFIG` to an absolute path (see `baml_rt_mcp::resolver::MCP_SERVERS_CONFIG_ENV`).
 
 The file uses the conventional top-level key **`mcpServers`** (Claude Desktop–compatible shape), extended with **`secrets`** and **`sandbox`** for Karakara.
@@ -224,7 +224,7 @@ Operator CLI (uses shared builder library; no `baml-agent-builder` subprocess):
 
 ```bash
 karakara mcp enable <server-id> \
-  --config ~/.agentium-os/mcp-servers.json \
+  --config ~/.karakara-os/mcp-servers.json \
   --repository-url http://127.0.0.1:18080/repository \
   [--yes] [--runner-token ...]
 karakara mcp list --repository-url http://127.0.0.1:18080/repository

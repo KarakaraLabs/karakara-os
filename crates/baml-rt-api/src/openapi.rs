@@ -126,7 +126,7 @@ pub struct UndeployResponseDto {
 pub struct MigrateRequestDto {
     /// Content hash of the agent to migrate.
     pub hash: String,
-    /// HTTP endpoint of the target runner (e.g. http://runner-1.runner.agentium.svc:18080).
+    /// HTTP endpoint of the target runner (e.g. http://runner-1.runner.karakara.svc:18080).
     pub target_runner_endpoint: String,
 }
 

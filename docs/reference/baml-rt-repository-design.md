@@ -91,7 +91,7 @@ Neither the repository version nor compiled `dist/**` output is included, so
 republishing identical content and toolchain-only rebuilds keep the same
 identity.
 
-`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+`AgentId` is `UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + digest)`.
 `ArtifactHash` covers the stored blob, so two artifacts can share one `AgentId`
 while shipping different executable bytes.
 

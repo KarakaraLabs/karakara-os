@@ -316,7 +316,7 @@ mod tests {
         let cases = [
             AllowCase {
                 label: "valid_cluster",
-                url: "http://runner-0.runner.agentium.svc:18080",
+                url: "http://runner-0.runner.karakara.svc:18080",
                 hint: "expected Ok",
             },
             AllowCase {

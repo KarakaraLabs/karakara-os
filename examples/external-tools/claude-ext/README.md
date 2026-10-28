@@ -91,7 +91,7 @@ Helper scripts are scaffolded at:
 ```
 
 This script wraps `sandbox-bind-sync` to build `adapter/Dockerfile`, export bind
-rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/agentium/tool-bundle.json`),
+rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/karakara/tool-bundle.json`),
 and run `check-external-tool`.
 
 > Bind rootfs mode copies filesystem contents only. Docker image config

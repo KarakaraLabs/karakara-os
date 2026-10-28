@@ -42,7 +42,7 @@ spec:
             - "0.0.0.0:18080"
             - --surreal-endpoint
             # Production deployments should use wss:// with TLS termination.
-            - "ws://surrealdb.agentium.svc:8000"
+            - "ws://surrealdb.karakara.svc:8000"
             - --state-dir
             - /data/runner-state
             - --repository-dir
@@ -55,7 +55,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: RUNNER_ENDPOINT
-              value: "http://$(POD_NAME).runner.agentium.svc:18080"
+              value: "http://$(POD_NAME).runner.karakara.svc:18080"
             - name: SURREAL_USER
               valueFrom:
                 secretKeyRef:

@@ -19,13 +19,13 @@ resolver wiring, and live `tools/call` over stdio.
 
    ```bash
    ROOT_DIR=$(git rev-parse --show-toplevel)
-   mkdir -p ~/.agentium-os
+   mkdir -p ~/.karakara-os
    sed "s|\\${ROOT_DIR}|${ROOT_DIR}|g" \
      examples/external-mcp-servers/meteo-mcp/mcp-servers.json.tmpl \
-     > ~/.agentium-os/mcp-servers.json
+     > ~/.karakara-os/mcp-servers.json
 
    karakara mcp enable meteo \
-     --config ~/.agentium-os/mcp-servers.json \
+     --config ~/.karakara-os/mcp-servers.json \
      --repository-url http://127.0.0.1:18080/repository \
      --yes
    ```

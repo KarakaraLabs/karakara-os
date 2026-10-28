@@ -9,7 +9,7 @@
 //! `tool-manifest.json`:
 //! - writes a sibling `tool-manifest.lock.json` carrying the canonical
 //!   absolute rootfs path;
-//! - writes the in-rootfs sidecar bundle at `etc/agentium/tool-bundle.json`.
+//! - writes the in-rootfs sidecar bundle at `etc/karakara/tool-bundle.json`.
 //!
 //! The committed source `tool-manifest.json` is **never** mutated, so example
 //! tools stay portable across contributors. Optionally builds/exports the

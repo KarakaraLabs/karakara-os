@@ -95,7 +95,7 @@ the persisted deployment artifact hash against the repository entry before
 booting.
 
 Cluster placements require an artifact hash. Forwarded A2A requests carry
-`X-Agentium-Expected-Artifact-Hash`; the receiving runner compares it with the
+`X-Karakara-Expected-Artifact-Hash`; the receiving runner compares it with the
 exact `BootedAgent` selected for dispatch before creating a task, and returns
 `412 Precondition Failed` on mismatch.
 `AutoGenerate` identity is limited to ephemeral tests and development agents;

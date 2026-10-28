@@ -207,7 +207,7 @@ Helper scripts are scaffolded at:
 
 This script wraps `sandbox-bind-sync` to build `adapter/Dockerfile`, export bind
 rootfs, write `tool-manifest.lock.json`, materialize adapter sidecar bundle
-(`/etc/agentium/tool-bundle.json`), and run `check-external-tool`.
+(`/etc/karakara/tool-bundle.json`), and run `check-external-tool`.
 
 > Bind rootfs mode copies filesystem contents only. Docker image config
 > (like `ENV TOOL_CMD=...`) is not guaranteed at runtime. The generated
@@ -228,7 +228,7 @@ raw JSON-RPC to the child on the inside). It forwards `tool/describe`, `tool/sch
 and `tool/invoke` to your language source, which owns the live schema. Edit
 `main.py` / `src/main.rs` / etc., not the shim, when changing contract.
 
-`tool-bundle.json` (materialized at `/etc/agentium/tool-bundle.json`) tells the shim
+`tool-bundle.json` (materialized at `/etc/karakara/tool-bundle.json`) tells the shim
 which child command to launch. It does not contain schema.
 
 Example probes (all modes exercise the framed adapter end-to-end):

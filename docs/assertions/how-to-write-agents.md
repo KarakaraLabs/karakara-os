@@ -657,7 +657,7 @@ different questions, and only one of them is the agent's identity.
 | `AgentIdentityDigest` → `AgentId` | Behavior-defining packaged content | Authored source changes |
 | `ArtifactHash` | Every byte of the stored `.tar.gz` | The build or packaging output changes |
 
-`AgentId` is `UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + digest)`.
+`AgentId` is `UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + digest)`.
 It is stable across boots, replicas, relocations, and republishes of identical
 content. That stability is what lets history stay attached to one agent.
 

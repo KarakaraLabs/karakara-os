@@ -73,7 +73,7 @@ pub fn discover_config(explicit: Option<&Path>) -> Result<(KarakaraConfig, Optio
         return Ok((cfg, Some(local)));
     }
     if let Some(home) = dirs::home_dir() {
-        let global = home.join(".config/agentium/config.toml");
+        let global = home.join(".config/karakara/config.toml");
         if global.is_file() {
             let cfg = load_file(&global)?;
             return Ok((cfg, Some(global)));

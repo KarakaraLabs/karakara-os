@@ -16,7 +16,7 @@ use baml_rt_tools::mcp_snapshot::McpServerSnapshot;
 pub struct McpRegistryEnableOptions<'a> {
     /// Server id to enable. Must match an entry in the MCP servers config.
     pub server_id: &'a str,
-    /// Path to mcp-servers.json. Defaults to `$HOME/.agentium-os/mcp-servers.json`.
+    /// Path to mcp-servers.json. Defaults to `$HOME/.karakara-os/mcp-servers.json`.
     pub config_path: Option<&'a Path>,
     /// Repository URL where `/mcp/snapshots/import` is mounted.
     pub repository_url: &'a str,
@@ -145,7 +145,7 @@ fn mcp_default_config_path() -> Result<std::path::PathBuf> {
     let home = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("HOME is not set; pass --config explicitly"))?;
-    Ok(home.join(".agentium-os").join("mcp-servers.json"))
+    Ok(home.join(".karakara-os").join("mcp-servers.json"))
 }
 
 /// Import one MCP server snapshot from config using live MCP discovery.

@@ -246,13 +246,13 @@ pub async fn forward_stream_request(
             propagator.inject_context(&ctx, &mut injector);
         });
         request.headers_mut().insert(
-            "x-agentium-expected-agent-id",
+            "x-karakara-expected-agent-id",
             reqwest::header::HeaderValue::from_str(&expected_agent_id).map_err(|e| {
                 BamlRtError::InvalidArgument(format!("invalid expected agent id header: {e}"))
             })?,
         );
         request.headers_mut().insert(
-            "x-agentium-expected-artifact-hash",
+            "x-karakara-expected-artifact-hash",
             reqwest::header::HeaderValue::from_str(&expected_artifact_hash).map_err(|e| {
                 BamlRtError::InvalidArgument(format!("invalid expected artifact hash header: {e}"))
             })?,

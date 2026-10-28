@@ -4,7 +4,7 @@
 Reads one framed JSON-RPC request from stdin and returns one framed response.
 
 All methods (`tool/describe`, `tool/schema`, `tool/invoke`) are delegated to the
-child command declared in `/etc/agentium/tool-bundle.json` (`runtime.command`).
+child command declared in `/etc/karakara/tool-bundle.json` (`runtime.command`).
 The child tool is the sole source of truth for its own schema; this shim never
 reads or serves a schema from the sidecar bundle.
 """
@@ -21,7 +21,7 @@ METHOD_DESCRIBE = "tool/describe"
 METHOD_SCHEMA = "tool/schema"
 METHOD_INVOKE = "tool/invoke"
 SUPPORTED_METHODS = [METHOD_DESCRIBE, METHOD_SCHEMA, METHOD_INVOKE]
-SIDECAR_BUNDLE = "/etc/agentium/tool-bundle.json"
+SIDECAR_BUNDLE = "/etc/karakara/tool-bundle.json"
 MAX_SIDECAR_BYTES = 1_048_576
 MAX_STATIC_RESPONSE_BYTES = 1_048_576
 DEFAULT_SCHEMA_CONTENT_TYPE = "application/schema+json"

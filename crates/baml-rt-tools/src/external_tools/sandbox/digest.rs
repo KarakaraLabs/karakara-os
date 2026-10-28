@@ -102,7 +102,7 @@ fn collect_entries(root: &Path, dir: &Path, out: &mut Vec<(String, EntryKind)>) 
 }
 
 fn should_exclude_from_bind_digest(rel: &str) -> bool {
-    rel == "etc/agentium" || rel.starts_with("etc/agentium/")
+    rel == "etc/karakara" || rel.starts_with("etc/karakara/")
 }
 
 #[cfg(unix)]

@@ -64,7 +64,7 @@ A helper script is scaffolded at `./setup_bind_sandbox.sh`.
 ```
 
 This script wraps `sandbox-bind-sync` to build `adapter/Dockerfile`, export bind
-rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/agentium/tool-bundle.json`),
+rootfs, write the local lock file, materialize adapter sidecar bundle (`/etc/karakara/tool-bundle.json`),
 run `check-external-tool`, and run a framed
 `tool/describe` smoke-test against rootfs `/tool-adapter`.
 

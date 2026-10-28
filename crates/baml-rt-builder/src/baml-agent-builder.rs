@@ -134,7 +134,7 @@ enum Commands {
     McpRegistryEnable {
         /// Server id to enable (must match an entry under `mcpServers` in the config file).
         server_id: String,
-        /// Path to mcp-servers.json (default: $HOME/.agentium-os/mcp-servers.json).
+        /// Path to mcp-servers.json (default: $HOME/.karakara-os/mcp-servers.json).
         #[arg(long)]
         config: Option<PathBuf>,
         /// Repository URL (e.g. http://127.0.0.1:18080/repository).

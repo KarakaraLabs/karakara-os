@@ -95,7 +95,7 @@ Map channel to project metadata (repo path, ClickUp list):
 ```bash
 cargo run -p baml-task-daemon -- run \
   --channel karakara-eng \
-  --project-config .agentium/task-daemon-projects.json
+  --project-config .karakara/task-daemon-projects.json
 ```
 
 Enable ClickUp sink:

@@ -363,7 +363,7 @@ pub enum Commands {
         /// Output path for generated tool-bundle.json.
         /// Relative paths resolve against --tool-dir.
         ///
-        /// Default: adapter/sidecars/etc/agentium/tool-bundle.json
+        /// Default: adapter/sidecars/etc/karakara/tool-bundle.json
         #[arg(long)]
         output: Option<String>,
 

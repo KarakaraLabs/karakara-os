@@ -7,8 +7,8 @@ metadata:
 spec:
   project: karakara
   source:
-    repoURL: __AGENTIUM_GIT_REPO__
-    targetRevision: __AGENTIUM_GIT_REVISION__
+    repoURL: __KARAKARA_GIT_REPO__
+    targetRevision: __KARAKARA_GIT_REVISION__
     path: deploy/helm/karakara-os
     helm:
       releaseName: karakara

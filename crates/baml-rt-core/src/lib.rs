@@ -123,8 +123,8 @@ pub use host_wire::{
     wire as host_wire_versions,
 };
 pub use ids::{
-    AGENTIUM_AGENT_NAMESPACE, ActivityAnchorId, AgentId, ArtifactId, ContextId, CorrelationId,
-    ExecutionSessionId, IntentId, MessageId, PlanId, PlanStepId, TaskId,
+    ActivityAnchorId, AgentId, ArtifactId, ContextId, CorrelationId, ExecutionSessionId, IntentId,
+    KARAKARA_AGENT_NAMESPACE, MessageId, PlanId, PlanStepId, TaskId,
 };
 pub use ingress_store::{IngressId, IngressItem, IngressStore, ingress_store_not_installed};
 pub use json::to_json_value;

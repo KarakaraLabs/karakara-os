@@ -23,13 +23,13 @@ pub use baml_rt_id::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// RFC 4122 URL namespace. Used only to derive [`AGENTIUM_AGENT_NAMESPACE`].
+/// RFC 4122 URL namespace. Used only to derive [`KARAKARA_AGENT_NAMESPACE`].
 #[cfg(test)]
 const NAMESPACE_URL: Uuid = uuid::uuid!("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
 
 /// Fixed domain separator for every Karakara agent identity.
-/// UUIDv5(`NAMESPACE_URL`, `"urn:agentium:agent-id"`).
-pub const AGENTIUM_AGENT_NAMESPACE: Uuid = uuid::uuid!("901413be-e052-5702-98d9-9e382499c0b0");
+/// UUIDv5(`NAMESPACE_URL`, `"urn:karakara:agent-id"`).
+pub const KARAKARA_AGENT_NAMESPACE: Uuid = uuid::uuid!("fd8b636a-b69b-5456-94cb-35d00403647b");
 
 macro_rules! define_id_type {
     ($(#[$doc:meta])* $name:ident) => {
@@ -279,8 +279,8 @@ impl AgentId {
     pub fn from_identity_digest(digest: &AgentIdentityDigest) -> Self {
         Self(
             Uuid::new_v5(
-                &AGENTIUM_AGENT_NAMESPACE,
-                format!("urn:agentium:agent-id:{}", digest.as_str()).as_bytes(),
+                &KARAKARA_AGENT_NAMESPACE,
+                format!("urn:karakara:agent-id:{}", digest.as_str()).as_bytes(),
             )
             .to_string(),
         )
@@ -455,8 +455,8 @@ mod tests {
     #[test]
     fn namespace_matches_documented_derivation() {
         assert_eq!(
-            AGENTIUM_AGENT_NAMESPACE,
-            Uuid::new_v5(&NAMESPACE_URL, b"urn:agentium:agent-id"),
+            KARAKARA_AGENT_NAMESPACE,
+            Uuid::new_v5(&NAMESPACE_URL, b"urn:karakara:agent-id"),
         );
     }
 

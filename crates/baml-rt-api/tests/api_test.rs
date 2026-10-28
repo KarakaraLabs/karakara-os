@@ -3410,7 +3410,7 @@ async fn a2a_artifact_precondition_mismatch_returns_412() {
                 .uri("/agents/pkg/a2a")
                 .header("content-type", "application/json")
                 .header(
-                    "x-agentium-expected-artifact-hash",
+                    "x-karakara-expected-artifact-hash",
                     ArtifactHash::from_bytes(b"different artifact").as_str(),
                 )
                 .body(Body::from(
@@ -3446,9 +3446,9 @@ async fn a2a_same_agent_with_different_artifact_returns_412() {
                 .method("POST")
                 .uri("/agents/pkg/a2a")
                 .header("content-type", "application/json")
-                .header("x-agentium-expected-agent-id", agent_id.as_str())
+                .header("x-karakara-expected-agent-id", agent_id.as_str())
                 .header(
-                    "x-agentium-expected-artifact-hash",
+                    "x-karakara-expected-artifact-hash",
                     ArtifactHash::from_bytes(b"different artifact").as_str(),
                 )
                 .body(Body::from(

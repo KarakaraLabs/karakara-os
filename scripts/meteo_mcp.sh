@@ -12,7 +12,7 @@ ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SERVER_ID="meteo"
 SERVER_DIR="examples/external-mcp-servers/meteo-mcp"
 SERVER_CONFIG_TMPL="$SERVER_DIR/mcp-servers.json.tmpl"
-SERVER_CONFIG="$HOME/.agentium-os/mcp-servers.json"
+SERVER_CONFIG="$HOME/.karakara-os/mcp-servers.json"
 AGENT_DIR="examples/agents/meteo-mcp-agent"
 AGENT_NAME="meteo-mcp-agent"
 RUNNER_URL="${RUNNER_URL:-http://127.0.0.1:18080}"
@@ -52,10 +52,10 @@ Environment:
 
 Notes:
   - The registry is now the schema source of truth for this demo.
-  - ~/.agentium-os/mcp-servers.json remains local runtime config: command,
+  - ~/.karakara-os/mcp-servers.json remains local runtime config: command,
     args, non-secret env, and secret env var names.
   - Schema snapshots are written to the repository registry, not
-    ~/.agentium-os/mcp.
+    ~/.karakara-os/mcp.
   - For the normal two-terminal demo, start runner first, then run chat/push so
     the repository endpoint is available for MCP enable + publish.
 EOF

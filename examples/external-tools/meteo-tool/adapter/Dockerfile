@@ -8,7 +8,7 @@ WORKDIR /opt/tool
 COPY main.py /opt/tool/main.py
 COPY tool-schema.json /opt/tool/tool-schema.json
 COPY adapter/tool-adapter /tool-adapter
-COPY adapter/sidecars/etc/agentium/tool-bundle.json /etc/agentium/tool-bundle.json
+COPY adapter/sidecars/etc/karakara/tool-bundle.json /etc/karakara/tool-bundle.json
 
 RUN chmod +x /tool-adapter /opt/tool/main.py
 

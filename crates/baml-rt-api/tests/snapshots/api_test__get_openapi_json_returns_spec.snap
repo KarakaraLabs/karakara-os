@@ -4189,7 +4189,7 @@ expression: snapshot
             },
             "target_runner_endpoint": {
               "type": "string",
-              "description": "HTTP endpoint of the target runner (e.g. http://runner-1.runner.agentium.svc:18080)."
+              "description": "HTTP endpoint of the target runner (e.g. http://runner-1.runner.karakara.svc:18080)."
             }
           }
         },

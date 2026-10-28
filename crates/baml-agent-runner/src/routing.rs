@@ -653,11 +653,11 @@ mod tests {
             }
             let request_text = String::from_utf8_lossy(&acc).to_ascii_lowercase();
             assert!(
-                request_text.contains("x-agentium-expected-artifact-hash:"),
+                request_text.contains("x-karakara-expected-artifact-hash:"),
                 "forwarded request must carry the placement artifact precondition: {request_text}"
             );
             assert!(
-                request_text.contains("x-agentium-expected-agent-id:"),
+                request_text.contains("x-karakara-expected-agent-id:"),
                 "forwarded request must carry the placement agent precondition: {request_text}"
             );
 

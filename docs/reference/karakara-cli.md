@@ -44,7 +44,7 @@ default_agent = "my-agent"
 agent_path = "./my-agent"
 ```
 
-Resolution order: `--config` flag → `./agentium.toml` → `~/.config/agentium/config.toml`.
+Resolution order: `--config` flag → `./karakara.toml` → `~/.config/karakara/config.toml`.
 
 ```bash
 karakara config show
@@ -103,7 +103,7 @@ karakara eval report                # prints eval/out/last-run.json
 
 Eval talks to a **running** runner over HTTP:
 
-1. **`POST /eval/sessions`** (operator auth) — optional ephemeral model override scope; eval run sends `X-Agentium-Eval-Session` on A2A turns.
+1. **`POST /eval/sessions`** (operator auth) — optional ephemeral model override scope; eval run sends `X-Karakara-Eval-Session` on A2A turns.
 2. **`POST /agents/{agent}/a2a`** — chat turns via `message.sendStream` (JSON-RPC `id` must use `corr-<millis>-<counter>` format).
 3. **`POST /events/publish`** — ingress turns (fixture JSON on disk).
 

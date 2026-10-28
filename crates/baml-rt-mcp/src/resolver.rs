@@ -369,7 +369,7 @@ impl From<HttpLaunchInput<'_>> for HttpLaunchConfig {
 pub const MCP_SERVERS_CONFIG_ENV: &str = "BAML_MCP_SERVERS_CONFIG";
 
 /// Default `mcp-servers.json` path when the env-var override is unset.
-const MCP_SERVERS_CONFIG_DEFAULT: &str = ".agentium-os/mcp-servers.json";
+const MCP_SERVERS_CONFIG_DEFAULT: &str = ".karakara-os/mcp-servers.json";
 
 /// Build an `McpResolver` from a registry-derived snapshot cache and the
 /// operator's launch config (`mcp-servers.json`).

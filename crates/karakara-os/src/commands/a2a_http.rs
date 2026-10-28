@@ -28,7 +28,7 @@ impl<'a> AuthenticatedHttp<'a> {
             req = req.header("X-Runner-Token", token.as_str());
         }
         if let Some(session) = self.eval_session {
-            req = req.header("X-Agentium-Eval-Session", session);
+            req = req.header("X-Karakara-Eval-Session", session);
         }
         req
     }

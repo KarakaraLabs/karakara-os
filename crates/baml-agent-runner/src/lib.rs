@@ -117,12 +117,12 @@ fn validate_cluster_endpoint(endpoint: &str) -> anyhow::Result<()> {
             Some("0.0.0.0") => anyhow::bail!(
                 "cluster endpoint {endpoint} uses 0.0.0.0 which is not routable from other pods; \
                  set RUNNER_ENDPOINT (or --runner-endpoint) to a pod-specific address \
-                 (e.g. http://$(POD_NAME).runner.agentium.svc:18080)"
+                 (e.g. http://$(POD_NAME).runner.karakara.svc:18080)"
             ),
             Some("127.0.0.1") | Some("localhost") => anyhow::bail!(
                 "cluster endpoint {endpoint} uses a loopback address which is not routable from \
                  other pods; set RUNNER_ENDPOINT (or --runner-endpoint) to a pod-specific address \
-                 (e.g. http://$(POD_NAME).runner.agentium.svc:18080)"
+                 (e.g. http://$(POD_NAME).runner.karakara.svc:18080)"
             ),
             _ => {}
         }
@@ -2365,7 +2365,7 @@ globalThis.onChatMessage = async function(_message) {
 
     #[test]
     fn cluster_endpoint_accepts_pod_dns() {
-        let result = super::validate_cluster_endpoint("http://runner-0.runner.agentium.svc:18080");
+        let result = super::validate_cluster_endpoint("http://runner-0.runner.karakara.svc:18080");
         assert!(result.is_ok());
     }
 

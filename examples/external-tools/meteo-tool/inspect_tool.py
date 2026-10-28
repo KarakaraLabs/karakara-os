@@ -8,7 +8,7 @@
 """Inspect tool adapter contract.
 
 For `describe` and `schema`, this script reads the bind runtime artifact:
-  <rootfs>/etc/agentium/tool-bundle.json
+  <rootfs>/etc/karakara/tool-bundle.json
 
 For `invoke`, it sends framed TSRPC JSON-RPC to an adapter command you provide
 after `--`.

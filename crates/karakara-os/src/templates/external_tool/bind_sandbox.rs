@@ -29,7 +29,7 @@ pub fn files(ctx: &ScaffoldContext<'_>) -> Vec<GeneratedFile> {
         GeneratedFile::new("adapter/Dockerfile", dockerfile(ctx)),
         GeneratedFile::new("adapter/tool-adapter", adapter_script(ctx)).executable(),
         GeneratedFile::new(
-            "adapter/sidecars/etc/agentium/tool-bundle.json",
+            "adapter/sidecars/etc/karakara/tool-bundle.json",
             scaffold_sidecar_bundle(ctx),
         ),
     ]
@@ -330,7 +330,7 @@ FROM python:3.12-slim
 WORKDIR /opt/tool
 COPY main.py /opt/tool/main.py
 COPY adapter/tool-adapter /tool-adapter
-COPY adapter/sidecars/etc/agentium/tool-bundle.json /etc/agentium/tool-bundle.json
+COPY adapter/sidecars/etc/karakara/tool-bundle.json /etc/karakara/tool-bundle.json
 
 RUN chmod +x /tool-adapter /opt/tool/main.py
 
@@ -351,7 +351,7 @@ RUN apt-get update \
 WORKDIR /opt/tool
 COPY tool-server /opt/tool/tool-server
 COPY adapter/tool-adapter /tool-adapter
-COPY adapter/sidecars/etc/agentium/tool-bundle.json /etc/agentium/tool-bundle.json
+COPY adapter/sidecars/etc/karakara/tool-bundle.json /etc/karakara/tool-bundle.json
 
 RUN chmod +x /tool-adapter /opt/tool/tool-server
 
@@ -377,7 +377,7 @@ RUN apt-get update \
 WORKDIR /opt/tool
 COPY --from=builder /build/target/release/external-tool /opt/tool/external-tool
 COPY adapter/tool-adapter /tool-adapter
-COPY adapter/sidecars/etc/agentium/tool-bundle.json /etc/agentium/tool-bundle.json
+COPY adapter/sidecars/etc/karakara/tool-bundle.json /etc/karakara/tool-bundle.json
 
 RUN chmod +x /tool-adapter /opt/tool/external-tool
 
@@ -404,7 +404,7 @@ RUN apt-get update \
 WORKDIR /opt/tool
 COPY --from=builder /build/dist /opt/tool/dist
 COPY adapter/tool-adapter /tool-adapter
-COPY adapter/sidecars/etc/agentium/tool-bundle.json /etc/agentium/tool-bundle.json
+COPY adapter/sidecars/etc/karakara/tool-bundle.json /etc/karakara/tool-bundle.json
 
 RUN chmod +x /tool-adapter
 
@@ -422,7 +422,7 @@ fn adapter_script(ctx: &ScaffoldContext<'_>) -> String {
 Reads one framed JSON-RPC request from stdin and returns one framed response.
 
 All methods (`tool/describe`, `tool/schema`, `tool/invoke`) are delegated to the
-child command declared in `/etc/agentium/tool-bundle.json` (`runtime.command`).
+child command declared in `/etc/karakara/tool-bundle.json` (`runtime.command`).
 The child tool is the sole source of truth for its own schema; this shim never
 reads or serves a schema from the sidecar bundle.
 """
@@ -439,7 +439,7 @@ METHOD_DESCRIBE = {method_describe:?}
 METHOD_SCHEMA = {method_schema:?}
 METHOD_INVOKE = {method_invoke:?}
 SUPPORTED_METHODS = [METHOD_DESCRIBE, METHOD_SCHEMA, METHOD_INVOKE]
-SIDECAR_BUNDLE = "/etc/agentium/tool-bundle.json"
+SIDECAR_BUNDLE = "/etc/karakara/tool-bundle.json"
 MAX_SIDECAR_BYTES = 1_048_576
 MAX_STATIC_RESPONSE_BYTES = 1_048_576
 DEFAULT_SCHEMA_CONTENT_TYPE = "application/schema+json"

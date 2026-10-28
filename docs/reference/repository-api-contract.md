@@ -24,7 +24,7 @@ repository writes the assigned version, so it changes on every publish.
 covers the manifest projection, authored `src/**/*.ts`, authored and generated
 `baml_src/**/*.baml`, the rendered tool-schema catalog, and
 `session_plan_functions.json`. `AgentId` is derived from it as
-`UUIDv5(AGENTIUM_AGENT_NAMESPACE, "urn:agentium:agent-id:" + identity_digest)`.
+`UUIDv5(KARAKARA_AGENT_NAMESPACE, "urn:karakara:agent-id:" + identity_digest)`.
 Republishing identical content keeps the same `AgentId`.
 
 `artifact_hash` is the SHA-256 of the stored package bytes. Build the blob before
