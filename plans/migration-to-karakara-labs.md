@@ -98,10 +98,10 @@ Still to decide or find out.
 
   ```
   SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
-SPDX-FileCopyrightText: 2026 Karakara Labs
   SPDX-FileCopyrightText: 2026 Karakara Labs
   SPDX-License-Identifier: Apache-2.0
   ```
+- [x] Mechanical rebrand applied: `baml-rt-semiotic` → `baml-rt-karakara`, `agentium` crate → `karakara-os` (binary `karak`), brand text/URLs/images → karakara / karakara-labs, and the Karakara Labs SPDX line added to touched files. `cargo check --workspace`, `cargo fmt`, and the regenerated OpenAPI snapshot pass.
 - [ ] Check dependency licenses across the workspace, including vendored deps.
 - [ ] Scan git history for leaked secrets before making the fork public.
 - [ ] Review employment and IP assignment agreements. Confirm Semiotic AI, Inc. owned our work as work-for-hire.
