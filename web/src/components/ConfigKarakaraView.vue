@@ -213,7 +213,7 @@ const systemPosture = computed(() => effective.value?.system.posture ?? "off");
         Per-agent overrides inherit the system default unless customized below.
         <a
           class="config-karakara-doc-link"
-          href="https://github.com/semiotic-agentium/agentium-os/blob/main/docs/assertions/semiotic-gate.md"
+          href="https://github.com/karakara-labs/karakara-os/blob/main/docs/assertions/karakara-gate.md"
           target="_blank"
           rel="noopener noreferrer"
         >How grounding works</a>

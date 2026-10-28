@@ -68,7 +68,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # --- Vendored third-party model snapshots (HuggingFace cache layout) ---
 # Embedding/reranker models cached for offline use. Upstream-licensed under
-# Apache-2.0; copyright remains with the model authors, not Semiotic AI.
+# Apache-2.0; copyright remains with the model authors, not Karakara Labs.
 [[annotations]]
 path = "models/fastembed/models--Alibaba-NLP--gte-base-en-v1.5/**"
 precedence = "override"

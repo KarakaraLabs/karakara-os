@@ -152,7 +152,7 @@ language: `//`, `#`, `<!-- -->`):
 Generate headers with the `reuse` CLI:
 
 ```bash
-reuse annotate --copyright "Semiotic AI, Inc." --license Apache-2.0 \
+reuse annotate --copyright "Karakara Labs" --license Apache-2.0 \
   --year 2026 --merge-copyrights path/to/new_file.rs
 ```
 

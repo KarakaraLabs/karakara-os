@@ -156,7 +156,7 @@ If you see this error from `/sql`:
 {"kind":"Internal","result":"There was a problem with the key-value store: Couldn't write to a read only transaction","status":"ERR"}
 ```
 
-…the `Surreal-NS:` header (or `--namespace` flag) is targeting a namespace that doesn't exist. SurrealDB v3 opens a read-only transaction for `SELECT` and can't auto-`DEFINE NAMESPACE` to satisfy the resolution, surfacing the storage-layer error instead of a clearer `NamespaceNotFound`. Check the spelling against the table above. This was issue [#388](https://github.com/semiotic-agentium/agentium-os/issues/388).
+…the `Surreal-NS:` header (or `--namespace` flag) is targeting a namespace that doesn't exist. SurrealDB v3 opens a read-only transaction for `SELECT` and can't auto-`DEFINE NAMESPACE` to satisfy the resolution, surfacing the storage-layer error instead of a clearer `NamespaceNotFound`. Check the spelling against the table above. This was issue [#388](https://github.com/karakara-labs/karakara-os/issues/388).
 
 ## What this chart does not cover
 

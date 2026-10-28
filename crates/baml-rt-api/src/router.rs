@@ -636,7 +636,7 @@ pub fn api_router_with_services_and_deploy(
         );
         let mut contact = Contact::new();
         contact.name = Some("Karakara OS".to_string());
-        contact.url = Some("https://github.com/semiotic-agentium/agentium-os".to_string());
+        contact.url = Some("https://github.com/karakara-labs/karakara-os".to_string());
         info.contact = Some(contact);
         info.license = Some(License::new("Apache-2.0"));
         openapi.info = info;

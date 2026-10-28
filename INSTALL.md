@@ -47,7 +47,7 @@ just check-host
 
 ## Option A — GitHub Release (recommended)
 
-1. Open [Releases](https://github.com/semiotic-agentium/agentium-os/releases) and pick a version.
+1. Open [Releases](https://github.com/karakara-labs/karakara-os/releases) and pick a version.
 2. Download the tarball for your architecture.
 3. Verify the checksum.
 4. Extract and install:
@@ -72,7 +72,7 @@ karak --version
 Requires Rust and [build prerequisites](#build-from-source-cargo-install-local-clone). Prefer Option A for end users.
 
 ```bash
-cargo install --git https://github.com/semiotic-agentium/agentium-os --tag vX.Y.Z \
+cargo install --git https://github.com/karakara-labs/karakara-os --tag vX.Y.Z \
   --features http-tools,memory,sandbox-provider,dev-tools karakara
 ```
 

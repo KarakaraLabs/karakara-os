@@ -65,11 +65,11 @@ resolver = "2"
 [workspace.package]
 version = "0.2.2"
 edition = "2024"
-authors = ["Semiotic AI, Inc."]
+authors = ["Karakara Labs"]
 description = "Karakara OS — a Rust runtime for executing BAML functions, running JavaScript agents, and serving the A2A protocol"
 license = "Apache-2.0"
-repository = "https://github.com/semiotic-agentium/agentium-os"
-homepage = "https://semiotic.ai"
+repository = "https://github.com/karakara-labs/karakara-os"
+homepage = "https://karakara.dev"
 
 [workspace.dependencies]
 # Core
