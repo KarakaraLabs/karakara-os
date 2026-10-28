@@ -13,7 +13,7 @@ use std::{
 };
 
 use baml_rt_core::context::RuntimeScope;
-use baml_rt_tools::ToolStep;
+use baml_rt_tools::{ToolFailure, ToolStep};
 use dashmap::DashMap;
 use quickjs_runtime::facades::QuickJsRuntimeFacade;
 use serde_json::Value;
@@ -213,6 +213,21 @@ pub(crate) fn empty_open_input() -> Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
+/// Project a [`ToolFailure`] into the public error shape shared by tool steps
+/// and one-shot outcomes. Keeping this in one place prevents new `ToolFailure`
+/// fields from drifting between the session and one-shot APIs.
+pub(crate) fn tool_failure_to_js(error: &ToolFailure) -> Value {
+    serde_json::json!({
+        "kind": format!("{:?}", error.kind),
+        "message": error.message,
+        "retryable": bool::from(error.retryability),
+        "disposition": error.classified.disposition,
+        "code": error.classified.code,
+        "hint": error.classified.hint,
+        "retry_after_ms": error.classified.retry_after_ms,
+    })
+}
+
 /// Convert a tool step to a JSON value for JS.
 pub(crate) fn tool_step_to_value(step: ToolStep) -> Value {
     match step {
@@ -223,17 +238,8 @@ pub(crate) fn tool_step_to_value(step: ToolStep) -> Value {
             serde_json::json!({ "status": "suspended", "output": output })
         }
         ToolStep::Done { output } => serde_json::json!({ "status": "done", "output": output }),
-        ToolStep::Error { error } => serde_json::json!({
-            "status": "error",
-            "error": {
-                "kind": format!("{:?}", error.kind),
-                "message": error.message,
-                "retryable": bool::from(error.retryability),
-                "disposition": error.classified.disposition,
-                "code": error.classified.code,
-                "hint": error.classified.hint,
-                "retry_after_ms": error.classified.retry_after_ms,
-            }
-        }),
+        ToolStep::Error { error } => {
+            serde_json::json!({ "status": "error", "error": tool_failure_to_js(&error) })
+        }
     }
 }

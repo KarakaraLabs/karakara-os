@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "name": "typesafe-alert-routing",
+  "entry_point": "src/index.ts",
+  "signature": "typesafe-alert-routing@1.0.0",
+  "tools": [
+    "typesafe/system_one"
+  ],
+  "discovery": {
+    "description": "Read-only product fixture: Jev-based alert routing with abstention and allowlist enforcement",
+    "capabilities": [
+      "typesafe:system-one"
+    ]
+  },
+  "tags": [
+    "fixture",
+    "typesafe"
+  ]
+}

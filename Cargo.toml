@@ -140,6 +140,7 @@ surrealdb = { version = "3", default-features = false, features = ["kv-mem", "kv
 dashmap = "6"
 axum = "0.8"
 http = "1"
+httpdate = "1"
 bytes = "1"
 # Testing / dev
 paste = "1"

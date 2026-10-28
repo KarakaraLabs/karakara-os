@@ -19,7 +19,7 @@ use baml_rt_core::{
 use baml_rt_interceptor::ToolCallContext;
 use baml_rt_observability::metrics;
 use baml_rt_provenance::events::{BAML_PROV_RESERVED_TOOL_COMPLETION_ANCHOR, ReservedAnchor};
-use baml_rt_tools::{ToolFailure, ToolName, ToolSessionId, ToolStep};
+use baml_rt_tools::{ToolCapability, ToolFailure, ToolName, ToolSessionId, ToolStep};
 use dashmap::DashMap;
 use serde_json::{Map, Value};
 
@@ -73,6 +73,16 @@ pub(crate) struct ToolSessionScope {
     pub(crate) tool_name: String,
     pub(crate) scope: context::RuntimeScope,
     pub(crate) open_input: serde_json::Value,
+}
+
+/// Outcome of a host one-shot tool call driven through the existing session FSM.
+///
+/// `Error` carries a classified [`ToolFailure`] for policy denials and tool
+/// failures. The `Err` path of [`ToolSessionExecutionHandle::invoke_one_shot`]
+/// is reserved for bridge/programming defects that cannot form a valid outcome.
+pub(crate) enum OneShotToolOutcome {
+    Done { result: Value },
+    Error { error: ToolFailure },
 }
 
 /// Handle for tool session operations without holding the full runtime lock.
@@ -413,6 +423,87 @@ impl ToolSessionExecutionHandle {
             })
             .map(|entry| entry.key().clone())
             .collect()
+    }
+
+    /// Drive a one-shot host tool through the existing session FSM and return
+    /// its typed outcome.
+    ///
+    /// This is the `invokeTool` author surface: it opens, sends, reads once,
+    /// then finishes (on `Done`) or aborts (on error). Policy denials and
+    /// classified tool failures become [`OneShotToolOutcome::Error`]. The
+    /// `Err` path is reserved for defects the bridge cannot turn into a valid
+    /// tool outcome (unregistered tool, non-OneShot capability, or an
+    /// unexpected session step).
+    pub(crate) async fn invoke_one_shot(
+        &self,
+        scope: &context::RuntimeScope,
+        tool_name: &str,
+        input: Value,
+    ) -> Result<OneShotToolOutcome> {
+        let capability = self
+            .ctx
+            .tool_registry
+            .get_metadata(tool_name)
+            .map(|metadata| metadata.capability)
+            .ok_or_else(|| {
+                BamlRtError::InvalidArgument(format!("tool `{tool_name}` is not registered"))
+            })?;
+        if capability != ToolCapability::OneShot {
+            return Err(BamlRtError::InvalidArgument(format!(
+                "tool `{tool_name}` is not a one-shot tool"
+            )));
+        }
+
+        let session_id = match self
+            .open_tool_session(scope, tool_name, Value::Object(Map::new()))
+            .await
+        {
+            Ok(session_id) => session_id,
+            Err(error) => {
+                return Ok(OneShotToolOutcome::Error {
+                    error: ToolFailure::from_error(&error),
+                });
+            }
+        };
+
+        if let Err(error) = self.tool_session_send(&session_id, input).await {
+            let _ = self.tool_session_abort(&session_id, None).await;
+            return Ok(OneShotToolOutcome::Error {
+                error: ToolFailure::from_error(&error),
+            });
+        }
+
+        let step = match self
+            .tool_session_read(&session_id, Value::Object(Map::new()))
+            .await
+        {
+            Ok(step) => step,
+            Err(error) => {
+                let _ = self.tool_session_abort(&session_id, None).await;
+                return Ok(OneShotToolOutcome::Error {
+                    error: ToolFailure::from_error(&error),
+                });
+            }
+        };
+
+        match step {
+            ToolStep::Done { output } => {
+                let _ = self.tool_session_finish(&session_id).await;
+                Ok(OneShotToolOutcome::Done {
+                    result: output.unwrap_or(Value::Null),
+                })
+            }
+            ToolStep::Error { error } => {
+                let _ = self.tool_session_abort(&session_id, None).await;
+                Ok(OneShotToolOutcome::Error { error })
+            }
+            other => {
+                let _ = self.tool_session_abort(&session_id, None).await;
+                Err(BamlRtError::ToolExecution(format!(
+                    "one-shot tool `{tool_name}` produced an unexpected step: {other:?}"
+                )))
+            }
+        }
     }
 
     pub async fn tool_session_send(&self, session_id: &ToolSessionId, input: Value) -> Result<()> {

@@ -12,7 +12,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use baml_rt_tools::{
-    OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY, tools::ToolFunctionMetadata,
+    OPAQUE_JSON_BAML_TYPE, OPAQUE_JSON_SCHEMA_MARKER_KEY, ToolCapability,
+    tools::ToolFunctionMetadata,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -60,6 +61,7 @@ struct ToolRootPlan {
     open_input_requirement: Option<OpenInputRequirement>,
     input_key: SchemaKey,
     output_key: SchemaKey,
+    capability: ToolCapability,
 }
 
 pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<ToolSchemaGraph> {
@@ -128,6 +130,7 @@ pub(crate) fn build_from_tools(metadata: &[&ToolFunctionMetadata]) -> Result<Too
             open_input_requirement,
             input_key,
             output_key,
+            capability: tool.capability,
         });
     }
 
@@ -420,6 +423,7 @@ impl GraphBuilder {
                     open_input,
                     input,
                     output,
+                    capability: plan.capability,
                 },
             );
         }

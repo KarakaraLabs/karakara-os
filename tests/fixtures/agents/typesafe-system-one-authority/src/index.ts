@@ -2,6 +2,7 @@
 import type {
   SystemOneInput,
   SystemOneOutput,
+  ToolOutcome,
   ToolStep,
 } from "./baml-runtime";
 
@@ -29,6 +30,41 @@ export async function exerciseSystemOneContract(
         hint,
         retry_after_ms,
       } = step.error;
+      void [
+        kind,
+        message,
+        retryable,
+        disposition,
+        code,
+        hint,
+        retry_after_ms,
+      ];
+      return null;
+    }
+  }
+}
+
+export async function exerciseSystemOneOneShot(
+  input: SystemOneInput,
+): Promise<SystemOneOutput | null> {
+  const outcome: ToolOutcome<SystemOneOutput> = await invokeTool(
+    "typesafe/system_one",
+    input,
+  );
+
+  switch (outcome.status) {
+    case "done":
+      return outcome.result;
+    case "error": {
+      const {
+        kind,
+        message,
+        retryable,
+        disposition,
+        code,
+        hint,
+        retry_after_ms,
+      } = outcome.error;
       void [
         kind,
         message,

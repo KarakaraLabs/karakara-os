@@ -630,9 +630,11 @@ test:
 test-build:
     cargo nextest run --workspace --features {{ci_features}} --no-run
 
-# Run only a single crate's tests (e.g. `just test-crate baml-rt-provenance`).
+# Run one package's tests with its own default feature set (e.g. `just test-crate baml-rt-provenance`).
+# The CI feature union belongs only to workspace-wide recipes. Forwarding it to an arbitrary
+# package makes packages that do not define those features, such as baml-tools-typesafe, fail.
 test-crate crate:
-    cargo nextest run -p {{crate}} --features {{ci_features}}
+    cargo nextest run -p {{crate}}
 
 # Run tests that don't need FalkorDB or API keys (unit tests only).
 test-unit:

@@ -15,9 +15,11 @@ use tokio::time::{Duration, timeout};
 
 use super::{
     QuickJSBridge, StreamSessionId, empty_open_input, resolve_scope_from_session,
-    stream::emit_gate_input_required, tool_step_to_value, wrappers,
+    stream::emit_gate_input_required, tool_failure_to_js, tool_step_to_value, wrappers,
 };
-use crate::js_value_converter::value_to_js_value_facade;
+use crate::{
+    js_value_converter::value_to_js_value_facade, tool_session_handle::OneShotToolOutcome,
+};
 
 /// Parse a `StreamSessionId` from the first element of a JS args array.
 ///
@@ -57,10 +59,25 @@ pub(super) fn parse_session_id_arg(
     Ok(StreamSessionId(v as u64))
 }
 
+/// Convert a one-shot outcome to the public `ToolOutcome` JSON shape.
+fn one_shot_outcome_to_js(outcome: OneShotToolOutcome) -> Value {
+    match outcome {
+        OneShotToolOutcome::Done { result } => {
+            serde_json::json!({ "status": "done", "result": result })
+        }
+        OneShotToolOutcome::Error { error } => {
+            serde_json::json!({ "status": "error", "error": tool_failure_to_js(&error) })
+        }
+    }
+}
+
 impl QuickJSBridge {
     /// Register all tool functions with QuickJS
     pub(crate) async fn register_tool_functions(&mut self) -> Result<()> {
         tracing::debug!("Registering tool functions with QuickJS");
+
+        // Register the host one-shot native before the invokeTool dispatcher.
+        self.register_one_shot_tool_helper().await?;
 
         // Register helper function to execute tools
         tracing::debug!("register_tool_functions: register_tool_invoke_helper start");
@@ -292,15 +309,17 @@ impl QuickJSBridge {
             source: Box::new(e),
         })?;
 
-        // Register invokeTool for JS tools only; host tools must use openToolSession.
+        // Register invokeTool: guest JS tools run directly; host one-shot tools
+        // are routed through __tool_invoke_one_shot, which enforces the
+        // manifest allowlist and OneShot capability before driving the session.
         let dispatch_code = r#"
             globalThis.invokeTool = async function(toolName, args) {
-                const argsObj = typeof args === 'object' && args !== null ? args : { value: args };
                 const jsTools = globalThis.__js_tools || {};
                 if (typeof jsTools[toolName] === 'function') {
+                    const argsObj = typeof args === 'object' && args !== null ? args : { value: args };
                     return await jsTools[toolName](argsObj);
                 }
-                throw new Error(`Tool '${toolName}' is a host tool. Use openToolSession().`);
+                return await globalThis.__tool_invoke_one_shot(toolName, JSON.stringify(args));
             };
         "#;
 
@@ -316,6 +335,96 @@ impl QuickJSBridge {
         tracing::debug!(
             "Registered __tool_invoke, __tool_from_baml_result, and invokeTool helper functions"
         );
+        Ok(())
+    }
+
+    /// Register the host one-shot tool native used by the `invokeTool` bridge.
+    ///
+    /// `__tool_invoke_one_shot(tool_name, input_json)` resolves the active host
+    /// scope, drives the existing Open/Send/Read/Finish FSM, and returns the
+    /// typed `{ status: "done", result } | { status: "error", error }` envelope.
+    /// Its rejected-promise path is reserved for bridge defects (malformed
+    /// args, missing scope, or an internal error).
+    pub(crate) async fn register_one_shot_tool_helper(&mut self) -> Result<()> {
+        let manager_clone = self.baml_manager.clone();
+        let registry = self.invocation_context_registry.clone();
+
+        self.runtime
+            .set_function(
+                &[],
+                "__tool_invoke_one_shot",
+                move |_realm: &QuickJsRealmAdapter,
+                      args: Vec<JsValueFacade>|
+                      -> std::result::Result<JsValueFacade, quickjs_runtime::jsutils::JsError> {
+                    let scope = super::resolve_scope_from_active_context(&registry)?;
+                    if args.len() < 2 {
+                        return Err(quickjs_runtime::jsutils::JsError::new_str(
+                            "Expected (tool_name, input_json)",
+                        ));
+                    }
+                    let tool_name = if args[0].is_string() {
+                        args[0].get_str().to_string()
+                    } else {
+                        return Err(quickjs_runtime::jsutils::JsError::new_str(
+                            "Tool name must be a string",
+                        ));
+                    };
+                    let input_json: Value = if args[1].is_string() {
+                        serde_json::from_str(args[1].get_str()).map_err(|e| {
+                            quickjs_runtime::jsutils::JsError::new_str(&format!(
+                                "Failed to parse JSON input: {}",
+                                e
+                            ))
+                        })?
+                    } else {
+                        return Err(quickjs_runtime::jsutils::JsError::new_str(
+                            "Input must be a JSON string",
+                        ));
+                    };
+
+                    let manager_for_promise = manager_clone.clone();
+                    let correlation_id = registry
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.current_frame().ok())
+                        .and_then(|f| f.correlation_id);
+
+                    Ok(JsValueFacade::new_promise::<JsValueFacade, _, ()>(async move {
+                        let run = async move {
+                            let tool_scope = scope.clone();
+                            context::with_scope(scope, async move {
+                                let session_handle = {
+                                    let manager = manager_for_promise.read().await;
+                                    manager.tool_session_handle()
+                                };
+                                match session_handle
+                                    .invoke_one_shot(&tool_scope, &tool_name, input_json)
+                                    .await
+                                {
+                                    Ok(outcome) => Ok(value_to_js_value_facade(
+                                        one_shot_outcome_to_js(outcome),
+                                    )),
+                                    Err(error) => Err(quickjs_runtime::jsutils::JsError::new_str(
+                                        &format!("One-shot tool invocation failed: {}", error),
+                                    )),
+                                }
+                            })
+                            .await
+                        };
+                        if let Some(correlation_id) = correlation_id {
+                            correlation::with_correlation_id(correlation_id, run).await
+                        } else {
+                            run.await
+                        }
+                    }))
+                },
+            )
+            .map_err(|e| BamlRtError::QuickJsWithSource {
+                context: "Failed to register one-shot tool helper function".to_string(),
+                source: Box::new(e),
+            })?;
+
+        tracing::debug!("Registered __tool_invoke_one_shot helper function");
         Ok(())
     }
 

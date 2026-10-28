@@ -1,9 +1,7 @@
 ---
 source: crates/baml-rt-builder/tests/tool_typescript_catalog_test.rs
-expression: catalog.trim_end()
+expression: catalog.trim()
 ---
-
-
 export type ToolName =
   | "external/typed"
   | "matrix/absent"
@@ -50,6 +48,25 @@ export type ToolOpenArgs<T extends ToolName> =
   T extends ToolWithRequiredOpenInput
     ? [openInput: ToolOpenInput<T>]
     : [openInput?: ToolOpenInput<T>];
+
+export type OneShotToolName =
+  | "external/typed"
+  | "matrix/absent"
+  | "matrix/optional"
+  | "matrix/required"
+  | "mcp/opaque"
+  | "mcp/typed";
+
+export type ToolOutcome<O> =
+  | { status: "done"; result: O }
+  | { status: "error"; error: ToolFailure };
+
+declare global {
+  function invokeTool<T extends OneShotToolName>(
+    toolName: T,
+    input: ToolInput<T>
+  ): Promise<ToolOutcome<ToolOutput<T>>>;
+}
 
 export type ToolSessionPhase =
   | "Open"

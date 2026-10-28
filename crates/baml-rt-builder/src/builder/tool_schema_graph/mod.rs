@@ -21,7 +21,7 @@ pub mod typescript;
 use std::collections::{BTreeMap, BTreeSet};
 
 use baml_rt_tools::{
-    schema_allows_empty_or_optional_open_input,
+    ToolCapability, schema_allows_empty_or_optional_open_input,
     tools::{ToolFunctionMetadata, ToolName},
 };
 use serde_json::Value;
@@ -172,6 +172,8 @@ pub struct ToolSchemaContract {
     pub open_input: OpenInputContract,
     pub input: SchemaTypeRef,
     pub output: SchemaTypeRef,
+    /// Lifecycle capability (`OneShot` or `Streaming`) from the resolved tool metadata.
+    pub capability: ToolCapability,
 }
 
 #[derive(Debug, Clone)]

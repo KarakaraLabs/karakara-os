@@ -92,6 +92,12 @@ async fn system_one_generated_contract_authority() {
         "\"typesafe/system_one\": Record<string, never>;",
         "\"typesafe/system_one\": SystemOneInput;",
         "\"typesafe/system_one\": SystemOneOutput;",
+        "export type OneShotToolName =\n  | \"typesafe/system_one\";",
+        "export type ToolOutcome<O> =",
+        "  | { status: \"done\"; result: O }",
+        "  | { status: \"error\"; error: ToolFailure };",
+        "function invokeTool<T extends OneShotToolName>(",
+        ": Promise<ToolOutcome<ToolOutput<T>>>;",
     ] {
         assert!(
             declarations.contains(fragment),

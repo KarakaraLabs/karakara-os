@@ -60,6 +60,24 @@ impl ToolSecretResolver for MemoryToolSecretResolver {
     }
 }
 
+struct EmptyMemoryToolSecretResolver;
+
+impl ToolSecretResolver for EmptyMemoryToolSecretResolver {
+    fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue> {
+        (name == TYPESAFE_API_KEY).then(|| ToolSecretValue::new(""))
+    }
+}
+
+struct SentinelSecretResolver;
+
+impl ToolSecretResolver for SentinelSecretResolver {
+    fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue> {
+        (name == TYPESAFE_API_KEY).then(|| ToolSecretValue::new(SECRET_SENTINEL))
+    }
+}
+
+const SECRET_SENTINEL: &str = "SECRET_SENTINEL_12345";
+
 struct HistoryContractSpikeTool;
 
 #[async_trait]
@@ -642,6 +660,340 @@ async fn imperative_quickjs_path_returns_production_disabled_envelope() {
 }
 
 #[tokio::test]
+async fn invoke_tool_bridge_returns_one_shot_error_envelope() {
+    let manager = Arc::new(RwLock::new(
+        test_support::common::setup_baml_runtime_manager_no_llm(),
+    ));
+    manager
+        .write()
+        .await
+        .register_tool(SystemOneTool)
+        .await
+        .expect("register production tool");
+    let mut bridge = test_support::common::setup_bridge(manager).await;
+    let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000071").unwrap(),
+    ));
+    let input = serde_json::to_string(&sample_input()).expect("serialize input");
+    let script = format!(
+        r#"
+        (async () => {{
+            return await invokeTool("typesafe/system_one", {input});
+        }})()
+        "#
+    );
+
+    let envelope = bridge
+        .eval_scoped(&scope, &script)
+        .await
+        .expect("QuickJS call must resolve, not reject");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "typesafe_disabled");
+    assert_eq!(envelope["error"]["disposition"], "inform_and_continue");
+    assert_eq!(envelope["error"]["retryable"], false);
+    assert!(envelope["error"]["retry_after_ms"].is_null());
+    insta::assert_json_snapshot!("invoke_tool_disabled_envelope", envelope);
+}
+
+#[tokio::test]
+async fn invoke_tool_bridge_malformed_input_does_not_echo_sentinel() {
+    let manager = Arc::new(RwLock::new(
+        test_support::common::setup_baml_runtime_manager_no_llm(),
+    ));
+    manager
+        .write()
+        .await
+        .register_tool(SystemOneTool)
+        .await
+        .expect("register production tool");
+    let mut bridge = test_support::common::setup_bridge(manager).await;
+    let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000071").unwrap(),
+    ));
+    let script = r#"
+        (async () => {
+            return await invokeTool("typesafe/system_one", {
+                state: "state",
+                questions: {
+                    severity: {
+                        type: "score",
+                        instructions: "score it",
+                        criteria: "MALFORMED_CRITERIA_SENTINEL"
+                    }
+                }
+            });
+        })()
+    "#;
+
+    let envelope = bridge
+        .eval_scoped(&scope, script)
+        .await
+        .expect("QuickJS call must resolve, not reject");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_argument");
+    assert_eq!(envelope["error"]["disposition"], "llm_correctable");
+    let rendered = serde_json::to_string(&envelope).expect("serialize envelope");
+    assert!(rendered.contains("questions.*.criteria"));
+    assert!(!rendered.contains("MALFORMED_CRITERIA_SENTINEL"));
+}
+
+#[tokio::test]
+async fn invoke_tool_egresses_only_contract_and_attributes_scope() {
+    use axum::{Router, routing::post};
+    use baml_rt_core::bus::{BusWithEffects, EffectEmitter, EffectLiveness};
+    use baml_rt_provenance::{
+        ProvenanceEffectSubscriber, ProvenanceOpsFilters, ProvenanceOpsQuery,
+        ProvenanceOpsQueryRequest, ProvenanceOpsResource, SurrealStoreBuilder,
+    };
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+
+    let bodies: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let bodies_for_handler = Arc::clone(&bodies);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move |body: axum::extract::Json<Value>| {
+            let bodies = Arc::clone(&bodies_for_handler);
+            async move {
+                bodies.lock().expect("bodies lock").push(body.0);
+                (
+                    axum::http::StatusCode::OK,
+                    axum::Json(json!({
+                        "model": DEFAULT_MODEL,
+                        "answers": {"safe": {"type": "noul", "noul": 0.5}}
+                    })),
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+
+    let store = SurrealStoreBuilder::in_memory_isolated()
+        .build()
+        .await
+        .expect("in-memory store");
+    let effect_bus = Arc::new(BusWithEffects::new());
+    effect_bus
+        .subscribe_effect_subscriber(Arc::new(ProvenanceEffectSubscriber::new(store.clone())))
+        .await;
+
+    let mut manager = test_support::common::setup_baml_runtime_manager_no_llm();
+    manager
+        .tool_registry()
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    manager
+        .tool_registry()
+        .set_config_resolver(Some(Arc::new(StaticConfigResolver(
+            serde_json::to_value(SystemOneConfig {
+                enabled: true,
+                ..SystemOneConfig::default()
+            })
+            .expect("serialize config"),
+        ))));
+    manager
+        .tool_registry()
+        .set_secret_resolver(Some(Arc::new(MemoryToolSecretResolver)));
+    manager.set_effect_emitter(effect_bus.clone() as Arc<dyn EffectEmitter>);
+
+    let manager = Arc::new(RwLock::new(manager));
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let mut bridge = baml_rt_quickjs::QuickJSBridge::new(manager, agent_id.clone())
+        .await
+        .expect("quickjs bridge");
+    bridge.set_effect_liveness(effect_bus.clone() as Arc<dyn EffectLiveness>);
+    bridge
+        .register_baml_functions()
+        .await
+        .expect("register helpers");
+
+    let input = serde_json::to_string(&retry_input()).expect("serialize input");
+    let script = format!(
+        r#"(async () => {{ return await invokeTool("typesafe/system_one", {input}); }})()"#
+    );
+
+    let context_id = ContextId::new(7, 1);
+    for (message, task) in [("turn-1", "task-1"), ("turn-2", "task-2")] {
+        let scope = InvocationScope::new(RuntimeScope::task_scope(
+            context_id.clone(),
+            agent_id.clone(),
+            MessageId::from_external(ExternalId::new(message.to_string())),
+            TaskId::from_external(ExternalId::new(task.to_string())),
+        ));
+        let envelope = bridge
+            .eval_scoped(&scope, &script)
+            .await
+            .expect("resolve one-shot call");
+        assert_eq!(envelope["status"], "done", "{envelope}");
+        assert_eq!(envelope["result"]["answers"]["safe"]["noul"], 0.5);
+    }
+
+    // Egress: the mock provider saw exactly the System One contract.
+    let captured: Vec<Value> = bodies.lock().expect("bodies lock").clone();
+    assert_eq!(captured.len(), 2);
+    for body in captured.iter() {
+        let keys = body
+            .as_object()
+            .expect("provider body must be an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["state", "questions", "model"]);
+        let rendered = body.to_string();
+        for sentinel in [
+            "test-typesafe-key",
+            "00000000-0000-0000-0000-000000000072",
+            "context_id",
+            "agent_id",
+            "task_id",
+            "message_id",
+        ] {
+            assert!(
+                !rendered.contains(sentinel),
+                "provider body leaked {sentinel}: {rendered}"
+            );
+        }
+    }
+
+    // Attribution: both turns materialize tool calls under the same context,
+    // agent, and tool (one Send hop plus one Read hop per turn).
+    let rows = store
+        .query_ops(ProvenanceOpsQueryRequest {
+            resource: ProvenanceOpsResource::ToolCalls,
+            filters: ProvenanceOpsFilters {
+                context_id: Some(context_id),
+                tool_name: Some("typesafe/system_one".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .await
+        .expect("query_ops")
+        .rows;
+    assert_eq!(rows.len(), 4, "two turns × two hops: {rows:?}");
+    for row in &rows {
+        assert_eq!(row.context_id(), Some("ctx-7-1"));
+        assert_eq!(
+            row.get("agent_id").and_then(Value::as_str),
+            Some("00000000-0000-0000-0000-000000000072")
+        );
+        assert_eq!(
+            row.get("tool_name").and_then(Value::as_str),
+            Some("typesafe/system_one")
+        );
+    }
+    let task_one = rows
+        .iter()
+        .filter(|row| row.task_id() == Some("task-1"))
+        .count();
+    let task_two = rows
+        .iter()
+        .filter(|row| row.task_id() == Some("task-2"))
+        .count();
+    assert_eq!(
+        (task_one, task_two),
+        (2, 2),
+        "each turn must be attributed to its own task"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn invoke_tool_bridge_maps_transient_failure_to_error_envelope() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{Router, http::StatusCode, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let requests_for_handler = Arc::clone(&requests);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move || {
+            let requests = Arc::clone(&requests_for_handler);
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+
+    let manager = test_support::common::setup_baml_runtime_manager_no_llm();
+    manager
+        .tool_registry()
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    manager
+        .tool_registry()
+        .set_config_resolver(Some(Arc::new(StaticConfigResolver(
+            serde_json::to_value(SystemOneConfig {
+                enabled: true,
+                max_attempts: 1,
+                ..SystemOneConfig::default()
+            })
+            .expect("serialize config"),
+        ))));
+    manager
+        .tool_registry()
+        .set_secret_resolver(Some(Arc::new(MemoryToolSecretResolver)));
+
+    let manager = Arc::new(RwLock::new(manager));
+    let mut bridge = test_support::common::setup_bridge(manager).await;
+    let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000071").unwrap(),
+    ));
+    let input = serde_json::to_string(&retry_input()).expect("serialize input");
+    let script = format!(
+        r#"(async () => {{ return await invokeTool("typesafe/system_one", {input}); }})()"#
+    );
+
+    let envelope = bridge
+        .eval_scoped(&scope, &script)
+        .await
+        .expect("QuickJS call must resolve, not reject");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "typesafe_provider_unavailable");
+    assert_eq!(envelope["error"]["retryable"], false);
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "max_attempts=1 must not retry the 5xx"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn malformed_input_envelope_does_not_echo_the_bad_value() {
     let manager = Arc::new(RwLock::new(
         test_support::common::setup_baml_runtime_manager_no_llm(),
@@ -1145,4 +1497,600 @@ async fn send_to_read_gap_does_not_consume_adapter_deadline() {
         panic!("expected done output")
     };
     assert_eq!(output["value"], "ok");
+}
+
+type MockResponse = (
+    axum::http::StatusCode,
+    Vec<(&'static str, &'static str)>,
+    String,
+);
+
+fn retry_input() -> SystemOneInput {
+    SystemOneInput {
+        state: OpaqueJson::from(json!({"asset": "pump-12"})),
+        questions: BTreeMap::from([(
+            "safe".to_string(),
+            SystemOneQuestion::Noul(NoulQuestion {
+                instructions: OpaqueJson::from(json!("Is the reading safe?")),
+                criteria: None,
+            }),
+        )]),
+        model: None,
+        timeout_ms: None,
+    }
+}
+
+fn noul_success_body() -> String {
+    json!({
+        "model": DEFAULT_MODEL,
+        "answers": {"safe": {"type": "noul", "noul": 0.5}}
+    })
+    .to_string()
+}
+
+/// Run one send/read against a mock provider serving the given response
+/// sequence (repeating the last response once the queue is exhausted). Returns
+/// the session step and the number of HTTP requests the adapter made.
+async fn run_against_mock(
+    config: SystemOneConfig,
+    input: SystemOneInput,
+    responses: Vec<MockResponse>,
+) -> (ToolStep, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{Router, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+
+    let queue = Arc::new(Mutex::new(
+        responses
+            .into_iter()
+            .collect::<std::collections::VecDeque<_>>(),
+    ));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let requests_for_handler = Arc::clone(&requests);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move || {
+            let queue = Arc::clone(&queue);
+            let requests = Arc::clone(&requests_for_handler);
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                let mut queue = queue.lock().expect("response queue");
+                let response = queue
+                    .pop_front()
+                    .unwrap_or_else(|| queue.back().cloned().expect("at least one mock response"));
+                let (status, headers, body) = response;
+                let mut builder = axum::response::Response::builder().status(status);
+                for (name, value) in headers {
+                    builder = builder.header(name, value);
+                }
+                builder
+                    .body(axum::body::Body::from(body))
+                    .expect("build mock response")
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+    registry.set_secret_resolver(Some(Arc::new(MemoryToolSecretResolver)));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(input).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read step");
+    server.abort();
+    (step, requests)
+}
+
+#[test]
+fn retry_after_header_parsing_matrix() {
+    use reqwest::header::{HeaderMap, HeaderValue};
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).expect("header name"),
+                HeaderValue::from_str(value).expect("header value"),
+            );
+        }
+        map
+    }
+
+    assert_eq!(retry_after_ms(&headers(&[])), None);
+    assert_eq!(
+        retry_after_ms(&headers(&[("retry-after", "5")])),
+        Some(5000)
+    );
+    assert_eq!(
+        retry_after_ms(&headers(&[("retry-after-ms", "250")])),
+        Some(250)
+    );
+    assert_eq!(
+        retry_after_ms(&headers(&[("retry-after-ms", "250"), ("retry-after", "5")])),
+        Some(250)
+    );
+
+    let future = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(30));
+    let delay = retry_after_ms(&headers(&[("retry-after", &future)])).expect("future date");
+    assert!(
+        (29_000..=31_000).contains(&delay),
+        "future HTTP date delay was {delay}ms"
+    );
+
+    let past = httpdate::fmt_http_date(std::time::SystemTime::now() - Duration::from_secs(30));
+    assert_eq!(retry_after_ms(&headers(&[("retry-after", &past)])), None);
+    assert_eq!(
+        retry_after_ms(&headers(&[("retry-after", "garbage")])),
+        None
+    );
+    assert_eq!(retry_after_ms(&headers(&[("retry-after", "-5")])), None);
+}
+
+#[tokio::test]
+async fn production_tool_retries_transient_5xx_and_recovers() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 5_000,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![
+            (StatusCode::INTERNAL_SERVER_ERROR, vec![], String::new()),
+            (StatusCode::OK, vec![], noul_success_body()),
+        ],
+    )
+    .await;
+    let ToolStep::Done {
+        output: Some(output),
+    } = step
+    else {
+        panic!("expected success after a 5xx retry")
+    };
+    assert_eq!(output["answers"]["safe"]["noul"], 0.5);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn production_tool_retries_429_using_retry_after_ms_and_recovers() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 5_000,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                vec![("retry-after-ms", "10")],
+                String::new(),
+            ),
+            (StatusCode::OK, vec![], noul_success_body()),
+        ],
+    )
+    .await;
+    let ToolStep::Done {
+        output: Some(output),
+    } = step
+    else {
+        panic!("expected success after a 429 retry")
+    };
+    assert_eq!(output["answers"]["safe"]["noul"], 0.5);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn production_tool_retries_429_using_retry_after_seconds_and_recovers() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 5_000,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                vec![("retry-after", "0")],
+                String::new(),
+            ),
+            (StatusCode::OK, vec![], noul_success_body()),
+        ],
+    )
+    .await;
+    let ToolStep::Done {
+        output: Some(output),
+    } = step
+    else {
+        panic!("expected success after a 429 retry")
+    };
+    assert_eq!(output["answers"]["safe"]["noul"], 0.5);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn production_tool_429_with_retry_after_beyond_deadline_fails_immediately() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 200,
+        ..SystemOneConfig::default()
+    };
+    let started = std::time::Instant::now();
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![(
+            StatusCode::TOO_MANY_REQUESTS,
+            vec![("retry-after", "60")],
+            String::new(),
+        )],
+    )
+    .await;
+    let elapsed = started.elapsed();
+    let ToolStep::Error { error } = step else {
+        panic!("expected a rate limit error")
+    };
+    assert_eq!(error.classified.code, "typesafe_rate_limited");
+    assert_eq!(error.classified.retry_after_ms, Some(60_000));
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "a Retry-After beyond the deadline must not schedule a retry"
+    );
+    assert!(
+        elapsed < Duration::from_millis(200),
+        "a Retry-After beyond the deadline must fail immediately, not sleep until the deadline (elapsed {elapsed:?})"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn sleep_for_retry_rejects_unfittable_delay_without_waiting() {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+    let started = tokio::time::Instant::now();
+
+    let slept = sleep_for_retry(deadline, Duration::from_secs(60)).await;
+
+    assert!(!slept);
+    assert_eq!(
+        started.elapsed(),
+        Duration::ZERO,
+        "an unfittable delay must be rejected immediately, not at the deadline"
+    );
+}
+
+#[tokio::test]
+async fn production_tool_does_not_retry_unauthorized() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![(StatusCode::UNAUTHORIZED, vec![], String::new())],
+    )
+    .await;
+    let ToolStep::Error { error } = step else {
+        panic!("expected an unauthorized error")
+    };
+    assert_eq!(error.classified.code, "typesafe_unauthorized");
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn production_tool_maps_403_to_unauthorized_without_retry() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![(StatusCode::FORBIDDEN, vec![], String::new())],
+    )
+    .await;
+    let ToolStep::Error { error } = step else {
+        panic!("expected an unauthorized error")
+    };
+    assert_eq!(error.classified.code, "typesafe_unauthorized");
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "403 must not be retried"
+    );
+}
+
+#[tokio::test]
+async fn production_tool_empty_credential_fails_with_missing_credential() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{Router, http::StatusCode, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let requests_for_handler = Arc::clone(&requests);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move || {
+            let requests = Arc::clone(&requests_for_handler);
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                StatusCode::OK
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+    registry.set_secret_resolver(Some(Arc::new(EmptyMemoryToolSecretResolver)));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(retry_input()).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read error envelope");
+    let ToolStep::Error { error } = step else {
+        panic!("expected missing credential tool error")
+    };
+    assert_eq!(error.classified.code, "typesafe_missing_credential");
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        0,
+        "an empty credential must fail before any network request"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn production_tool_never_leaks_secret_into_rendered_surfaces() {
+    use axum::{Router, http::StatusCode, routing::post};
+    use test_support::common::TempEnvVar;
+    use tokio::net::TcpListener;
+
+    let _env_guard = TYPESAFE_ENV_LOCK.lock().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock TypeSafe server");
+    let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+    let _base_url = TempEnvVar::set(TYPESAFE_API_BASE_URL, &base_url);
+    let seen_authorization = Arc::new(Mutex::new(None));
+    let seen_authorization_for_handler = Arc::clone(&seen_authorization);
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(move |headers: axum::http::HeaderMap| {
+            let seen_authorization = Arc::clone(&seen_authorization_for_handler);
+            async move {
+                *seen_authorization.lock().expect("authorization lock") = headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                StatusCode::UNAUTHORIZED
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock TypeSafe");
+    });
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let registry = ToolRegistry::new();
+    registry
+        .register_dynamic(
+            typesafe_system_one_metadata(),
+            typesafe_system_one_build().expect("build production tool"),
+        )
+        .expect("register production tool");
+    registry.set_config_resolver(Some(Arc::new(StaticConfigResolver(
+        serde_json::to_value(config).expect("serialize config"),
+    ))));
+    registry.set_secret_resolver(Some(Arc::new(SentinelSecretResolver)));
+
+    let context_id = ContextId::new(7, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000072").unwrap());
+    let session = registry
+        .open_session("typesafe/system_one", Value::Null, &context_id, &agent_id)
+        .await
+        .expect("open System One session");
+    registry
+        .session_send(
+            &session,
+            serde_json::to_value(retry_input()).expect("serialize input"),
+        )
+        .await
+        .expect("send input");
+    let step = registry
+        .session_read(&session, json!({}))
+        .await
+        .expect("read error envelope");
+    let ToolStep::Error { error } = step else {
+        panic!("expected unauthorized tool error")
+    };
+    assert_eq!(error.classified.code, "typesafe_unauthorized");
+
+    // The key is sent as a bearer token, but never echoed back into any
+    // rendered surface.
+    assert_eq!(
+        seen_authorization
+            .lock()
+            .expect("authorization lock")
+            .as_deref(),
+        Some("Bearer SECRET_SENTINEL_12345")
+    );
+    let rendered_error = serde_json::to_string(&json!({
+        "message": error.classified.message,
+        "hint": error.classified.hint,
+    }))
+    .expect("serialize classified error");
+    assert!(
+        !rendered_error.contains(SECRET_SENTINEL),
+        "error envelope leaked the credential"
+    );
+
+    let description = registry
+        .describe_invocation_for(
+            "typesafe/system_one",
+            &json!({"op": "Send", "input": serde_json::to_value(retry_input()).expect("input")}),
+        )
+        .expect("tool-call description");
+    assert!(
+        !description.contains(SECRET_SENTINEL),
+        "tool-call description leaked the credential"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn production_tool_does_not_retry_client_errors() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![(StatusCode::BAD_REQUEST, vec![], String::new())],
+    )
+    .await;
+    let ToolStep::Error { error } = step else {
+        panic!("expected a contract error")
+    };
+    assert_eq!(error.classified.code, "typesafe_provider_contract");
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn production_tool_exhausts_attempts_then_reports_provider_unavailable() {
+    use std::sync::atomic::Ordering;
+
+    use axum::http::StatusCode;
+
+    let config = SystemOneConfig {
+        enabled: true,
+        timeout_ms: 5_000,
+        max_attempts: 2,
+        ..SystemOneConfig::default()
+    };
+    let (step, requests) = run_against_mock(
+        config,
+        retry_input(),
+        vec![(StatusCode::INTERNAL_SERVER_ERROR, vec![], String::new())],
+    )
+    .await;
+    let ToolStep::Error { error } = step else {
+        panic!("expected a provider unavailable error")
+    };
+    assert_eq!(error.classified.code, "typesafe_provider_unavailable");
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
 }
