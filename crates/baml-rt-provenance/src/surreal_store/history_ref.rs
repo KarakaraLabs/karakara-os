@@ -178,6 +178,58 @@ impl SurrealProvenanceStore {
         Ok(out)
     }
 
+    /// Registry rows for the given anchors only.
+    ///
+    /// A prompt can only cite `#N` values whose anchors are in its window, so an agent-scoped
+    /// projection does not need the whole context's registry. Same rows as
+    /// [`Self::history_ref_list_for_context`], filtered in the query instead of in memory.
+    pub async fn history_ref_list_for_anchors(
+        &self,
+        context_id: &ContextId,
+        anchors: &[String],
+    ) -> Result<Vec<(String, String, u32)>> {
+        if anchors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let q = format!(
+            "SELECT activity_anchor, source, history_n FROM {TBL_HISTORY_REF_REGISTRY} \
+             WHERE context_id = $ctx AND activity_anchor IN $anchors ORDER BY history_n ASC"
+        );
+        let response = self
+            .db()
+            .query(&q)
+            .bind(("ctx", context_id.as_str().to_string()))
+            .bind(("anchors", anchors.to_vec()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let anchor = row
+                .get("activity_anchor")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let source = row
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let n = row
+                .get("history_n")
+                .and_then(|x| x.as_u64())
+                .ok_or_else(|| ProvenanceError::CorruptArchiveEntry {
+                    reason: "history_ref_registry row missing history_n".into(),
+                })?;
+            let n = u32::try_from(n).map_err(|_| ProvenanceError::InvalidEvent {
+                activity_anchor: anchor.clone(),
+                reason: format!("history_n overflow: {n}"),
+            })?;
+            out.push((anchor, source, n));
+        }
+        Ok(out)
+    }
+
     /// Next monotonic ref index for `#N` and flat `@N` (`prefix = 1`) within a context.
     pub async fn session_ref_next(&self, context_id: &ContextId) -> Result<u32> {
         let ctx = context_id.as_str();

@@ -114,6 +114,7 @@ impl ProjectingConversationContextProvider {
         //
         // When this agent has a compaction head, the prompt is the summary plus the
         // recent tail (P4.7); otherwise it is the bounded newest window.
+        let storage_started = std::time::Instant::now();
         let (items, truncated) = if let Some(store) = self.provenance_store.as_ref() {
             let head = store
                 .latest_compaction_head(context_id, Some(&agent_id), None)
@@ -146,6 +147,14 @@ impl ProjectingConversationContextProvider {
                 false,
             )
         };
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_read",
+            storage_started.elapsed(),
+        );
+        baml_rt_observability::metrics::record_context_projection_volume(
+            "rows",
+            u64::try_from(items.len()).unwrap_or(u64::MAX),
+        );
         tracing::debug!(
             context_id = %context_id,
             agent_id = %agent_id,
@@ -159,6 +168,7 @@ impl ProjectingConversationContextProvider {
             return Ok(None);
         }
 
+        let project_started = std::time::Instant::now();
         let mut projection_items = items
             .into_iter()
             .filter_map(|item| {
@@ -173,11 +183,16 @@ impl ProjectingConversationContextProvider {
         if projection_items.is_empty() {
             return Ok(None);
         }
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "project",
+            project_started.elapsed(),
+        );
 
         let context_id_str = context_id.as_str().to_string();
 
         let ref_table_arc = if let Some(store) = self.provenance_store.as_ref() {
             let principal = ProvenanceReadPrincipal::Agent(agent_id.clone());
+            let ref_started = std::time::Instant::now();
             let prepared = baml_rt_provenance::prepare_ref_table_for_projection(
                 store,
                 context_id,
@@ -189,6 +204,10 @@ impl ProjectingConversationContextProvider {
             .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                 source: Box::new(e),
             })?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_prepare",
+                ref_started.elapsed(),
+            );
             if let Some(tables) = self.archive_ref_tables.as_ref() {
                 // Merge into the existing cached table rather than replacing it. A wholesale
                 // replace can discard a pending Send receipt inserted by a concurrent same-agent
@@ -230,12 +249,18 @@ impl ProjectingConversationContextProvider {
             boxed
         });
 
-        Ok(Some(project_prompt_context(
+        let render_started = std::time::Instant::now();
+        let payload = project_prompt_context(
             projection_items,
             self.tool_registry.as_ref(),
             &ref_table_arc,
             reader.as_deref(),
-        )))
+        );
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "render",
+            render_started.elapsed(),
+        );
+        Ok(Some(payload))
     }
 
     /// Project the complete (uncapped) agent view into identity-carrying rows for the

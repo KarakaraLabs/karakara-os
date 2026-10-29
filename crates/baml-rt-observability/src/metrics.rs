@@ -38,6 +38,8 @@ static QUICKJS_INVOKE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static LIVE_STREAM_EVENT_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static LIVE_STREAM_PHASE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static A2A_SSE_STREAM_TO_FIRST_DATA_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static CONTEXT_PROJECTION_STAGE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static CONTEXT_PROJECTION_VOLUME_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static A2A_SSE_TTFB_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static LIVE_STREAM_TURN_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static LIVE_STREAM_TERMINAL_FORWARD_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
@@ -854,6 +856,22 @@ fn context_projection_histogram() -> &'static Histogram<f64> {
     })
 }
 
+fn context_projection_stage_histogram() -> &'static Histogram<f64> {
+    CONTEXT_PROJECTION_STAGE_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.context_projection.stage_duration_ms")
+            .init()
+    })
+}
+
+fn context_projection_volume_histogram() -> &'static Histogram<f64> {
+    CONTEXT_PROJECTION_VOLUME_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.context_projection.volume")
+            .init()
+    })
+}
+
 fn store_result_histogram() -> &'static Histogram<f64> {
     STORE_RESULT_HISTOGRAM.get_or_init(|| {
         global::meter(METER_NAME)
@@ -1049,6 +1067,25 @@ pub fn record_context_projection(
         KeyValue::new("phase", phase.to_string()),
     ];
     context_projection_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// One stage inside a prompt projection.
+///
+/// `stage` is a fixed vocabulary so the label stays low-cardinality:
+/// `compaction_gate`, `storage_read`, `project`, `ref_prepare`, `ref_history`,
+/// `ref_archives`, `render`. The aggregate `phase = "history"` metric stays the total,
+/// so existing dashboards are unaffected.
+pub fn record_context_projection_stage(stage: &'static str, duration: Duration) {
+    let attributes = &[KeyValue::new("stage", stage)];
+    context_projection_stage_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Size of one projection artifact, to show how much the prompt path carries.
+///
+/// `kind` is a fixed vocabulary: `rows`, `history_refs`, `archive_bodies`, `archive_bytes`.
+pub fn record_context_projection_volume(kind: &'static str, value: u64) {
+    let attributes = &[KeyValue::new("kind", kind)];
+    context_projection_volume_histogram().record(value as f64, attributes);
 }
 
 /// Host `__execution_session_invoke` action duration (`operation` and `result` are low-cardinality).

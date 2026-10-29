@@ -506,6 +506,35 @@ impl SurrealProvenanceStore {
         Ok(())
     }
 
+    /// `archive_local` values of this agent's unconsumed Send receipts in a context.
+    ///
+    /// These bodies must stay resolvable: the prompt advertises "result body is archived and is
+    /// not visible yet", and the next hop may `PageRead` it. Everything else can be left out of an
+    /// agent-scoped hydration, which is what keeps projection cost bounded by the prompt window.
+    pub async fn archive_pending_send_locals(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+    ) -> Result<Vec<u32>> {
+        let q = format!(
+            "SELECT archive_local FROM {TBL_ARCHIVE_BODY} \
+             WHERE context_id = $ctx AND agent_id = $aid AND entry.pending_send = true"
+        );
+        let response = self
+            .db()
+            .query(&q)
+            .bind(("ctx", context_id.as_str().to_string()))
+            .bind(("aid", agent_id.as_str().to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.get("archive_local").and_then(|x| x.as_u64()))
+            .filter_map(|local| u32::try_from(local).ok())
+            .collect())
+    }
+
     /// Persist receipt consumption so a restored runtime permits a later identical Send.
     ///
     /// Ownership-enforced: only the owning agent may clear its own pending Send guard.
