@@ -103,18 +103,31 @@ setting). Full k8s validation runs on merge to `main` or via maintainer
 See [`docs/runbooks/ci-security.md`](docs/runbooks/ci-security.md) for operator
 settings (branch protection, runner groups, secrets).
 
-## Commit and PR conventions
+## Branching, commit, and PR conventions
 
-- Use [Conventional Commits](https://www.conventionalcommits.org/) for commit
+Karakara OS follows **Trunk-Based Development (TBD)** with `main` as the single
+source of truth:
+
+- **Short-lived topic branches:** Branch directly from `main` using a
+  Conventional Commit prefix (`feat/<slug>`, `fix/<slug>`, `chore/<slug>`,
+  `docs/<slug>`, `refactor/<slug>`). Keep branches small and focused on a single
+  vertical slice (ideally merged within 1–2 days). Use Cargo features or runtime
+  config flags to gate larger multi-step work instead of long-lived branches.
+- **Conventional Commits:** Use
+  [Conventional Commits](https://www.conventionalcommits.org/) for commit
   subjects and PR titles (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`,
   `chore:`).
-- Aim for atomic commits — one logical change per commit.
-- Keep documentation user-focused, not implementation-focused, and describe
-  current behavior (no version-history notes in comments).
-- Open a pull request against `main`. Fill in the
+- **Squash and Merge (linear history):** Pull requests are integrated into
+  `main` via **Squash and Merge** so that one PR produces one atomic
+  Conventional Commit on `main` and a clean Release Please changelog entry. Head
+  branches are deleted automatically on merge.
+- **Documentation style:** Keep documentation user-focused, not
+  implementation-focused, and describe current behavior (no version-history
+  notes in comments).
+- **Pull request checklist:** Open your pull request against `main`, fill in the
   [pull request template](.github/PULL_REQUEST_TEMPLATE.md), link any issue the
-  PR resolves with a closing keyword (`Closes #N`), and make sure the build,
-  tests, clippy, and `cargo fmt --check` are green.
+  PR resolves (`Closes #N`), and verify that the build, tests, clippy,
+  `cargo fmt --check`, and `reuse lint` pass before merging.
 
 ## Licensing
 
