@@ -15,19 +15,26 @@ import {
   MAX_REACT_STEPS,
   PKG_CLICKUP_EXECUTE,
   PKG_CLICKUP_FORMAT,
+  applyTaskFilters,
+  hasTaskFilters,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
+  taskFiltersFromIntent,
 } from "./clickupWorkflow";
 
 export {
   MAX_REACT_STEPS,
   PKG_CLICKUP_EXECUTE,
   PKG_CLICKUP_FORMAT,
+  applyTaskFilters,
+  hasTaskFilters,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
+  taskFiltersFromIntent,
 };
+export type { ClickUpTaskFilters } from "./clickupWorkflow";
 
 export function isJsonObject(v: unknown): v is JsonObject {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -75,20 +82,19 @@ const READ_ACTIONS = [
 ] as const;
 
 /**
- * Request qualifiers the deterministic read path cannot express yet.
+ * Constraints the classifier reported that no typed filter covers.
  *
- * The deterministic traversal only filters by task status. When the request also constrains the
- * assignee, dates, priority, or text, taking that path would silently drop the constraint, so such
- * requests fall back to the generic planner instead. Extend this list (and the traversal) together.
+ * This is a declaration from the model, not a match against request wording, so a workspace
+ * that names things differently cannot silently lose a constraint.
  */
-/**
- * Constraints the deterministic traversal cannot express: filters on assignee or dates,
- * ordering by priority, and free-text search. Display fields (names, statuses, assignees,
- * due dates, priorities) are rendered as columns and must not appear here — the planner
- * paraphrases the request and routinely lists the fields the caller wants to see.
- */
-const UNSUPPORTED_READ_QUALIFIERS =
-  /\b(assigned to|owned by|overdue|past due|due (?:today|tomorrow|this|next|within|before|after)|(?:this|next) (?:week|month)|called|named|containing|mentions?|titled|highest priority|top priority|most urgent|urgent only|only urgent|sort(?:ed)? by|order(?:ed)? by|ranked by)\b/i;
+export function unsupportedConstraints(intent: ClickUpIntent): string[] {
+  const raw = (intent as { unsupported?: unknown }).unsupported;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
 
 /**
  * Typed read action for this intent, tolerating plans produced before `action` existed.
@@ -111,12 +117,7 @@ export function isDeterministicTaskRead(intent: ClickUpIntent): boolean {
   if (intent.operation_kind !== "read") return false;
   const action = clickUpIntentAction(intent);
   if (action !== "list_tasks" && action !== "count_tasks") return false;
-  return !unsupportedReadQualifier(intent.intent);
-}
-
-/** Qualifier the deterministic read path would ignore, so the request needs the generic planner. */
-export function unsupportedReadQualifier(intentText: string): string | null {
-  return UNSUPPORTED_READ_QUALIFIERS.exec(intentText)?.[0] ?? null;
+  return unsupportedConstraints(intent).length === 0;
 }
 
 export function isClickUpPriorityIntent(
@@ -477,6 +478,11 @@ async function processClickupLifecycleUnit(
       // takes the generic planner path.
       action: "other",
       status_filter: null,
+      assignee_filter: null,
+      priority_filter: null,
+      due_filter: null,
+      text_filter: null,
+      unsupported: null,
       scope_hint: null,
     };
   } else if (isClickUpIntent(intentResult)) {
