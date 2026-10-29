@@ -1,8 +1,14 @@
 name: Doc Sync
 
+# NOTE (Issue #12): Automatic push trigger is temporarily commented out below
+# AND this workflow is manually disabled in GitHub Actions UI/API
+# (`disabled_manually` via `gh workflow disable`) because it requires
+# unprovisioned self-hosted runners (`arc-runner-set`) and consumes paid
+# OpenRouter LLM credits (`OPENROUTER_API_KEY`) on every push to `main`.
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write

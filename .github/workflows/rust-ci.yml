@@ -4,21 +4,27 @@ name: Rust CI
 # llm-tests; same-repo PRs, push to main, and workflow_dispatch use self-hosted
 # runners with full secrets. See docs/runbooks/ci-security.md.
 
+# NOTE (Issue #12): Automatic push/pull_request triggers are temporarily
+# commented out below AND this workflow is manually disabled in GitHub Actions
+# UI/API (`disabled_manually` via `gh workflow disable`) because the trusted lane
+# requires unprovisioned self-hosted runners (`arc-runner-set`) and paid LLM API
+# credits (`OPENROUTER_API_KEY`). Re-enable once runner infrastructure or a
+# free `ubuntu-latest` non-LLM lane is configured.
 on:
-  push:
-    branches: [main]
-    tags-ignore:
-      - '**'
-    # Documentation-only edits do not affect the Rust artifact graph; skipping
-    # avoids spinning ~30min nextest lanes and cancelling in-flight runs via
-    # extra pushes (see paths-ignore semantics for bundled PR diffs).
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+  # push:
+  #   branches: [main]
+  #   tags-ignore:
+  #     - '**'
+  #   # Documentation-only edits do not affect the Rust artifact graph; skipping
+  #   # avoids spinning ~30min nextest lanes and cancelling in-flight runs via
+  #   # extra pushes (see paths-ignore semantics for bundled PR diffs).
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - '**/*.md'
+  # pull_request:
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - '**/*.md'
   workflow_dispatch:
 
 permissions:

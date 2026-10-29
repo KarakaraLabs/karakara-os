@@ -4,10 +4,16 @@ name: K8s Pilot Validation
 # and local registry push. Trusted CI only — not fork PRs. See
 # docs/runbooks/ci-security.md.
 
+# NOTE (Issue #12): Automatic push/pull_request triggers are temporarily
+# commented out below AND this workflow is manually disabled in GitHub Actions
+# UI/API (`disabled_manually` via `gh workflow disable`) because the `validate`
+# job requires unprovisioned high-capacity self-hosted runners (`arc-runner-set`)
+# to spin up a 90-minute k3d + Argo CD cluster. Run `just verify-k8s-pilot-package`
+# locally until self-hosted runner infrastructure is provisioned.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # push:
+  #   branches: [main]
+  # pull_request:
   workflow_dispatch:
 
 permissions:

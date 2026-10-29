@@ -1,9 +1,13 @@
 name: Sandbox E2E KVM
 
+# NOTE (Issue #12): Automatic weekly schedule is temporarily commented out below
+# AND this workflow is manually disabled in GitHub Actions UI/API
+# (`disabled_manually` via `gh workflow disable`) because it requires a
+# self-hosted runner labeled `kvm-enabled` exposing `/dev/kvm`.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * 0'
+  # schedule:
+  #   - cron: '0 0 * * 0'
 
 permissions:
   contents: read
