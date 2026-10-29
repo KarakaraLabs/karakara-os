@@ -253,7 +253,7 @@ describe("validateClickUpPlanForExecution", () => {
     const tasks = [
       { id: "1", name: "A", status: "in progress", url: "", priority: "urgent" },
       { id: "2", name: "B", status: "In Progress (Dev)", url: "", priority: "high" },
-      { id: "3", name: "C", status: "Scoping", url: "", priority: "low" },
+      { id: "3", name: "C", status: "to do", url: "", priority: "low" },
     ];
     const empty = { statuses: [] as string[], assignee: null, priority: null, due: null, text: null };
     expect(
@@ -263,7 +263,14 @@ describe("validateClickUpPlanForExecution", () => {
       applyTaskFilters(tasks, { ...empty, statuses: ["progress"] }).matching.map((t) => t.id),
     ).toEqual(["1", "2"]);
     expect(
-      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "Scoping"] }).matching.map((t) => t.id),
+      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "scoping"] }).matching.map((t) => t.id),
+    ).toEqual(["1"]);
+    // Statuses are workspace-defined: case, spaces, and punctuation are insignificant.
+    expect(
+      applyTaskFilters(tasks, { ...empty, statuses: ["todo"] }).matching.map((t) => t.id),
+    ).toEqual(["3"]);
+    expect(
+      applyTaskFilters(tasks, { ...empty, statuses: ["inprogress"] }).matching.map((t) => t.id),
     ).toEqual(["1"]);
     expect(applyTaskFilters(tasks, { ...empty, statuses: ["done"] }).statusMiss).toBe(true);
     expect(

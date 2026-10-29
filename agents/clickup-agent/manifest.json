@@ -33,7 +33,8 @@
             "ingress:clickup-lifecycle",
             "project-management:create-task",
             "project-management:task-tracking",
-            "project-management:sprint-status"
+            "project-management:sprint-status",
+            "clickup:count-tasks"
         ],
         "subscriptions": [
             {
