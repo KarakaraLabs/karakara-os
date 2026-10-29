@@ -4,7 +4,11 @@
 
 //! Rebuild a session [`RefTable`] from durable provenance (graph-backed refs).
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use baml_rt_conversation::view::{ConversationItemContent, ProvenanceConversationContextItem};
 use baml_rt_core::ids::{AgentId, ContextId};
@@ -30,7 +34,15 @@ async fn hydrate_archive_bodies(
     context_id: &ContextId,
     agent_id: Option<&AgentId>,
     table: &RefTable,
+    // `None` hydrates everything (operator). `Some(set)` hydrates only those `archive_local`
+    // values, which for an agent is the set its prompt can actually reference.
+    only_locals: Option<&std::collections::HashSet<u32>>,
 ) -> Result<()> {
+    if let Some(locals) = only_locals
+        && locals.is_empty()
+    {
+        return Ok(());
+    }
     use serde_json::Value;
 
     use super::{
@@ -39,19 +51,27 @@ async fn hydrate_archive_bodies(
     };
 
     let ctx = context_id.as_str();
+    let locals_filter = if only_locals.is_some() {
+        " AND archive_local IN $locals"
+    } else {
+        ""
+    };
     let q = match agent_id {
         Some(_) => format!(
             "SELECT archive_prefix, archive_local, entry FROM {TBL_ARCHIVE_BODY} \
-             WHERE context_id = $ctx AND agent_id = $aid"
+             WHERE context_id = $ctx AND agent_id = $aid{locals_filter}"
         ),
         None => format!(
             "SELECT archive_prefix, archive_local, entry FROM {TBL_ARCHIVE_BODY} \
-             WHERE context_id = $ctx"
+             WHERE context_id = $ctx{locals_filter}"
         ),
     };
     let mut query = store.db().query(&q).bind(("ctx", ctx.to_string()));
     if let Some(agent_id) = agent_id {
         query = query.bind(("aid", agent_id.as_str().to_string()));
+    }
+    if let Some(locals) = only_locals {
+        query = query.bind(("locals", locals.iter().copied().collect::<Vec<u32>>()));
     }
     let response = query.await.map_err(map_surreal_error)?;
     let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
@@ -97,7 +117,34 @@ pub async fn hydrate_ref_table(
     known_text: &HashMap<String, String>,
 ) -> Result<Arc<RefTable>> {
     let table = Arc::new(RefTable::new());
-    let rows = store.history_ref_list_for_context(context_id).await?;
+    // Agent hydration only needs the registry rows for anchors it can cite, and only the archive
+    // bodies it can reference. Operator hydration stays complete by design: the observation routes
+    // render from this path and must see every row and every body.
+    let rows = match principal {
+        ProvenanceReadPrincipal::Agent(_) => {
+            let anchors: Vec<String> = known_text.keys().cloned().collect();
+            let started = Instant::now();
+            let rows = store
+                .history_ref_list_for_anchors(context_id, &anchors)
+                .await?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_history",
+                started.elapsed(),
+            );
+            rows
+        }
+        ProvenanceReadPrincipal::Operator => {
+            let started = Instant::now();
+            let rows = store.history_ref_list_for_context(context_id).await?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_history",
+                started.elapsed(),
+            );
+            rows
+        }
+    };
+
+    let history_ref_count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
 
     match principal {
         ProvenanceReadPrincipal::Operator => {
@@ -129,7 +176,12 @@ pub async fn hydrate_ref_table(
                     .unwrap_or_default();
                 table.insert_virtual_history(n, HistoryEntry::new(anchor, source), text);
             }
-            hydrate_archive_bodies(store, context_id, None, table.as_ref()).await?;
+            let started = Instant::now();
+            hydrate_archive_bodies(store, context_id, None, table.as_ref(), None).await?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_archives",
+                started.elapsed(),
+            );
         }
         ProvenanceReadPrincipal::Agent(agent_id) => {
             // A prompt only shows the reader's window, so the reader can only cite `#N` values
@@ -144,10 +196,67 @@ pub async fn hydrate_ref_table(
                     );
                 }
             }
-            hydrate_archive_bodies(store, context_id, Some(agent_id), table.as_ref()).await?;
+            // Closure of the archive refs this prompt can reference: `@N` mentioned by the rows in
+            // the window, plus every unconsumed Send receipt (the prompt advertises those bodies as
+            // archived-but-not-visible, and the next hop may PageRead them).
+            let mut locals: HashSet<u32> = archive_locals_in_texts(known_text.values());
+            let pending_started = Instant::now();
+            let pending = store
+                .archive_pending_send_locals(context_id, agent_id)
+                .await?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_pending_receipts",
+                pending_started.elapsed(),
+            );
+            locals.extend(pending);
+            let started = Instant::now();
+            hydrate_archive_bodies(
+                store,
+                context_id,
+                Some(agent_id),
+                table.as_ref(),
+                Some(&locals),
+            )
+            .await?;
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "ref_archives",
+                started.elapsed(),
+            );
+            baml_rt_observability::metrics::record_context_projection_volume(
+                "archive_bodies",
+                u64::try_from(locals.len()).unwrap_or(u64::MAX),
+            );
         }
     }
+    baml_rt_observability::metrics::record_context_projection_volume(
+        "history_refs",
+        history_ref_count,
+    );
     Ok(table)
+}
+
+/// `@N` references mentioned by the text a prompt will actually carry.
+fn archive_locals_in_texts<'a>(texts: impl Iterator<Item = &'a String>) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    for text in texts {
+        let bytes = text.as_bytes();
+        let mut index = 0;
+        while let Some(found) = text[index..].find('@') {
+            let at = index + found;
+            let rest = &text[at + 1..];
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if !digits.is_empty()
+                && let Ok(local) = digits.parse::<u32>()
+            {
+                out.insert(local);
+            }
+            index = at + 1 + digits.len();
+            if index >= bytes.len() {
+                break;
+            }
+        }
+    }
+    out
 }
 
 fn conversation_item_history_text(item: &ProvenanceConversationContextItem) -> Option<String> {
