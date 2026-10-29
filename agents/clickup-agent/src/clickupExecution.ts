@@ -81,8 +81,14 @@ const READ_ACTIONS = [
  * assignee, dates, priority, or text, taking that path would silently drop the constraint, so such
  * requests fall back to the generic planner instead. Extend this list (and the traversal) together.
  */
+/**
+ * Constraints the deterministic traversal cannot express: filters on assignee or dates,
+ * ordering by priority, and free-text search. Display fields (names, statuses, assignees,
+ * due dates, priorities) are rendered as columns and must not appear here — the planner
+ * paraphrases the request and routinely lists the fields the caller wants to see.
+ */
 const UNSUPPORTED_READ_QUALIFIERS =
-  /\b(assign(?:ee|ed)?|owner|due|overdue|today|tomorrow|this week|next week|deadline|created|updated|priority|urgent|high|low|normal|search|contains|named|called|title)\b/i;
+  /\b(assigned to|owned by|overdue|past due|due (?:today|tomorrow|this|next|within|before|after)|(?:this|next) (?:week|month)|called|named|containing|mentions?|titled|highest priority|top priority|most urgent|urgent only|only urgent|sort(?:ed)? by|order(?:ed)? by|ranked by)\b/i;
 
 /**
  * Typed read action for this intent, tolerating plans produced before `action` existed.
