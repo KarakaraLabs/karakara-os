@@ -9,6 +9,7 @@ import type {
   RunContext,
   SessionResult,
   StructuredReply,
+  ToolName,
 } from "./baml-runtime";
 
 // Constants
@@ -123,13 +124,14 @@ async function drainToolSession(
 }
 
 async function runSingleSendSession(
-  toolName: string,
+  toolName: ToolName,
   openInput: Record<string, unknown>,
   sendInput: Record<string, unknown>,
 ): Promise<unknown> {
   let sessionHandle: ToolSessionHandle | null = null;
   try {
-    sessionHandle = await openToolSession(toolName, openInput);
+    // The open args are dynamic here: this helper serves any tool in the allowlist.
+    sessionHandle = await openToolSession(toolName, openInput as never);
     await sessionHandle.send(sendInput);
     const drained = await drainToolSession(sessionHandle, MAX_SINGLE_SEND_CONTINUE_STEPS);
     const terminal = drained.steps[drained.steps.length - 1] || null;
@@ -179,11 +181,19 @@ async function discoverAgents(userText: string): Promise<DiscoveredAgent[]> {
 }
 
 // Agent delegation
-async function delegateToAgent(target: RouteTarget, prompt: string): Promise<string[]> {
+async function delegateToAgent(
+  target: RouteTarget,
+  prompt: string,
+  declaredRoute: DeclaredRoutePayload | null = null,
+): Promise<string[]> {
   let sessionHandle: ToolSessionHandle | null = null;
   try {
     sessionHandle = await openToolSession(INTERNAL_A2A_TOOL_NAME, { target });
-    await sessionHandle.send({ parts: [{ text: prompt }] });
+    // The declared route rides with the message as a data part. Specialists that understand it skip
+    // their own classifier; everyone else ignores it and keeps working from the text.
+    const parts: { text?: string; data?: DeclaredRoutePayload }[] = [{ text: prompt }];
+    if (declaredRoute) parts.push({ data: declaredRoute });
+    await sessionHandle.send({ parts });
     const drained = await drainToolSession(sessionHandle, MAX_DELEGATION_CONTINUE_STEPS);
     await sessionHandle.finish();
     sessionHandle = null;
@@ -209,6 +219,88 @@ async function delegateToAgent(target: RouteTarget, prompt: string): Promise<str
     }
     throw err;
   }
+}
+
+// Routing: resolve the turn to specialist capabilities before paying for a plan.
+type DeclaredRoutePayload = {
+  schema: "agent-route/v1";
+  capability: string;
+  goal: string;
+  raw_user_text: string;
+  shape: "single" | "sequence" | "foreach" | "aggregate";
+  filters: Record<string, unknown> | null;
+  unsupported: string[];
+};
+
+type ParsedRoute = {
+  shape: DeclaredRoutePayload["shape"];
+  targets: { agent_package: string; agent_instance_id: string; capability: string }[];
+  goal: string;
+  filters: Record<string, unknown> | null;
+  unsupported: string[];
+};
+
+function parseRoute(value: unknown): ParsedRoute | null {
+  if (!isObject(value)) return null;
+  const shape = value.shape;
+  if (shape !== "single" && shape !== "sequence" && shape !== "foreach" && shape !== "aggregate") return null;
+  const goal = typeof value.goal === "string" ? value.goal.trim() : "";
+  if (!goal) return null;
+  const targets = Array.isArray(value.targets)
+    ? value.targets
+        .map((t) => {
+          if (!isObject(t)) return null;
+          const agent_package = typeof t.agent_package === "string" ? t.agent_package.trim() : "";
+          const agent_instance_id = typeof t.agent_instance_id === "string" ? t.agent_instance_id.trim() : "";
+          const capability = typeof t.capability === "string" ? t.capability.trim() : "";
+          return agent_package && agent_instance_id && capability
+            ? { agent_package, agent_instance_id, capability }
+            : null;
+        })
+        .filter((t): t is ParsedRoute["targets"][number] => t !== null)
+    : [];
+  const unsupported = Array.isArray(value.unsupported)
+    ? value.unsupported.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  return {
+    shape,
+    targets,
+    goal,
+    filters: isObject(value.filters) ? value.filters : null,
+    unsupported,
+  };
+}
+
+/**
+ * A route is only usable directly when it names one target, that target advertised the capability,
+ * and the router reported no constraint it could not encode. Everything else is planned.
+ */
+function directRouteTarget(route: ParsedRoute | null, agents: DiscoveredAgent[]): RouteTarget | null {
+  if (!route || route.shape !== "single") return null;
+  if (route.targets.length !== 1 || route.unsupported.length > 0) return null;
+  const [target] = route.targets;
+  const agent = agents.find(
+    (a) => a.agent_package === target.agent_package && a.agent_instance_id === target.agent_instance_id,
+  );
+  if (!agent) return null;
+  if (!(agent.capabilities || []).includes(target.capability)) return null;
+  return { agent_package: target.agent_package, agent_instance_id: target.agent_instance_id };
+}
+
+function declaredRoutePayload(
+  route: ParsedRoute,
+  capability: string,
+  rawUserText: string,
+): DeclaredRoutePayload {
+  return {
+    schema: "agent-route/v1",
+    capability,
+    goal: route.goal,
+    raw_user_text: rawUserText,
+    shape: route.shape,
+    filters: route.filters ?? null,
+    unsupported: route.unsupported,
+  };
 }
 
 // Workflow planning
@@ -240,7 +332,7 @@ function parseWorkflowPlan(value: unknown): WorkflowPlan | null {
         rationale: typeof node.rationale === "string" ? node.rationale : undefined,
       };
     })
-    .filter((n): n is WorkflowNode => n != null);
+    .filter((n) => n !== null) as WorkflowNode[];
 
   if (nodes.length === 0) return null;
   return {
@@ -407,6 +499,35 @@ async function runWorkflowCoordinator(ctx: RunContext): Promise<SessionResult> {
     return { message: textReply("No specialist agents are currently available. Please try again later.") };
   }
 
+  // Route first: one capability that answers the whole request needs no workflow plan, and the
+  // declared route lets the specialist skip its own classifier.
+  ctx.emit.message("Routing request...");
+  let route: ParsedRoute | null = null;
+  try {
+    route = parseRoute(
+      await RouteCoordinatorRequest({
+        user_message: userText,
+        available_agents: buildAgentCandidates(agents),
+        conversation_context: null,
+      }),
+    );
+  } catch {
+    // Routing is an optimization: fall back to the planner.
+    route = null;
+  }
+
+  const directTarget = directRouteTarget(route, agents);
+  if (directTarget && route) {
+    const declared = declaredRoutePayload(route, route.targets[0]!.capability, userText);
+    try {
+      const texts = await delegateToAgent(directTarget, route.goal, declared);
+      const answer = texts.join("\n").trim();
+      if (answer) return { message: textReply(answer) };
+    } catch (err) {
+      return { error: `Delegation failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
   ctx.emit.message("Planning workflow...");
   let plan: WorkflowPlan;
   try {
@@ -435,6 +556,16 @@ async function runWorkflowCoordinator(ctx: RunContext): Promise<SessionResult> {
     await executeWorkflow(plan, artifacts);
   } catch (err) {
     return { error: `Workflow execution failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // Synthesis policy ("auto"): one completed node already produced a user-ready answer, so a second
+  // model call would only re-paraphrase it. Merge only when several results must be combined.
+  const completed = [...artifacts.values()].filter(
+    (a) => a.status === "completed" && (a.output_text ?? "").trim().length > 0,
+  );
+  const single = completed[0];
+  if (plan.nodes.length === 1 && completed.length === 1 && single) {
+    return { message: textReply((single.output_text ?? "").trim()) };
   }
 
   const transcript = buildTranscript(plan, artifacts);
