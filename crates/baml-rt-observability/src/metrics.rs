@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -39,6 +39,14 @@ static LIVE_STREAM_EVENT_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static LIVE_STREAM_PHASE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static A2A_SSE_STREAM_TO_FIRST_DATA_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static A2A_SSE_TTFB_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static LIVE_STREAM_TURN_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static LIVE_STREAM_TERMINAL_FORWARD_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static EXECUTION_SESSION_OPERATION_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static STEP_EXECUTOR_HOP_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static STEP_EXECUTOR_STAGE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static STREAM_FINALIZE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static CONTEXT_PROJECTION_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static STORE_RESULT_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static LLM_CALL_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static LLM_CALL_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static LLM_PROMPT_BYTES_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
@@ -790,6 +798,70 @@ fn live_stream_phase_histogram() -> &'static Histogram<f64> {
     })
 }
 
+fn live_stream_turn_histogram() -> &'static Histogram<f64> {
+    LIVE_STREAM_TURN_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.a2a.live_stream.turn_duration_ms")
+            .init()
+    })
+}
+
+fn live_stream_terminal_forward_histogram() -> &'static Histogram<f64> {
+    LIVE_STREAM_TERMINAL_FORWARD_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.a2a.live_stream.terminal_forward_duration_ms")
+            .init()
+    })
+}
+
+fn execution_session_operation_histogram() -> &'static Histogram<f64> {
+    EXECUTION_SESSION_OPERATION_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.execution_session.operation_duration_ms")
+            .init()
+    })
+}
+
+fn step_executor_hop_histogram() -> &'static Histogram<f64> {
+    STEP_EXECUTOR_HOP_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.step_executor.hop_duration_ms")
+            .init()
+    })
+}
+
+fn step_executor_stage_histogram() -> &'static Histogram<f64> {
+    STEP_EXECUTOR_STAGE_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.step_executor.stage_duration_ms")
+            .init()
+    })
+}
+
+fn stream_finalize_histogram() -> &'static Histogram<f64> {
+    STREAM_FINALIZE_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.stream_finalize.duration_ms")
+            .init()
+    })
+}
+
+fn context_projection_histogram() -> &'static Histogram<f64> {
+    CONTEXT_PROJECTION_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.quickjs.context_projection.duration_ms")
+            .init()
+    })
+}
+
+fn store_result_histogram() -> &'static Histogram<f64> {
+    STORE_RESULT_HISTOGRAM.get_or_init(|| {
+        global::meter(METER_NAME)
+            .f64_histogram("baml_rt.a2a.live_stream.store_result_duration_ms")
+            .init()
+    })
+}
+
 fn a2a_sse_stream_to_first_data_histogram() -> &'static Histogram<f64> {
     A2A_SSE_STREAM_TO_FIRST_DATA_HISTOGRAM.get_or_init(|| {
         global::meter(METER_NAME)
@@ -892,6 +964,8 @@ pub struct LlmCallMetrics<'a> {
     pub client: &'a str,
     pub model: &'a str,
     pub result: &'a str,
+    /// 1-based user turn ordinal for the context; `0` when unknown.
+    pub turn: u64,
     pub duration: Duration,
     pub prompt_bytes: usize,
     pub tokens_in: Option<u64>,
@@ -905,6 +979,7 @@ pub fn record_llm_call(m: &LlmCallMetrics<'_>) {
         KeyValue::new("client", m.client.to_string()),
         KeyValue::new("model", m.model.to_string()),
         KeyValue::new("result", m.result.to_string()),
+        KeyValue::new("turn", m.turn as i64),
     ];
 
     llm_call_counter().add(1, attributes);
@@ -929,6 +1004,118 @@ pub fn record_live_stream_event(event: &'static str) {
 pub fn record_live_stream_phase_duration(phase: &'static str, duration: Duration) {
     let attributes = &[KeyValue::new("phase", phase.to_string())];
     live_stream_phase_histogram().record(duration.as_secs_f64() * 1000.0, attributes);
+}
+
+/// Wall-clock duration of one complete live-stream turn (dequeued request → terminal forwarded).
+pub fn record_live_stream_turn_duration(agent_package: &str, turn: u64, duration: Duration) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+    ];
+    live_stream_turn_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Time from receiving a terminal collector chunk until it is forwarded to the client.
+pub fn record_terminal_forward_duration(agent_package: &str, turn: u64, duration: Duration) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+    ];
+    live_stream_terminal_forward_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Time spent persisting one live-stream chunk via `store_result`.
+pub fn record_store_result_duration(agent_package: &str, turn: u64, duration: Duration) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+    ];
+    store_result_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Conversation-history projection latency.
+///
+/// `phase` distinguishes the planning-context rebuild (`planning_context`) from the
+/// per-LLM prompt history projection (`history`).
+pub fn record_context_projection(
+    agent_package: &str,
+    turn: u64,
+    phase: &'static str,
+    duration: Duration,
+) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+        KeyValue::new("phase", phase.to_string()),
+    ];
+    context_projection_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Host `__execution_session_invoke` action duration (`operation` and `result` are low-cardinality).
+pub fn record_execution_session_operation(
+    agent_package: &str,
+    turn: u64,
+    operation: &'static str,
+    result: &'static str,
+    duration: Duration,
+) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+        KeyValue::new("operation", operation.to_string()),
+        KeyValue::new("result", result.to_string()),
+    ];
+    execution_session_operation_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// One step-executor hop (`phase`: `entry` / `active` / `consume` / `terminal`).
+pub fn record_step_executor_hop(
+    agent_package: &str,
+    turn: u64,
+    phase: &'static str,
+    result: &'static str,
+    duration: Duration,
+) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+        KeyValue::new("phase", phase.to_string()),
+        KeyValue::new("result", result.to_string()),
+    ];
+    step_executor_hop_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// One stage inside a step-executor hop (`stage`: `history_before` / `invoke` /
+/// `history_after` / `transition`).
+pub fn record_step_executor_stage(
+    agent_package: &str,
+    turn: u64,
+    phase: &'static str,
+    stage: &'static str,
+    duration: Duration,
+) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+        KeyValue::new("phase", phase.to_string()),
+        KeyValue::new("stage", stage.to_string()),
+    ];
+    step_executor_stage_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// One phase of QuickJS stream-invocation finalization (`phase` is low-cardinality).
+pub fn record_stream_finalize_phase(
+    agent_package: &str,
+    turn: u64,
+    phase: &'static str,
+    duration: Duration,
+) {
+    let attributes = &[
+        KeyValue::new("agent_package", agent_package.to_string()),
+        KeyValue::new("turn", turn as i64),
+        KeyValue::new("phase", phase.to_string()),
+    ];
+    stream_finalize_histogram().record(duration.as_millis() as f64, attributes);
 }
 
 /// Time from successful `handle_a2a_stream` return until the first bus chunk is mapped to an SSE `data:` event.

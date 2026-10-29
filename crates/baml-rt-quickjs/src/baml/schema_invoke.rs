@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -141,6 +142,11 @@ impl BamlRuntimeManager {
         }
         if let Some(ref resolver) = self.state.llm_fallback_client_resolver {
             executor.set_llm_fallback_client_resolver(resolver.clone());
+        }
+        // Propagate the deployed package in case the executor is created after
+        // `set_agent_package` (telemetry labels on context projection).
+        if let Some(ref pkg) = self.state.agent_package {
+            executor.set_agent_package(Some(Arc::clone(pkg)));
         }
 
         // Discover functions from the BAML runtime

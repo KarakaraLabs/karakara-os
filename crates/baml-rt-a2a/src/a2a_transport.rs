@@ -1,6 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
-// SPDX-FileCopyrightText: 2026 Karakara Labs
-// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -69,6 +68,17 @@ type LiveStreamSpawnPayload = (
     baml_rt_core::ids::ContextId,
     async_channel::Receiver<TurnInput>,
 );
+
+/// Internal delegations are marked by the `system/internal_a2a` tool.
+/// They share the initiating user turn instead of starting a new one.
+fn is_agent_to_agent_request(request: &Value) -> bool {
+    request
+        .get("params")
+        .and_then(|p| p.get("metadata"))
+        .and_then(|m| m.get("kind"))
+        .and_then(Value::as_str)
+        == Some("agent-to-agent")
+}
 
 /// Single concrete backing store for SurrealDB mode.
 /// One instance is built from the builder's store Arc and reused as TaskStoreBackend and
@@ -1946,6 +1956,11 @@ impl A2aAgent {
 
         while let Ok(turn) = turn_rx.recv().await {
             let turn_span = spans::live_stream_session_turn(session_context_id.as_str());
+            if suspended.is_none() && !is_agent_to_agent_request(&turn.request) {
+                baml_rt_observability::turn::begin_turn(&session_context_id);
+            }
+            let turn_ordinal = baml_rt_observability::turn::current_turn(&session_context_id);
+            let turn_wall_started = Instant::now();
             let action = async {
             let turn_started = Instant::now();
             metrics::record_live_stream_event("turn_dequeued");
@@ -2217,6 +2232,7 @@ impl A2aAgent {
                 );
                 let drain_wait_start = Instant::now();
                 let mut first_drain_chunk = true;
+                let mut terminal_forward_started: Option<Instant> = None;
 
                 loop {
                     let outcome_msg = rx.recv().await;
@@ -2288,6 +2304,9 @@ impl A2aAgent {
                     let (chunk, index, comp) = outcome_msg;
 
                     completion = comp;
+                    if comp.is_some() {
+                        terminal_forward_started = Some(Instant::now());
+                    }
                     let view = StreamChunkView::from_stream_response(&chunk);
                     if !view.is_null() {
                         if let Some(tid) = view.task_id() {
@@ -2295,6 +2314,7 @@ impl A2aAgent {
                         }
                         let store_span =
                             spans::live_stream_store_result(index, view.has_storable_payload());
+                        let store_started = Instant::now();
                         async {
                             let mut raw_for_store =
                                 serde_json::to_value(&chunk).unwrap_or(Value::Null);
@@ -2318,6 +2338,11 @@ impl A2aAgent {
                         }
                         .instrument(store_span)
                         .await;
+                        metrics::record_store_result_duration(
+                            self.agent_package.as_str(),
+                            turn_ordinal,
+                            store_started.elapsed(),
+                        );
                     }
                     if comp == Some(StreamCompletion::InputRequired) && view.is_null() {
                         // Emit a wire chunk so the client receives TASK_STATE_INPUT_REQUIRED. Include a
@@ -2346,6 +2371,13 @@ impl A2aAgent {
                                 "live stream input_required chunk send failed (receiver dropped)"
                             );
                             completion = Some(StreamCompletion::ChannelClosed);
+                        }
+                        if let Some(started) = terminal_forward_started.take() {
+                            metrics::record_terminal_forward_duration(
+                                self.agent_package.as_str(),
+                                turn_ordinal,
+                                started.elapsed(),
+                            );
                         }
                         break;
                     }
@@ -2380,6 +2412,13 @@ impl A2aAgent {
                         .is_err()
                     {
                         tracing::debug!("live stream chunk send failed (receiver dropped)");
+                        if let Some(started) = terminal_forward_started.take() {
+                            metrics::record_terminal_forward_duration(
+                                self.agent_package.as_str(),
+                                turn_ordinal,
+                                started.elapsed(),
+                            );
+                        }
                         completion = Some(StreamCompletion::ChannelClosed);
                         break;
                     } else if from_resume {
@@ -2392,6 +2431,13 @@ impl A2aAgent {
                         }
                     }
                     if comp.is_some() {
+                        if let Some(started) = terminal_forward_started.take() {
+                            metrics::record_terminal_forward_duration(
+                                self.agent_package.as_str(),
+                                turn_ordinal,
+                                started.elapsed(),
+                            );
+                        }
                         break;
                     }
                 }
@@ -2429,7 +2475,14 @@ impl A2aAgent {
 
             match action {
                 TurnAction::Continue => continue,
-                TurnAction::Break => break,
+                TurnAction::Break => {
+                    metrics::record_live_stream_turn_duration(
+                        self.agent_package.as_str(),
+                        turn_ordinal,
+                        turn_wall_started.elapsed(),
+                    );
+                    break;
+                }
             }
         }
 

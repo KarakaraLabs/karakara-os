@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -809,10 +809,18 @@ impl BamlExecutor {
         let Some(provider) = self.conversation_context_provider.as_ref() else {
             return Ok(vec![]);
         };
-        let Some(payload) = provider
+        let projection_started = std::time::Instant::now();
+        let turn = baml_rt_observability::turn::current_turn(scope.context_id());
+        let payload = provider
             .conversation_history_json_for_llm(scope, function_name)
-            .await?
-        else {
+            .await?;
+        baml_rt_observability::metrics::record_context_projection(
+            self.agent_package.as_deref().unwrap_or("unknown"),
+            turn,
+            "history",
+            projection_started.elapsed(),
+        );
+        let Some(payload) = payload else {
             return Ok(vec![]);
         };
         Ok(extract_conversation_array_from_payload(&payload))

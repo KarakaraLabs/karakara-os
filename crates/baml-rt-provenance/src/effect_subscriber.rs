@@ -1,6 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
-// SPDX-FileCopyrightText: 2026 Karakara Labs
-// SPDX-FileCopyrightText: 2026 Karakara Labs
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -740,6 +739,7 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     client: &metadata.client,
                     model: &metadata.model,
                     result: result_label,
+                    turn: baml_rt_observability::turn::current_turn(context_id),
                     duration: std::time::Duration::from_millis(*duration_ms),
                     prompt_bytes: prompt_bytes_for_metrics,
                     tokens_in,

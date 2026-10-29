@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -191,6 +192,11 @@ impl BamlRuntimeManager {
         {
             executor.set_agent_package(Some(Arc::clone(pkg)));
         }
+    }
+
+    /// Deployed agent package name, cloned for telemetry labels.
+    pub fn agent_package(&self) -> Option<Arc<str>> {
+        self.state.agent_package.clone()
     }
 
     /// Returns a handle for session operations. Use this to avoid holding the runtime lock across awaits.

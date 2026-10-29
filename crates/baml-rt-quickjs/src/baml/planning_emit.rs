@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -33,6 +34,7 @@ pub(crate) struct PlanningEmitEnv<'a> {
     pub effect_emitter: &'a Option<Arc<dyn EffectEmitter>>,
     pub tool_registry: &'a Arc<ConcreteToolRegistry>,
     pub conversation_context_provider: &'a Option<Arc<dyn ConversationContextProvider>>,
+    pub agent_package: Option<&'a str>,
 }
 
 impl PlanningEmitEnv<'_> {
@@ -51,9 +53,18 @@ impl PlanningEmitEnv<'_> {
         available_tools.dedup();
         let conversation_history =
             if let Some(provider) = self.conversation_context_provider.as_ref() {
-                provider
+                let projection_started = std::time::Instant::now();
+                let turn = baml_rt_observability::turn::current_turn(scope.context_id());
+                let history = provider
                     .conversation_history_json(scope, function_name)
-                    .await?
+                    .await?;
+                baml_rt_observability::metrics::record_context_projection(
+                    self.agent_package.unwrap_or("unknown"),
+                    turn,
+                    "planning_context",
+                    projection_started.elapsed(),
+                );
+                history
             } else {
                 None
             };

@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -13,6 +14,7 @@ impl BamlRuntimeManager {
             effect_emitter: &self.state.effect_emitter,
             tool_registry: &self.state.tool_registry,
             conversation_context_provider: &self.state.conversation_context_provider,
+            agent_package: self.state.agent_package.as_deref(),
         }
     }
 

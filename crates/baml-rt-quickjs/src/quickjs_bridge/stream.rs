@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -223,7 +224,12 @@ impl QuickJSBridge {
     /// `context_id` are left untouched. For `MessageScope`, all sessions for the context are
     /// closed (legacy behavior).
     pub(crate) async fn finalize_a2a_stream_invocation(&mut self, session_id: StreamSessionId) {
+        let finalize_started = std::time::Instant::now();
+        let agent_package = self.baml_manager().read().await.agent_package();
+        let agent_package = agent_package.as_deref().unwrap_or("unknown").to_string();
+
         // --- 1. Resolve runtime scope for teardown (read-only; don't close session yet) ---
+        let phase_started = std::time::Instant::now();
         let invocation_context_id = self
             .stream_sessions
             .get(&session_id)
@@ -236,21 +242,46 @@ impl QuickJSBridge {
                 .ok()
                 .and_then(|reg| reg.get_scope(id))
         });
+        let turn = runtime_scope
+            .as_ref()
+            .map(|scope| baml_rt_observability::turn::current_turn(scope.context_id()))
+            .unwrap_or(0);
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "resolve_scope",
+            phase_started.elapsed(),
+        );
 
         // --- 2. Drain event-loop pending jobs so any __baml_invoke (and other) continuations
         // run while the context and session are still valid. Context is non-nullable; we must
         // not close or exit until the runtime has processed queued work for this stream.
         // Run on current thread; runtime is not necessarily Arc in all builds.
+        let phase_started = std::time::Instant::now();
         self.runtime
             .exe_rt_task_in_event_loop(|r| r.run_pending_jobs_if_any());
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "drain_pending_jobs",
+            phase_started.elapsed(),
+        );
 
         // --- 3. Close + cancel session (only after drain so natives see valid session) ---
+        let phase_started = std::time::Instant::now();
         if let Some(session) = self.stream_sessions.get(&session_id) {
             session.closed.store(true, Ordering::Release);
             session.cancel.cancel();
         }
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "close_cancel_session",
+            phase_started.elapsed(),
+        );
 
         // --- 4. Close tool sessions for this task scope (or full context for message-scope) ---
+        let phase_started = std::time::Instant::now();
         if let Some(ref scope) = runtime_scope {
             let cid = scope.context_id();
             let task_id = scope.task_id_opt();
@@ -265,17 +296,43 @@ impl QuickJSBridge {
                 );
             }
         }
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "close_tool_sessions",
+            phase_started.elapsed(),
+        );
 
         // --- 5. Exit this session's LIFO context (before removing session) ---
+        let phase_started = std::time::Instant::now();
         if let Some(ref id) = invocation_context_id
             && let Ok(mut reg) = self.invocation_context_registry.lock()
         {
             reg.exit(id);
         }
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "exit_context",
+            phase_started.elapsed(),
+        );
 
         // --- 6. Remove session (drops permit) and yield sender ---
+        let phase_started = std::time::Instant::now();
         self.stream_sessions.remove(&session_id);
         self.a2a_yield_tx_by_session.remove(&session_id);
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "remove_session",
+            phase_started.elapsed(),
+        );
+        baml_rt_observability::metrics::record_stream_finalize_phase(
+            agent_package.as_str(),
+            turn,
+            "total",
+            finalize_started.elapsed(),
+        );
         tracing::debug!(%session_id, "finalize_a2a_stream_invocation: session closed and removed");
 
         // Do NOT restore or remove global JS helpers (__baml_invoke, __baml_stream, etc.).

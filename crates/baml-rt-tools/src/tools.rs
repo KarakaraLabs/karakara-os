@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1988,6 +1988,8 @@ pub trait ToolBundle: Send + Sync {
 pub struct ToolRegistry {
     inner: StdMutex<ToolRegistryInner>,
     sessions: DashMap<ToolSessionId, Arc<TokioMutex<Box<dyn ToolSession>>>>,
+    /// Tool name bound to each open session (low-cardinality metric labels).
+    session_tool_name: DashMap<ToolSessionId, String>,
     /// Config version used when session was opened (for provenance linkage).
     session_config_version: DashMap<ToolSessionId, u64>,
 }
@@ -2480,6 +2482,7 @@ impl ToolRegistry {
                 secret_resolver: None,
             }),
             sessions: DashMap::new(),
+            session_tool_name: DashMap::new(),
             session_config_version: DashMap::new(),
         }
     }
@@ -2872,6 +2875,14 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Tool name bound to an open session, used for low-cardinality metric labels.
+    fn tool_name_for_session(&self, session_id: &ToolSessionId) -> String {
+        self.session_tool_name
+            .get(session_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
     /// Open a tool session and return its session id.
     /// `context_id` and `agent_id` come from the invocation scope.
     pub async fn open_session(
@@ -2955,6 +2966,8 @@ impl ToolRegistry {
             let session = handler.open_session(ctx, open_input).await?;
             self.sessions
                 .insert(session_id.clone(), Arc::new(TokioMutex::new(session)));
+            self.session_tool_name
+                .insert(session_id.clone(), parsed.to_string());
             if let Some(ver) = config_version {
                 self.session_config_version.insert(session_id.clone(), ver);
             }
@@ -2965,8 +2978,10 @@ impl ToolRegistry {
         .await;
 
         let duration = start.elapsed();
-        crate::metrics::record_session_open(&parsed.to_string());
-        crate::metrics::record_session_operation("open", duration);
+        let tool_name = parsed.to_string();
+        let result_label = if result.is_ok() { "success" } else { "error" };
+        crate::metrics::record_session_open(&tool_name);
+        crate::metrics::record_session_operation("open", &tool_name, result_label, duration);
 
         result?;
         Ok(session_id)
@@ -2999,7 +3014,9 @@ impl ToolRegistry {
         .await;
 
         let duration = start.elapsed();
-        crate::metrics::record_session_operation("send", duration);
+        let tool_name = self.tool_name_for_session(session_id);
+        let result_label = if result.is_ok() { "success" } else { "error" };
+        crate::metrics::record_session_operation("send", &tool_name, result_label, duration);
 
         result
     }
@@ -3031,7 +3048,9 @@ impl ToolRegistry {
         .await;
 
         let duration = start.elapsed();
-        crate::metrics::record_session_operation("read", duration);
+        let tool_name = self.tool_name_for_session(session_id);
+        let result_label = if result.is_ok() { "success" } else { "error" };
+        crate::metrics::record_session_operation("read", &tool_name, result_label, duration);
 
         result
     }
@@ -3052,7 +3071,10 @@ impl ToolRegistry {
         .await;
 
         let duration = start.elapsed();
-        crate::metrics::record_session_operation("finish", duration);
+        let tool_name = self.tool_name_for_session(session_id);
+        let result_label = if result.is_ok() { "success" } else { "error" };
+        crate::metrics::record_session_operation("finish", &tool_name, result_label, duration);
+        self.session_tool_name.remove(session_id);
 
         result
     }
@@ -3078,7 +3100,10 @@ impl ToolRegistry {
         .await;
 
         let duration = start.elapsed();
-        crate::metrics::record_session_operation("abort", duration);
+        let tool_name = self.tool_name_for_session(session_id);
+        let result_label = if result.is_ok() { "success" } else { "error" };
+        crate::metrics::record_session_operation("abort", &tool_name, result_label, duration);
+        self.session_tool_name.remove(session_id);
 
         result
     }
