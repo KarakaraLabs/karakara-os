@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Karakara Labs
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Optional wrapper for a local TypeSafe-enabled coordinator stack.
 # Replace the placeholder in .env, or export TYPESAFE_API_KEY before running.
 set -euo pipefail
