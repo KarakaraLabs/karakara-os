@@ -1584,11 +1584,10 @@ pub(super) async fn register_baml_stream_helper(bridge: &QuickJSBridge) -> Resul
                 ))
             })?;
 
-            let (context_tags, stream_session_id_for_chunks) = stream_sessions
+            let stream_session_id_for_chunks = stream_sessions
                 .iter()
                 .find(|entry| !entry.value().is_terminated() && entry.value().scope == scope)
-                .map(|entry| (entry.value().context_tags.clone(), Some(entry.key().0)))
-                .unwrap_or((None, None));
+                .map(|entry| entry.key().0);
 
             let func_name_clone = func_name.clone();
             let manager_for_promise = manager_clone.clone();
@@ -1608,6 +1607,14 @@ pub(super) async fn register_baml_stream_helper(bridge: &QuickJSBridge) -> Resul
                     context::with_scope(scope_for_scope.clone(), async move {
                         let inv = {
                             let manager = manager_for_promise.read().await;
+                            // Resolve tags for the invoked BAML function, not the JS entrypoint:
+                            // per-function context requirements are keyed by BAML function name.
+                            let context_tags = manager
+                                .build_conversation_context_tags(&scope_for_scope, &func_name_clone)
+                                .await
+                                .map_err(|e| {
+                                    quickjs_runtime::jsutils::JsError::new_str(&e.to_string())
+                                })?;
                             manager.invoke_function_stream(
                                 &scope_for_scope,
                                 &func_name_clone,
@@ -1824,7 +1831,6 @@ pub(super) async fn register_baml_stream_session_helper(bridge: &QuickJSBridge) 
                 ))
             })?;
 
-            let context_tags = session.context_tags.clone();
             let stream_session_id_for_chunks = session_id.0;
             let correlation_id = session.correlation_id.clone();
             let scope_for_run = scope.clone();
@@ -1836,16 +1842,27 @@ pub(super) async fn register_baml_stream_session_helper(bridge: &QuickJSBridge) 
                 let _in_flight_guard = InFlightGuard(guard_counter);
                 let run = async move {
                     context::with_scope(scope, async move {
-                        let inv = manager_for_promise
-                            .read()
-                            .await
-                            .invoke_function_stream(
-                                &scope_for_run,
-                                &func_name,
-                                args_json.clone(),
-                                context_tags,
-                            )
-                            .map_err(|e| quickjs_runtime::jsutils::JsError::new_str(&e.to_string()))?;
+                        let inv = {
+                            let manager = manager_for_promise.read().await;
+                            // Resolve tags for the invoked BAML function, not the JS entrypoint:
+                            // per-function context requirements are keyed by BAML function name.
+                            let context_tags = manager
+                                .build_conversation_context_tags(&scope_for_run, &func_name)
+                                .await
+                                .map_err(|e| {
+                                    quickjs_runtime::jsutils::JsError::new_str(&e.to_string())
+                                })?;
+                            manager
+                                .invoke_function_stream(
+                                    &scope_for_run,
+                                    &func_name,
+                                    args_json.clone(),
+                                    context_tags,
+                                )
+                                .map_err(|e| {
+                                    quickjs_runtime::jsutils::JsError::new_str(&e.to_string())
+                                })?
+                        };
 
                         let (tx, mut rx) = mpsc::channel::<Value>(64);
                         let tx_closure = tx.clone();

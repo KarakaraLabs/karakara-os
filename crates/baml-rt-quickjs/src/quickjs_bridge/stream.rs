@@ -414,16 +414,10 @@ impl QuickJSBridge {
             guard.enter(scope.as_scope().clone(), correlation_id.clone())
         };
 
-        // Pre-build conversation context tags for resume (stream path). Hold lock only for the async call.
-        let context_tags = self
-            .baml_manager
-            .read()
-            .await
-            .build_conversation_context_tags(scope.as_scope(), function_name)
-            .await
-            .ok()
-            .flatten();
-
+        // No conversation context is built here: `function_name` is the JavaScript
+        // entrypoint (`onChatMessage`), not the BAML function that will run. The
+        // `__baml_stream` / `__baml_invoke_session` helpers resolve tags once the real
+        // function name is known, so per-function context requirements apply.
         let session = Arc::new(StreamInvocationSession {
             id: session_id,
             scope: scope.as_scope().clone(),
@@ -432,7 +426,6 @@ impl QuickJSBridge {
             closed: AtomicBool::new(false),
             permit: Some(permit),
             context_id: Some(context_id),
-            context_tags,
         });
         self.stream_sessions.insert(session_id, session);
         self.a2a_yield_tx_by_session.insert(session_id, tx);
