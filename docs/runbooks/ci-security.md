@@ -32,9 +32,11 @@ Always safe on fork PRs (already on `ubuntu-latest`, no secrets):
 
 Never fork-triggered:
 
-- `claude-md-sync.yml` (push to `main` only; uses `OPENROUTER_API_KEY` + `contents: write`)
+- `claude-md-sync.yml` (`workflow_dispatch` / push to `main`; uses `OPENROUTER_API_KEY` + `contents: write`)
 - `sandbox-e2e-kvm.yml` (`workflow_dispatch` / weekly cron; `kvm-enabled` runners)
-- `release-tag-verify.yml` (tag push only)
+- `release-publish.yml` (tag push / `workflow_dispatch`)
+
+For the full inventory of all 9 workflows, runner costs, and required secrets/variables, see [`docs/workflows/README.md`](../workflows/README.md).
 
 ## Required GitHub settings
 

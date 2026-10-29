@@ -56,6 +56,16 @@ Completed implementation plans kept for design and migration history.
 | [tool-schema-graph.md](plans/tool-schema-graph.md) | Canonical JSON Schema graph migration for generated tool DTOs |
 | [tool-typescript-codegen.md](plans/tool-typescript-codegen.md) | Graph-driven TypeScript tool DTOs, catalog maps, and imperative session API |
 
+## Workflows & CI (`docs/workflows/`)
+
+GitHub Actions workflows, runner architecture, required secrets/variables, and zero-cost public-repo alternatives.
+
+| Doc | Purpose |
+|-----|---------|
+| [README.md](workflows/README.md) | Master inventory of all 9 GitHub Actions workflows, triggers, status, and CLI commands |
+| [runners-and-zero-cost-alternatives.md](workflows/runners-and-zero-cost-alternatives.md) | Runner map (`ubuntu-latest` vs self-hosted `arc-runner-set` / `kvm-enabled`) and `$0` migration paths |
+| [secrets-variables-and-external-ties.md](workflows/secrets-variables-and-external-ties.md) | Matrix of `secrets.*`, `vars.*`, `fnox.toml`, `.env.example`, GHCR, BAML fork, and Git LFS |
+
 ## Runbooks (`docs/runbooks/`)
 
 Install, test, demo, and operate.
