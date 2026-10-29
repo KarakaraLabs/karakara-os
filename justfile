@@ -24,6 +24,13 @@ slack_channel := "karakara-eng"
 # Safe defaults in code: if these are unset, OTLP export stays disabled.
 otel_endpoint := "http://localhost:4317"
 otel_protocol := "grpc"
+# Console (`fmt`) filter for the coordinator stacks. The provenance projection stage timings
+# (`storage_head`, `storage_window`, `storage_delegations`, `storage_hydrate`) log at DEBUG from
+# `baml_rt_a2a`, but the built-in defaults in `baml-rt-observability` pin every `baml_rt*` crate at
+# INFO and only raise `baml_rt_quickjs`. Setting `RUST_LOG_FMT` replaces those defaults wholesale,
+# so the QuickJS noise suppression is repeated here. Override it from the shell or `.env` to widen
+# or narrow this.
+console_log_filter := "baml_rt=info,baml_rt_a2a=debug,baml_rt_provenance=debug,baml_rt_quickjs=debug,baml_rt_interceptor=debug,baml_agent_runner=info,quickjs_runtime::quickjsrealmadapter=warn,quickjs_runtime::typescript=warn"
 
 # Binaries (build with `just build` / `just build-release`; paths default to release).
 # Respect CARGO_TARGET_DIR when present (.env sets it in some dev setups).
@@ -211,6 +218,9 @@ otel-summary window='30m':
     }
 
     echo "== OTEL summary (window: $W) =="
+    echo "   Totals cover every process run in the window. Averages that follow blend"
+    echo "   them, so an old slow run inflates the mean. The provenance table below is"
+    echo "   per run for that reason."
     echo
 
     echo "-- Total time split --"
@@ -218,6 +228,32 @@ otel-summary window='30m':
     tool_total=$(q "sum(increase(baml_rt_tool_invocation_duration_ms_sum[$W]))" | jq -r '.data.result[0].value[1] // "0"')
     echo "LLM total:  $(fmt_ms "$llm_total")"
     echo "Tool total: $(fmt_ms "$tool_total")"
+    echo
+
+    echo "-- Provenance read stages, mean per call, per process run --"
+    # last_over_time rather than increase: a finished run keeps its final cumulative
+    # value, so the ratio is that run's mean per call. increase() needs two or more
+    # samples, which drops short runs to zero and makes a slow old run look free.
+    stage_means=$(q "sum by (service_instance_id, stage) (last_over_time(baml_rt_quickjs_context_projection_stage_duration_ms_sum[$W])) / sum by (service_instance_id, stage) (last_over_time(baml_rt_quickjs_context_projection_stage_duration_ms_count[$W]))")
+    live_ids=$(q "max by (service_instance_id) (count_over_time(baml_rt_quickjs_context_projection_stage_duration_ms_count[3m]))" \
+      | jq -r '[.data.result[]?.metric.service_instance_id // empty] | join(" ")')
+    if [[ "$(echo "$stage_means" | jq -r '.data.result | length')" == "0" ]]; then
+      echo "  (no projection stage samples in this window)"
+    else
+      # One row per stage per run. Runs are never averaged together.
+      echo "$stage_means" \
+        | jq -r '.data.result[]? | "\(.metric.service_instance_id // "?")\t\(.metric.stage // "?")\t\(.value[1])"' \
+        | sort -t$'\t' -k1,1 -k2,2 \
+        | awk -F'\t' -v live="$live_ids" '
+            BEGIN { n = split(live, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") alive[a[i]] = 1 }
+            $3 + 0 < 0.5 { next }
+            {
+              mark = ($1 in alive) ? "*" : " "
+              printf "  %s %-8s %-22s %9.1f ms\n", mark, substr($1, 1, 8), $2, $3
+            }'
+      echo "  (* = process still running; unmarked rows are finished runs)"
+      echo "  (stages under 1 ms are omitted)"
+    fi
     echo
 
     echo "-- LLM total time by function (desc) --"
@@ -352,6 +388,7 @@ coordinator-agent: build-release
     set -a
     [ -f .env ] && . ./.env
     set +a
+    export RUST_LOG_FMT="${RUST_LOG_FMT:-{{console_log_filter}}}"
     (
       ./scripts/wait-runner-http.sh "{{runner_base_url}}" {{runner_http_ready_secs}}
       {{karak_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
@@ -374,6 +411,7 @@ coordinator-agent-debug: build-debug
     set -a
     [ -f .env ] && . ./.env
     set +a
+    export RUST_LOG_FMT="${RUST_LOG_FMT:-{{console_log_filter}}}"
     (
       ./scripts/wait-runner-http.sh "{{runner_base_url}}" {{runner_http_ready_secs}}
       {{karak_debug_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
