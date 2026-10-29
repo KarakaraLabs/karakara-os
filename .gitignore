@@ -84,3 +84,6 @@ result
 
 # insta pending snapshots (never commit)
 *.snap.new
+
+# Karakara Labs Team Related
+.ravs/
