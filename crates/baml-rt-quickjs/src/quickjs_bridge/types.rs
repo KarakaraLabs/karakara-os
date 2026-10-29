@@ -4,12 +4,9 @@
 
 //! Shared types for the QuickJS bridge: eval lifecycle, stream sessions, and polling.
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex as StdMutex,
-        atomic::{AtomicU32, Ordering},
-    },
+use std::sync::{
+    Arc, Mutex as StdMutex,
+    atomic::{AtomicU32, Ordering},
 };
 
 use baml_rt_core::context::RuntimeScope;
@@ -70,7 +67,6 @@ pub(crate) struct StreamInvocationSession {
     )]
     pub(crate) permit: Option<StreamPermit>,
     pub(crate) context_id: Option<InvocationContextId>,
-    pub(crate) context_tags: Option<HashMap<String, baml_types::BamlValue>>,
 }
 
 impl StreamInvocationSession {

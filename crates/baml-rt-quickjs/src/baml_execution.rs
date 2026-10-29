@@ -389,8 +389,13 @@ impl BamlExecutor {
         interceptor_registry: Option<Arc<Mutex<InterceptorRegistry>>>,
         planning_step: Option<(String, String)>,
         function_tool_manifest: &crate::baml::FunctionToolManifest,
-        // Override context tags — merged intra-turn history. When Some, skips provider query.
-        override_context_tags: Option<HashMap<String, BamlValue>>,
+        // Conversation context tags already resolved by [`BamlRuntimeManager`].
+        //
+        // The executor never projects history itself: only the manager knows the
+        // package's per-function `InvocationContextRequirements`, so `None` here means
+        // "this function gets no tags" (opted out, or no provider) and must not be
+        // re-resolved. Re-enabling the old fallback would bypass manifest opt-outs.
+        context_tags: Option<HashMap<String, BamlValue>>,
     ) -> Result<(Value, Option<LLMCompletionHandle>)> {
         tracing::debug!(
             function = function_name,
@@ -464,13 +469,6 @@ impl BamlExecutor {
             });
 
         // Pre-execution interception: intercept LLM calls before they're sent
-        let context_tags = match override_context_tags {
-            Some(tags) => Some(tags),
-            None => {
-                self.build_conversation_context_tags(scope, function_name)
-                    .await?
-            }
-        };
         let ctx_manager = self.create_ctx_manager_for_scope(scope, context_tags)?;
         let planning_step_refs = planning_step
             .as_ref()
