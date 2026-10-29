@@ -1102,6 +1102,147 @@ export function taskFiltersFromIntent(
   };
 }
 
+/**
+ * Wire schema for a route declared by a calling coordinator.
+ *
+ * Sent as an A2A data part next to the human-readable text. When it validates, this agent executes
+ * the declared capability directly instead of re-classifying a paraphrase of the request. Absent or
+ * invalid declarations fall back to classification, so ingress, human messages, and older callers
+ * keep working unchanged.
+ */
+export const DECLARED_ROUTE_SCHEMA = "agent-route/v1";
+
+export interface DeclaredRoute {
+  schema: string;
+  goal: string;
+  capability: string | null;
+  raw_user_text: string | null;
+  shape: string | null;
+  filters: ClickUpTaskFilters;
+  unsupported: string[];
+}
+
+/** Capabilities this agent advertises in its manifest, mapped to the typed read action. */
+const CAPABILITY_READ_ACTIONS: Record<string, ClickUpIntent["action"]> = {
+  "clickup:list-tasks": "list_tasks",
+  "clickup:get-task": "get_task",
+  "clickup:list-spaces": "navigate",
+};
+
+const CAPABILITY_WRITE_ACTIONS: Record<string, ClickUpIntent["action"]> = {
+  "clickup:create-task": "other",
+  "project-management:create-task": "other",
+};
+
+const CAPABILITY_PRIORITIZE = "clickup:prioritize";
+
+function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  // Accept the route directly or wrapped under a named key, so callers can namespace it.
+  const candidate =
+    record.schema === DECLARED_ROUTE_SCHEMA
+      ? record
+      : record.declared_route !== null &&
+          typeof record.declared_route === "object" &&
+          !Array.isArray(record.declared_route)
+        ? (record.declared_route as Record<string, unknown>)
+        : null;
+  if (!candidate || candidate.schema !== DECLARED_ROUTE_SCHEMA) return null;
+
+  const goal = optionalText(candidate.goal);
+  if (!goal) return null;
+  const filters =
+    candidate.filters !== null &&
+    typeof candidate.filters === "object" &&
+    !Array.isArray(candidate.filters)
+      ? (candidate.filters as Record<string, unknown>)
+      : {};
+  const unsupported = Array.isArray(candidate.unsupported)
+    ? candidate.unsupported
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    : [];
+
+  return {
+    schema: DECLARED_ROUTE_SCHEMA,
+    goal,
+    capability: optionalText(candidate.capability),
+    raw_user_text: optionalText(candidate.raw_user_text),
+    shape: optionalText(candidate.shape),
+    filters: {
+      status: optionalText(filters.status),
+      assignee: optionalText(filters.assignee),
+      priority: normalizedChoice(filters.priority, PRIORITY_FILTERS),
+      due: normalizedChoice(filters.due, DUE_FILTERS),
+      text: optionalText(filters.text),
+    },
+    unsupported,
+  };
+}
+
+/** Extract a declared route from the inbound message parts, if the caller sent one. */
+export function declaredRouteFromMessage(message: unknown): DeclaredRoute | null {
+  if (message === null || typeof message !== "object") return null;
+  const parts = (message as { parts?: unknown }).parts;
+  if (!Array.isArray(parts)) return null;
+  for (const part of parts) {
+    if (part === null || typeof part !== "object") continue;
+    const route = declaredRouteFromValue((part as { data?: unknown }).data);
+    if (route) return route;
+  }
+  return null;
+}
+
+/**
+ * Build the typed read intent a calling coordinator already declared.
+ *
+ * Returns null when the capability is unknown, the goal is missing, or the coordinator reported a
+ * constraint it could not encode: the caller must then classify, which is the slow but correct path.
+ */
+export function clickUpIntentFromDeclaredRoute(
+  route: DeclaredRoute,
+): ClickUpIntent | null {
+  if (route.unsupported.length > 0) return null;
+  const capability = route.capability ?? "";
+  const readAction = CAPABILITY_READ_ACTIONS[capability];
+  const writeAction = CAPABILITY_WRITE_ACTIONS[capability];
+  if (!readAction && !writeAction) return null;
+
+  return {
+    kind: "intent",
+    // Keep the declared goal verbatim: no second paraphrase in the child.
+    intent: route.goal,
+    operation_kind: writeAction ? "write" : "read",
+    action: readAction ?? writeAction!,
+    status_filter: route.filters.status,
+    assignee_filter: route.filters.assignee,
+    priority_filter: route.filters.priority,
+    due_filter: route.filters.due,
+    text_filter: route.filters.text,
+    unsupported: null,
+    scope_hint: null,
+  };
+}
+
+/** Build a priority intent from a declared `clickup:prioritize` route. */
+export function clickUpPriorityIntentFromDeclaredRoute(
+  route: DeclaredRoute,
+): ClickUpPriorityIntent | null {
+  if (route.capability !== CAPABILITY_PRIORITIZE) return null;
+  if (route.unsupported.length > 0) return null;
+  return {
+    kind: "prioritize",
+    intent: route.goal,
+    scope: "all_accessible",
+    scope_hint: null,
+    status_filter: route.filters.status,
+  };
+}
+
 /** True when the intent narrows the task list at all. */
 export function hasTaskFilters(filters: ClickUpTaskFilters): boolean {
   return (

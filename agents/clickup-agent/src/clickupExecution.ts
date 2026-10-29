@@ -17,6 +17,9 @@ import {
   PKG_CLICKUP_FORMAT,
   applyTaskFilters,
   hasTaskFilters,
+  clickUpIntentFromDeclaredRoute,
+  clickUpPriorityIntentFromDeclaredRoute,
+  declaredRouteFromMessage,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
@@ -29,12 +32,18 @@ export {
   PKG_CLICKUP_FORMAT,
   applyTaskFilters,
   hasTaskFilters,
+  clickUpIntentFromDeclaredRoute,
+  clickUpPriorityIntentFromDeclaredRoute,
+  declaredRouteFromMessage,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
   taskFiltersFromIntent,
 };
-export type { ClickUpTaskFilters } from "./clickupWorkflow";
+export type {
+  ClickUpTaskFilters,
+  DeclaredRoute,
+} from "./clickupWorkflow";
 
 export function isJsonObject(v: unknown): v is JsonObject {
   return v !== null && typeof v === "object" && !Array.isArray(v);
