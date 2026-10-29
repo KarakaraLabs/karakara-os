@@ -673,6 +673,32 @@ const READ_TRAVERSAL: TraversalLimits = {
   purpose: "list",
 };
 
+/**
+ * Run `fn` over `items` with bounded concurrency, preserving input order.
+ *
+ * Used for ClickUp fan-out: each list is an independent API call, and doing them serially makes the
+ * traversal scale linearly with the number of lists.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index]!, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+const CLICKUP_FANOUT_CONCURRENCY = 4;
+
 async function collectAllTasks(
   limits: TraversalLimits = PRIORITY_TRAVERSAL,
 ): Promise<ClickUpTaskSummary[]> {
@@ -683,34 +709,38 @@ async function collectAllTasks(
     );
   }
 
-  const spaces: ClickUpItem[] = [];
-  for (const team of teams) {
-    spaces.push(...((await callClickUp({ team_id: team.id })).items ?? []));
-    if (spaces.length > MAX_ALL_SPACES) {
-      throw new Error(
-        "There are too many spaces to search safely. Name a workspace, space, or list.",
-      );
-    }
+  const spaces = (
+    await mapWithConcurrency(teams, CLICKUP_FANOUT_CONCURRENCY, async (team) =>
+      (await callClickUp({ team_id: team.id })).items ?? [],
+    )
+  ).flat();
+  if (spaces.length > MAX_ALL_SPACES) {
+    throw new Error(
+      "There are too many spaces to search safely. Name a workspace, space, or list.",
+    );
   }
 
-  const lists: ClickUpItem[] = [];
-  for (const space of spaces) {
-    lists.push(...((await callClickUp({ space_id: space.id })).items ?? []));
-    if (lists.length > MAX_ALL_LISTS) {
-      throw new Error(
-        "There are too many lists to search safely. Name a workspace, space, or list.",
-      );
-    }
+  const lists = (
+    await mapWithConcurrency(spaces, CLICKUP_FANOUT_CONCURRENCY, async (space) =>
+      (await callClickUp({ space_id: space.id })).items ?? [],
+    )
+  ).flat();
+  if (lists.length > MAX_ALL_LISTS) {
+    throw new Error(
+      "There are too many lists to search safely. Name a workspace, space, or list.",
+    );
   }
 
-  const tasks: ClickUpTaskSummary[] = [];
-  for (const list of lists) {
-    tasks.push(...((await callClickUp({ list_id: list.id })).tasks ?? []));
-    if (tasks.length > limits.maxTasks) {
-      throw new Error(
-        `There are too many tasks to ${limits.purpose} safely. Name a workspace, space, or list.`,
-      );
-    }
+  const taskPages = await mapWithConcurrency(
+    lists,
+    CLICKUP_FANOUT_CONCURRENCY,
+    async (list) => (await callClickUp({ list_id: list.id })).tasks ?? [],
+  );
+  const tasks = taskPages.flat();
+  if (tasks.length > limits.maxTasks) {
+    throw new Error(
+      `There are too many tasks to ${limits.purpose} safely. Name a workspace, space, or list.`,
+    );
   }
   return tasks;
 }
@@ -750,19 +780,26 @@ async function collectScopedTasks(
 async function prioritizeTasks(
   intent: ClickUpPriorityIntent,
   tasks: ClickUpTaskSummary[],
+  scopeNote: string | null = null,
 ): Promise<PriorityDecision> {
-  const requestedStatus = intent.status_filter?.trim() || null;
-  const candidates = requestedStatus
-    ? tasks.filter(
-        (task) => normalizedStatus(task.status) === normalizedStatus(requestedStatus),
-      )
-    : tasks;
+  const requestedStatuses = intentStatuses(intent);
+  const wanted = requestedStatuses.map(normalizedStatus);
+  const candidates =
+    wanted.length > 0
+      ? tasks.filter((task) => {
+          const status = normalizedStatus(task.status);
+          return wanted.some(
+            (value) => status === value || status.includes(value) || value.includes(status),
+          );
+        })
+      : tasks;
   if (candidates.length === 0)
     return {
       outcome: "abstain",
-      reason: requestedStatus
-        ? `No tasks with status ${requestedStatus} were returned from the selected scope.`
-        : "No tasks were returned from the selected scope.",
+      reason:
+        requestedStatuses.length > 0
+          ? `No tasks with status ${requestedStatuses.join(" or ")} were returned from the selected scope.`
+          : "No tasks were returned from the selected scope.",
     };
   if (candidates.length > MAX_ALL_TASKS) {
     return {
@@ -777,8 +814,10 @@ async function prioritizeTasks(
   criteria.none = "The task records do not support a recommendation.";
   const outcome = await invokeTool("typesafe/system_one", {
     state: {
-      user_goal: intent.intent,
-      status_filter: requestedStatus,
+      // The scope note tells Jev which set the user is looking at, so it can prefer a task outside
+      // that set when the records justify it instead of hedging.
+      user_goal: scopeNote ? `${intent.intent} (${scopeNote})` : intent.intent,
+      status_filter: requestedStatuses.join(", ") || null,
       tasks: candidates.map(taskState),
     },
     questions: {
@@ -856,6 +895,7 @@ async function prioritizeTasks(
  */
 export async function runClickUpPriorityWorkflow(
   intent: ClickUpPriorityIntent,
+  scopeNote: string | null = null,
 ): Promise<SessionResult> {
   const prioritySlug = slugGoal(intent.intent);
   const executionSession =
@@ -905,7 +945,7 @@ export async function runClickUpPriorityWorkflow(
     await executable?.completeStep?.("discover-clickup-scope");
 
     await executable?.startStep?.("evaluate-priority");
-    const decision = await prioritizeTasks(intent, tasks);
+    const decision = await prioritizeTasks(intent, tasks, scopeNote);
     await executable?.completeStep?.("evaluate-priority");
 
     if (decision.outcome === "abstain") {
@@ -913,9 +953,11 @@ export async function runClickUpPriorityWorkflow(
       // trip to hedge about a decision that was never made adds seconds and no information.
       await executable?.completeStep?.("format-priority-result");
       await executable?.finish?.();
-      const scope = intent.status_filter
-        ? ` with status "${intent.status_filter}"`
-        : "";
+      const requestedStatuses = intentStatuses(intent);
+      const scope =
+        requestedStatuses.length > 0
+          ? ` with status "${requestedStatuses.join('" or "')}"`
+          : "";
       return {
         message: textReply(
           `I can't recommend a task from these records: ${decision.reason} ` +
@@ -1061,6 +1103,7 @@ async function collectScopedTasksForRead(
     scope: intent.scope_hint?.trim() ? "one_best_match" : "all_accessible",
     scope_hint: intent.scope_hint ?? null,
     status_filter: null,
+    statuses: null,
   };
   return collectScopedTasks(scopeIntent, READ_TRAVERSAL);
 }
@@ -1072,11 +1115,26 @@ async function collectScopedTasksForRead(
  * workspace-defined, so vocabulary matching would encode one customer's configuration.
  */
 export interface ClickUpTaskFilters {
-  status: string | null;
+  /** Every status the conversation is about, matched case- and space-insensitively. */
+  statuses: string[];
   assignee: string | null;
   priority: "urgent" | "high" | "normal" | "low" | null;
   due: "overdue" | "today" | "this_week" | "next_week" | null;
   text: string | null;
+}
+
+/** Collect the statuses an intent carries, tolerating the legacy single-status field. */
+function intentStatuses(intent: ClickUpIntent | ClickUpPriorityIntent): string[] {
+  const raw = intent as { statuses?: unknown };
+  const fromList = Array.isArray(raw.statuses)
+    ? raw.statuses
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    : [];
+  if (fromList.length > 0) return fromList;
+  const single = optionalText(intent.status_filter);
+  return single ? [single] : [];
 }
 
 const PRIORITY_FILTERS = ["urgent", "high", "normal", "low"] as const;
@@ -1111,7 +1169,7 @@ export function taskFiltersFromIntent(
     text_filter?: unknown;
   };
   return {
-    status: optionalText(intent.status_filter),
+    statuses: intentStatuses(intent),
     assignee: optionalText(raw.assignee_filter),
     priority: normalizedChoice(raw.priority_filter, PRIORITY_FILTERS),
     due: normalizedChoice(raw.due_filter, DUE_FILTERS),
@@ -1136,6 +1194,8 @@ export interface DeclaredRoute {
   raw_user_text: string | null;
   shape: string | null;
   filters: ClickUpTaskFilters;
+  /** Which task set the caller says the user means, in their terms. */
+  scope_note: string | null;
   unsupported: string[];
 }
 
@@ -1152,6 +1212,19 @@ const CAPABILITY_WRITE_ACTIONS: Record<string, ClickUpIntent["action"]> = {
 };
 
 const CAPABILITY_PRIORITIZE = "clickup:prioritize";
+
+/** Statuses declared by a caller, accepting `statuses[]` or the legacy `status`. */
+function declaredStatuses(filters: Record<string, unknown>): string[] {
+  const listed = Array.isArray(filters.statuses)
+    ? filters.statuses
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    : [];
+  if (listed.length > 0) return listed;
+  const single = optionalText(filters.status);
+  return single ? [single] : [];
+}
 
 function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -1191,12 +1264,13 @@ function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
     raw_user_text: optionalText(candidate.raw_user_text),
     shape: optionalText(candidate.shape),
     filters: {
-      status: optionalText(filters.status),
+      statuses: declaredStatuses(filters),
       assignee: optionalText(filters.assignee),
       priority: normalizedChoice(filters.priority, PRIORITY_FILTERS),
       due: normalizedChoice(filters.due, DUE_FILTERS),
       text: optionalText(filters.text),
     },
+    scope_note: optionalText(candidate.scope_note),
     unsupported,
   };
 }
@@ -1235,7 +1309,8 @@ export function clickUpIntentFromDeclaredRoute(
     intent: route.goal,
     operation_kind: writeAction ? "write" : "read",
     action: readAction ?? writeAction!,
-    status_filter: route.filters.status,
+    status_filter: route.filters.statuses[0] ?? null,
+    statuses: route.filters.statuses.length > 0 ? route.filters.statuses : null,
     assignee_filter: route.filters.assignee,
     priority_filter: route.filters.priority,
     due_filter: route.filters.due,
@@ -1256,14 +1331,15 @@ export function clickUpPriorityIntentFromDeclaredRoute(
     intent: route.goal,
     scope: "all_accessible",
     scope_hint: null,
-    status_filter: route.filters.status,
+    status_filter: route.filters.statuses[0] ?? null,
+    statuses: route.filters.statuses.length > 0 ? route.filters.statuses : null,
   };
 }
 
 /** True when the intent narrows the task list at all. */
 export function hasTaskFilters(filters: ClickUpTaskFilters): boolean {
   return (
-    filters.status !== null ||
+    filters.statuses.length > 0 ||
     filters.assignee !== null ||
     filters.priority !== null ||
     filters.due !== null ||
@@ -1280,7 +1356,7 @@ function renderTaskQueryAnswer(
 ): string {
   const filterLabel = describeTaskFilters(filters);
   if (tasks.length === 0) {
-    if (filters.status && statusMiss && scopeTasks.length > 0) {
+    if (filters.statuses.length > 0 && statusMiss && scopeTasks.length > 0) {
       // Statuses are workspace-defined: report the ones that exist rather than a bare "none".
       const statuses = [...new Set(scopeTasks.map((t) => t.status))].sort();
       return (
@@ -1310,7 +1386,8 @@ function renderTaskQueryAnswer(
 /** Human-readable summary of the filters that produced the answer. */
 function describeTaskFilters(filters: ClickUpTaskFilters): string {
   const parts: string[] = [];
-  if (filters.status) parts.push(`with status "${filters.status}"`);
+  if (filters.statuses.length > 0)
+    parts.push(`with status "${filters.statuses.join('" or "')}"`);
   if (filters.assignee) parts.push(`assigned to "${filters.assignee}"`);
   if (filters.priority) parts.push(`with priority "${filters.priority}"`);
   if (filters.due) parts.push(`due ${filters.due.replace(/_/g, " ")}`);
@@ -1375,17 +1452,20 @@ export function applyTaskFilters(
   let statusMiss = false;
   let matching = tasks;
 
-  if (filters.status) {
-    const wanted = normalizedStatus(filters.status);
-    const exact = tasks.filter(
-      (task) => normalizedStatus(task.status) === wanted,
+  if (filters.statuses.length > 0) {
+    const wanted = filters.statuses.map(normalizedStatus);
+    const exact = tasks.filter((task) =>
+      wanted.includes(normalizedStatus(task.status)),
     );
     if (exact.length > 0) {
       matching = exact;
     } else {
+      // Workspace-defined statuses: fall back to containment before reporting a miss.
       const observed = tasks.filter((task) => {
         const status = normalizedStatus(task.status);
-        return status.includes(wanted) || wanted.includes(status);
+        return wanted.some(
+          (value) => status.includes(value) || value.includes(status),
+        );
       });
       matching = observed;
       statusMiss = observed.length === 0;

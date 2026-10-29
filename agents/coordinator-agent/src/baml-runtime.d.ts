@@ -91,7 +91,8 @@ expected_output: string | null;
 unsupported: string[] | null;
  }
 
-export interface CoordinatorRouteFilters { status: string | null;
+export interface CoordinatorRouteFilters { statuses: string[] | null;
+scope_note: string | null;
 assignee: string | null;
 priority: "urgent" | "high" | "normal" | "low" | null;
 due: "overdue" | "today" | "this_week" | "next_week" | null;

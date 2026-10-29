@@ -21,6 +21,7 @@ class ClickUpIntent {
   operation_kind "read" | "write" | "delete" @description("Broad category: read (list/get), write (create/update), delete.")
   action "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other" @description("Typed read action the host can execute deterministically. list_tasks: show/list tasks. count_tasks: how many tasks. get_task: one named task. navigate: workspace hierarchy only. other: anything else, including write/delete.")
   status_filter string? @description("Exact task status the user named, copied verbatim (e.g. in progress, Blocked / External). Omit when the user did not ask for a status filter. Never invent one.")
+  statuses string[]? @description("Every task status the conversation is currently about, copied verbatim from the user or from records already shown (for example the statuses of tasks just listed). Use this instead of status_filter when more than one status applies. Omit when no status is established.")
   assignee_filter string? @description("Use only when the request must be filtered to tasks assigned to one named person: copy their name or email text verbatim. Omit when the user merely wants assignees shown. Leave null for 'assigned to me' and name that in unsupported instead.")
   priority_filter ("urgent" | "high" | "normal" | "low")? @description("Use only when the request must be filtered by priority. ClickUp priorities are fixed across workspaces. Omit when the user merely wants priority shown.")
   due_filter ("overdue" | "today" | "this_week" | "next_week")? @description("Use only when the request must be filtered by due date window, relative to today. Omit when the user merely wants due dates shown.")
@@ -35,6 +36,7 @@ class ClickUpPriorityIntent {
   scope "all_accessible" | "one_best_match" @description("all_accessible traverses every available team, space, and folderless list within limits. one_best_match selects one branch from the runtime candidates.")
   scope_hint string? @description("Optional team, space, or list name supplied by the user. This is a hint, never an ID.")
   status_filter string? @description("Optional exact task status requested by the user, such as in progress. Omit when the user did not request a status filter.")
+  statuses string[]? @description("Every task status the conversation is currently about, for example the statuses of the tasks just listed. Use instead of status_filter when more than one applies.")
 }
 
 function InferClickUpIntent() -> NeedClarification | NotRelevant | ClickUpIntent | ClickUpPriorityIntent {

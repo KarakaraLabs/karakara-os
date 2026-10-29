@@ -98,7 +98,8 @@ class CoordinatorRouteTarget {
 }
 
 class CoordinatorRouteFilters {
-  status string? @description("Task status the user named, copied verbatim. Omit unless they filtered by status.")
+  statuses string[]? @description("Every task status the conversation is currently about, copied verbatim: the statuses of tasks a specialist just listed, or the status the user named this turn. Emit all of them.")
+  scope_note string? @description("One clause naming the task set the user means, in their own terms, for example 'the in-progress tasks just listed'.")
   assignee string? @description("Person the user named for an assignee filter. Never for 'me'/'my tasks': leave null and list it in unsupported.")
   priority ("urgent" | "high" | "normal" | "low")? @description("Priority filter only when the user filtered by priority.")
   due ("overdue" | "today" | "this_week" | "next_week")? @description("Due-date window only when the user filtered by it.")
@@ -139,11 +140,13 @@ function RouteCoordinatorRequest(
     - unsupported only for constraints no capability can express (custom fields, grouping,
       current-user identity, ordering by an unlisted property). It routes to the slower planner.
 
-    Conversation continuity:
-    - If an earlier turn established a task filter (status, assignee, priority, due, or an area) and the
-      new message does not change it, carry that filter into `filters`. Example: after asking about
-      in-progress tasks, "which should I start first?" still means in-progress.
-    - Never invent a filter the user has not stated in this conversation.
+    Conversation continuity (infer the scope, do not copy it mechanically):
+    - Infer which task set the user is talking about from the conversation: the statuses of tasks a
+      specialist just listed, or the status the user named this turn. Put every status you find in
+      `statuses`, verbatim, and describe the set in `scope_note`.
+    - Follow the subject of the conversation, not the previous filter: after "which tasks are in todo?"
+      a follow-up "what should I start first?" is about the to-do tasks.
+    - Leave `statuses` empty and say so in `scope_note` when the user asks openly with no established set.
 
 
     {{ ctx.output_format }}

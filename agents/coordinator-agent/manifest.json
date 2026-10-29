@@ -16,6 +16,15 @@
   ],
   "discovery": {
     "description": "Coordinator agent for downstream specialist orchestration and synthesis",
-    "capabilities": ["coordination:routing", "coordination:synthesis"]
+    "capabilities": [
+      "coordination:routing",
+      "coordination:synthesis"
+    ]
+  },
+  "function_context": {
+    "ClassifyCoordinatorTurn": {
+      "conversation_history": true,
+      "tool_schema_prelude": false
+    }
   }
 }
