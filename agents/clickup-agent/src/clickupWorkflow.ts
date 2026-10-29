@@ -514,6 +514,8 @@ type PriorityDecision = {
   task?: ClickUpTaskSummary;
   urgency?: number;
   evidence_sufficient?: number;
+  /** Records the judge was given, so an abstain can say what it looked at. */
+  considered?: number;
   jev?: SystemOneOutput;
 };
 
@@ -813,11 +815,13 @@ async function prioritizeTasks(
         requestedStatuses.length > 0
           ? `No tasks with status ${requestedStatuses.join(" or ")} were returned from the selected scope.`
           : "No tasks were returned from the selected scope.",
+      considered: 0,
     };
   if (candidates.length > MAX_ALL_TASKS) {
     return {
       outcome: "abstain",
-      reason: "Too many tasks were returned to prioritize safely.",
+      reason: `Too many tasks were returned to prioritize safely (limit ${MAX_ALL_TASKS}).`,
+      considered: candidates.length,
     };
   }
 
@@ -861,7 +865,8 @@ async function prioritizeTasks(
   if (outcome.status === "error") {
     return {
       outcome: "abstain",
-      reason: `Jev was unavailable: ${outcome.error.code}`,
+      reason: `The prioritization judge was unavailable: ${outcome.error.code}.`,
+      considered: candidates.length,
     };
   }
 
@@ -879,10 +884,12 @@ async function prioritizeTasks(
   ) {
     return {
       outcome: "abstain",
-      reason:
-        "The available task records do not support a confident recommendation.",
+      reason: selected === "none"
+        ? "The judge found no task that should be started first."
+        : "The task records do not support a confident recommendation.",
       urgency,
       evidence_sufficient: evidence,
+      considered: candidates.length,
       jev: outcome.result,
     };
   }
@@ -890,7 +897,8 @@ async function prioritizeTasks(
   if (task === undefined) {
     return {
       outcome: "abstain",
-      reason: "Jev returned a task outside the retrieved candidates.",
+      reason: "The judge returned a task that was not among the retrieved candidates.",
+      considered: candidates.length,
     };
   }
   return {
@@ -900,6 +908,33 @@ async function prioritizeTasks(
     evidence_sufficient: evidence,
     jev: outcome.result,
   };
+}
+
+/**
+ * User-facing explanation for an abstain.
+ *
+ * An abstain is a real answer, so it must name the reason, the evidence, how many records were
+ * judged, and the scope that produced them. Silence or a bare "none" is a bug.
+ */
+export function describePriorityAbstain(
+  decision: PriorityDecision,
+  requestedStatuses: string[],
+): string {
+  const scope =
+    requestedStatuses.length > 0
+      ? ` with status "${requestedStatuses.join('" or "')}"`
+      : "";
+  const considered = decision.considered ?? 0;
+  const evidence =
+    typeof decision.evidence_sufficient === "number"
+      ? ` Evidence sufficiency was ${decision.evidence_sufficient.toFixed(2)} (needs ${EVIDENCE_THRESHOLD.toFixed(2)}).`
+      : "";
+  const reason = decision.reason ?? "no reason was reported.";
+  return (
+    `I can't recommend a task from these records: ${reason}${evidence} ` +
+    `I looked at ${considered} task(s)${scope}. ` +
+    `Tell me which status, area, or priority matters most and I'll narrow it down.`
+  );
 }
 
 /**
@@ -962,20 +997,15 @@ export async function runClickUpPriorityWorkflow(
     await executable?.completeStep?.("evaluate-priority");
 
     if (decision.outcome === "abstain") {
-      // Nothing to format: the records did not support a recommendation. Spending a model round
-      // trip to hedge about a decision that was never made adds seconds and no information.
+      // Nothing to format: the records did not support a recommendation, so a model round trip
+      // would only hedge about a decision that was never made. The step still has to run through
+      // the FSM (`pending -> running -> completed`), which costs no model call.
+      await executable?.startStep?.("format-priority-result");
       await executable?.completeStep?.("format-priority-result");
       await executable?.finish?.();
-      const requestedStatuses = intentStatuses(intent);
-      const scope =
-        requestedStatuses.length > 0
-          ? ` with status "${requestedStatuses.join('" or "')}"`
-          : "";
       return {
         message: textReply(
-          `I can't recommend a task from these records: ${decision.reason} ` +
-            `I looked at ${tasks.length} task(s)${scope}. Narrow the request by status, ` +
-            `area, or priority and I'll try again.`,
+          describePriorityAbstain(decision, intentStatuses(intent)),
         ),
       };
     }
