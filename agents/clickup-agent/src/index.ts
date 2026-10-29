@@ -1,6 +1,9 @@
 /// <reference path="./baml-runtime.d.ts" />
 import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
+  clickUpIntentFromDeclaredRoute,
+  clickUpPriorityIntentFromDeclaredRoute,
+  declaredRouteFromMessage,
   isClickUpIntent,
   isClickUpPriorityIntent,
   isDeterministicTaskRead,
@@ -15,6 +18,44 @@ import {
   validateClickUpPlanForExecution,
 } from "./clickupExecution";
 
+
+/**
+ * Plan → validate → execute for a read/write intent that is not a deterministic task query.
+ *
+ * Shared by the declared-route path and the classify path so both enforce the same contract.
+ */
+async function runPlannedIntent(
+  intent: ClickUpIntent,
+): Promise<SessionResult> {
+  const planResult = await PlanClickUpWork({
+    intent: intent.intent,
+    operation_kind: intent.operation_kind,
+  });
+  const structured = parseClickUpStructuredPlanFromPlanning(planResult);
+  if (!structured) {
+    return {
+      error:
+        "Planning failed: PlanClickUpWork did not return a valid ClickUpStructuredPlan shape. Try rephrasing your request.",
+    };
+  }
+  const stepsOrErr = validateClickUpPlanForExecution(
+    structured,
+    intent.operation_kind,
+  );
+  if (typeof stepsOrErr === "string") {
+    return {
+      error: `Planning output did not satisfy the ClickUp execution contract: ${stepsOrErr}`,
+    };
+  }
+  return runClickUpStructuredPlan(
+    `clickup-chat-${Date.now()}`,
+    structured,
+    intent.intent,
+    intent.operation_kind,
+    stepsOrErr,
+  );
+}
+
 __chat_register({
   run: async (ctx: RunContext): Promise<SessionResult> => {
     const originalText =
@@ -22,6 +63,22 @@ __chat_register({
         ? ctx.text
         : "unknown";
     let text = originalText;
+
+    // A calling coordinator can declare the route as a data part. When it validates, the declared
+    // goal and filters are authoritative: no classifier call and no second paraphrase. Ingress,
+    // human messages, and older callers send text only and keep the classify path below.
+    const declaredRoute = declaredRouteFromMessage(ctx.message);
+    if (declaredRoute) {
+      const declaredPriority = clickUpPriorityIntentFromDeclaredRoute(declaredRoute);
+      if (declaredPriority) return runClickUpPriorityWorkflow(declaredPriority);
+      const declaredIntent = clickUpIntentFromDeclaredRoute(declaredRoute);
+      if (declaredIntent) {
+        if (isDeterministicTaskRead(declaredIntent)) {
+          return runClickUpTaskQueryWorkflow(declaredIntent);
+        }
+        return runPlannedIntent(declaredIntent);
+      }
+    }
 
     let resolvedIntent: ClickUpIntent | null = null;
     while (true) {
@@ -62,34 +119,7 @@ __chat_register({
       return runClickUpTaskQueryWorkflow(resolvedIntent);
     }
 
-    const planResult = await PlanClickUpWork({
-      intent: resolvedIntent.intent,
-      operation_kind: resolvedIntent.operation_kind,
-    });
-    const structured = parseClickUpStructuredPlanFromPlanning(planResult);
-    if (!structured) {
-      return {
-        error:
-          "Planning failed: PlanClickUpWork did not return a valid ClickUpStructuredPlan shape. Try rephrasing your request.",
-      };
-    }
-    const stepsOrErr = validateClickUpPlanForExecution(
-      structured,
-      resolvedIntent.operation_kind,
-    );
-    if (typeof stepsOrErr === "string") {
-      return {
-        error: `Planning output did not satisfy the ClickUp execution contract: ${stepsOrErr}`,
-      };
-    }
-
-    return runClickUpStructuredPlan(
-      `clickup-chat-${Date.now()}`,
-      structured,
-      resolvedIntent.intent,
-      resolvedIntent.operation_kind,
-      stepsOrErr,
-    );
+    return runPlannedIntent(resolvedIntent);
   },
 
   onDispatch: onClickupSourceDispatch,

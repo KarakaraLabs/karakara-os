@@ -723,6 +723,106 @@ async fn test_failed_stream_does_not_leak_state() {
     );
 }
 
+/// Non-text message parts survive host -> JS so a caller can declare a typed route alongside text.
+///
+/// `system/internal_a2a` accepts `ConversationPart { text, data }`; specialists read the data part
+/// from `ctx.message.parts` to skip their own classifier. This pins the passthrough.
+#[tokio::test]
+async fn test_message_data_part_reaches_on_chat_message() {
+    let manager = BamlRuntimeManager::builder().build().unwrap();
+    let manager = Arc::new(RwLock::new(manager));
+    let effect_bus = Arc::new(BusWithEffects::new());
+    manager.write().await.set_effect_emitter(effect_bus.clone());
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000062").unwrap());
+    let bridge = Arc::new(Mutex::new(
+        QuickJSBridge::new(manager, agent_id).await.unwrap(),
+    ));
+    {
+        let mut guard = bridge.lock().await;
+        guard.set_effect_liveness(effect_bus as Arc<dyn EffectLiveness>);
+        guard.register_baml_functions().await.expect("register helpers");
+        guard
+            .eval_sync(
+                r#"
+                globalThis.onChatMessage = async function(args) {
+                    const parts = (args && args.parts) || [];
+                    const data = parts.map((p) => p && p.data).find((d) => d != null) || null;
+                    __chat_yield({
+                        task: { status: { state: "TASK_STATE_COMPLETED" } },
+                        payload: JSON.stringify({ data, text: parts[0] && parts[0].text })
+                    });
+                };
+                "#,
+            )
+            .await
+            .expect("register onChatMessage");
+    }
+
+    let scope = InvocationScope::synthetic_message(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000063").unwrap(),
+    ));
+    let message = json!({
+        "role": "user",
+        "parts": [
+            { "text": "list in-progress tasks" },
+            { "data": { "schema": "agent-route/v1", "capability": "clickup:list-tasks" } }
+        ]
+    });
+
+    let (session_id, yield_rx) = {
+        let mut guard = bridge.lock().await;
+        guard
+            .invoke_js_function_stream(&scope, "onChatMessage", message)
+            .await
+            .expect("invoke entrypoint")
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let (_abort_tx, abort_rx) = tokio::sync::mpsc::channel(1);
+    baml_rt_quickjs::collect_into_channel_owned(
+        bridge.clone(),
+        session_id,
+        yield_rx,
+        tx,
+        abort_rx,
+        None,
+        None,
+        scope,
+        baml_rt_quickjs::HandoverSender::noop(),
+    )
+    .await
+    .expect("collect stream");
+
+    let mut payload = None;
+    while let Some(output) = rx.recv().await {
+        match output {
+            baml_rt_quickjs::StreamOutput::Chunk(chunk) => {
+                if let Some(p) = chunk.get("payload").and_then(Value::as_str) {
+                    payload = Some(p.to_string());
+                }
+            }
+            baml_rt_quickjs::StreamOutput::RelayChunk(_) => {}
+            baml_rt_quickjs::StreamOutput::Terminal(_, _) => break,
+        }
+    }
+
+    let payload = payload.expect("onChatMessage reported its args");
+    let parsed: Value = serde_json::from_str(&payload).expect("payload json");
+    assert_eq!(
+        parsed.get("text").and_then(Value::as_str),
+        Some("list in-progress tasks"),
+        "text part is preserved: {parsed}"
+    );
+    assert_eq!(
+        parsed
+            .get("data")
+            .and_then(|d| d.get("capability"))
+            .and_then(Value::as_str),
+        Some("clickup:list-tasks"),
+        "data part reaches the agent: {parsed}"
+    );
+}
+
 /// Unit-level: close_sessions_for_context clears all sessions for that context.
 #[tokio::test]
 async fn test_close_sessions_for_context_clears_sessions() {
