@@ -117,7 +117,7 @@ These separate **what happened** in the graph from **how the model is guided** i
 ## Boundary map (live A2A)
 
 1. **Write path** — Provenance events become graph nodes; `a2a_event_order` and edges define truth.
-2. **Read path** — [`ContextHistoryView`](../crates/baml-rt-provenance/src/surreal_store/context_reader.rs) applies agent visibility and the newest-tail window in the query, ordered by `event_order DESC, node_id DESC` for prompt reads. Task replay and operator pagination keep forward `event_order ASC, node_id ASC` order; both use the same durable key for ties.
+2. **Read path** — [`ContextHistoryView`](../crates/baml-rt-provenance/src/surreal_store/context_reader.rs) applies agent visibility and the newest-tail window in the query, ordered by `event_order DESC, node_id DESC` for prompt reads. Message and ToolCall ownership is stored in `context_transcript_index` and read through `(context_id, agent_node_id, event_order)`. SessionStep visibility remains graph-backed because task reassignment changes its current owner. Task replay and operator pagination keep forward `event_order ASC, node_id ASC` order; both use the same durable key for ties.
 3. **Map** — [`provenance_item_to_projection_item`](../crates/baml-rt-conversation/src/projection.rs) → [`PromptProjectionItem`](../crates/baml-rt-tools/src/prompt_projection.rs).
 4. **Render** — [`project_prompt_context`](../crates/baml-rt-tools/src/prompt_projection.rs) assigns `#N` via idempotent `RefTable::insert_history` (stable per activity + source).
 5. **Provider** — [`ProjectingConversationContextProvider`](../crates/baml-rt-a2a/src/a2a_transport.rs) → merged rows → `ctx.tags['conversation_transcript']` in [`BamlExecutor`](../crates/baml-rt-quickjs/src/baml_execution.rs).

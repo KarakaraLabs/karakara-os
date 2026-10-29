@@ -121,6 +121,12 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
             "DEFINE INDEX IF NOT EXISTS idx_transcript_ctx_order ON {TBL_CONTEXT_TRANSCRIPT_INDEX} FIELDS context_id, event_order"
         ),
         format!(
+            "DEFINE INDEX IF NOT EXISTS idx_transcript_ctx_agent_order ON {TBL_CONTEXT_TRANSCRIPT_INDEX} FIELDS context_id, agent_node_id, event_order"
+        ),
+        format!(
+            "DEFINE INDEX IF NOT EXISTS idx_transcript_ctx_scope_indexed ON {TBL_CONTEXT_TRANSCRIPT_INDEX} FIELDS context_id, agent_scope_indexed"
+        ),
+        format!(
             "DEFINE INDEX IF NOT EXISTS idx_transcript_ctx_node ON {TBL_CONTEXT_TRANSCRIPT_INDEX} FIELDS context_id, node_id UNIQUE"
         ),
         format!("DEFINE TABLE IF NOT EXISTS {TBL_CONTEXT_PLANNING_INDEX}"),

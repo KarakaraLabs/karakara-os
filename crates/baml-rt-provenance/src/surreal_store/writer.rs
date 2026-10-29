@@ -12,7 +12,8 @@ use super::{SurrealProvenanceStore, payload::payload_records_from_event};
 use crate::{
     context_agent_leases::ContextAgentFence,
     error::{ProvenanceError, Result},
-    events::ProvEventData,
+    events::{ProvEvent, ProvEventData},
+    id_semantics::agent_node_id_string,
     normalizer::{NormalizeContext, validate_event},
     payload_record::StorageKind,
     payload_storage,
@@ -20,6 +21,21 @@ use crate::{
     surreal_write_batch::call_activity_id_from_normalized,
     task_agent_binding::event_local_executing_agent_id,
 };
+
+fn transcript_agent_node_id(event: &ProvEvent, context: &NormalizeContext) -> Option<String> {
+    let event_agent = match event.data() {
+        ProvEventData::HostDispatchAccepted {
+            target_agent_id, ..
+        }
+        | ProvEventData::HostDispatchRejected {
+            target_agent_id, ..
+        } => target_agent_id.clone(),
+        _ => event_local_executing_agent_id(event),
+    };
+    event_agent
+        .or_else(|| context.task_agent_id.clone())
+        .map(|agent_id| agent_node_id_string(&agent_id))
+}
 
 impl SurrealProvenanceStore {
     async fn write_event(
@@ -91,6 +107,7 @@ impl SurrealProvenanceStore {
         {
             context.linked_llm_call_scope_ordinal = Some(linked);
         }
+        let transcript_agent_node_id = transcript_agent_node_id(&event, &context);
         let normalized = self
             .normalizer
             .normalize_with_context(&event, Some(&context))?;
@@ -133,6 +150,7 @@ impl SurrealProvenanceStore {
         let plans = crate::surreal_write_batch::build_event_write_plans(
             &normalized,
             context_id_opt.as_deref(),
+            transcript_agent_node_id.as_deref(),
             &payload_records,
             &blob_bodies,
             &self.write_coalesce,

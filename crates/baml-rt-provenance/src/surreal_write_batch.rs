@@ -510,19 +510,37 @@ fn push_head_pointer_repoint(frag: &mut WriteFragment, repoint: &HeadPointerRepo
     frag.record(key, fingerprint);
 }
 
-fn push_transcript_index_upsert(
-    frag: &mut WriteFragment,
-    context_id: &str,
-    node_id: &str,
-    label: &str,
+struct TranscriptIndexUpsert<'a> {
+    context_id: &'a str,
+    node_id: &'a str,
+    label: &'a str,
     event_order: u64,
-    task_entity_id: Option<&str>,
-) {
+    task_entity_id: Option<&'a str>,
+    agent_node_id: Option<&'a str>,
+    projection_visible: bool,
+}
+
+fn push_transcript_index_upsert(frag: &mut WriteFragment, row: TranscriptIndexUpsert<'_>) {
+    let TranscriptIndexUpsert {
+        context_id,
+        node_id,
+        label,
+        event_order,
+        task_entity_id,
+        agent_node_id,
+        projection_visible,
+    } = row;
     let key = format!("index:{context_id}|{node_id}");
     let fingerprint = write_fingerprint(&[
         label,
         &event_order.to_string(),
         task_entity_id.unwrap_or(""),
+        agent_node_id.unwrap_or(""),
+        if projection_visible {
+            "visible"
+        } else {
+            "hidden"
+        },
     ]);
     if frag.skip(&key, fingerprint) {
         return;
@@ -534,6 +552,8 @@ fn push_transcript_index_upsert(
     let lk = format!("ti{i}_lab");
     let ok = format!("ti{i}_ord");
     let tk = format!("ti{i}_task");
+    let ak = format!("ti{i}_agent");
+    let vk = format!("ti{i}_visible");
     push_bind(&mut frag.binds, &ck, Value::String(context_id.to_string()));
     push_bind(&mut frag.binds, &nk, Value::String(node_id.to_string()));
     push_bind(&mut frag.binds, &lk, Value::String(label.to_string()));
@@ -545,10 +565,19 @@ fn push_transcript_index_upsert(
             .map(|s| Value::String(s.to_string()))
             .unwrap_or(Value::Null),
     );
+    push_bind(
+        &mut frag.binds,
+        &ak,
+        agent_node_id
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null),
+    );
+    push_bind(&mut frag.binds, &vk, Value::Bool(projection_visible));
     frag.stmts.push(format!(
         "UPSERT {TBL_CONTEXT_TRANSCRIPT_INDEX} SET \
          context_id = ${ck}, node_id = ${nk}, label = ${lk}, event_order = ${ok}, \
-         task_entity_id = ${tk} \
+         task_entity_id = ${tk}, agent_node_id = ${ak}, projection_visible = ${vk}, \
+         agent_scope_indexed = true \
          WHERE context_id = ${ck} AND node_id = ${nk}"
     ));
     frag.record(key, fingerprint);
@@ -674,6 +703,7 @@ fn build_label_maps(normalized: &NormalizedProv) -> LabelMaps {
 fn build_graph_fragment(
     normalized: &NormalizedProv,
     context_id: Option<&str>,
+    transcript_agent_node_id: Option<&str>,
     coalesce: &Arc<WriteCoalesceCache>,
 ) -> (WriteFragment, WriteFragment) {
     let LabelMaps {
@@ -1049,7 +1079,9 @@ fn build_graph_fragment(
                 .get(id.as_str())
                 .map(String::as_str)
                 .unwrap_or("ProvEntity");
-            let index_row = matches!(label, "Message" | "ToolCall" | "SessionStep").then(|| {
+            let index_row = (matches!(label, "Message" | "ToolCall" | "SessionStep")
+                && entity.attributes.contains_key(a2a::EVENT_ORDER))
+            .then(|| {
                 (
                     entity
                         .attributes
@@ -1061,6 +1093,12 @@ fn build_graph_fragment(
                         .get(a2a::TASK_ID)
                         .and_then(Value::as_str)
                         .map(task_entity_id_string_raw),
+                    label != "ToolCall"
+                        || entity
+                            .attributes
+                            .get(a2a::ACTIVITY_OUTCOME)
+                            .and_then(Value::as_str)
+                            .is_some_and(|outcome| matches!(outcome, "Success" | "Failed")),
                 )
             });
             let target = if reference_ids.contains(id.as_str()) {
@@ -1070,14 +1108,18 @@ fn build_graph_fragment(
             };
             push_scoped_to_context_edge(target, id.as_str(), label, &ctx_node_id);
             // A placeholder row for a reference node shares the node's lane.
-            if let Some((event_order, task_entity_id)) = index_row {
+            if let Some((event_order, task_entity_id, projection_visible)) = index_row {
                 push_transcript_index_upsert(
                     target,
-                    ctx_id_str,
-                    id.as_str(),
-                    label,
-                    event_order,
-                    task_entity_id.as_deref(),
+                    TranscriptIndexUpsert {
+                        context_id: ctx_id_str,
+                        node_id: id.as_str(),
+                        label,
+                        event_order,
+                        task_entity_id: task_entity_id.as_deref(),
+                        agent_node_id: transcript_agent_node_id,
+                        projection_visible,
+                    },
                 );
             }
         }
@@ -1086,7 +1128,9 @@ fn build_graph_fragment(
                 .get(id.as_str())
                 .map(String::as_str)
                 .unwrap_or("ProvActivity");
-            let index_row = matches!(label, "ToolCall" | "SessionStep").then(|| {
+            let index_row = (matches!(label, "ToolCall" | "SessionStep")
+                && activity.attributes.contains_key(a2a::EVENT_ORDER))
+            .then(|| {
                 (
                     activity
                         .attributes
@@ -1098,6 +1142,12 @@ fn build_graph_fragment(
                         .get(a2a::TASK_ID)
                         .and_then(Value::as_str)
                         .map(task_entity_id_string_raw),
+                    label != "ToolCall"
+                        || activity
+                            .attributes
+                            .get(a2a::ACTIVITY_OUTCOME)
+                            .and_then(Value::as_str)
+                            .is_some_and(|outcome| matches!(outcome, "Success" | "Failed")),
                 )
             });
             let target = if reference_ids.contains(id.as_str()) {
@@ -1106,14 +1156,18 @@ fn build_graph_fragment(
                 &mut owned
             };
             push_scoped_to_context_edge(target, id.as_str(), label, &ctx_node_id);
-            if let Some((event_order, task_entity_id)) = index_row {
+            if let Some((event_order, task_entity_id, projection_visible)) = index_row {
                 push_transcript_index_upsert(
                     target,
-                    ctx_id_str,
-                    id.as_str(),
-                    label,
-                    event_order,
-                    task_entity_id.as_deref(),
+                    TranscriptIndexUpsert {
+                        context_id: ctx_id_str,
+                        node_id: id.as_str(),
+                        label,
+                        event_order,
+                        task_entity_id: task_entity_id.as_deref(),
+                        agent_node_id: transcript_agent_node_id,
+                        projection_visible,
+                    },
                 );
             }
         }
@@ -1149,11 +1203,13 @@ fn build_blob_payload_fragment(
 pub(crate) fn build_event_write_plans(
     normalized: &NormalizedProv,
     context_id: Option<&str>,
+    transcript_agent_node_id: Option<&str>,
     payloads: &[PayloadRecord],
     blob_bodies: &[(String, String)],
     coalesce: &Arc<WriteCoalesceCache>,
 ) -> Vec<EventWritePlan> {
-    let (reference, graph) = build_graph_fragment(normalized, context_id, coalesce);
+    let (reference, graph) =
+        build_graph_fragment(normalized, context_id, transcript_agent_node_id, coalesce);
     let data = build_blob_payload_fragment(payloads, blob_bodies);
     let (bind_count, sql_bytes) = merged_txn_estimates(&graph, &data);
 
@@ -1213,7 +1269,7 @@ mod tests {
             None,
         );
         let normalized = normalize_event(&event).expect("normalize");
-        let plans = build_event_write_plans(&normalized, None, &[], &[], &empty_coalesce());
+        let plans = build_event_write_plans(&normalized, None, None, &[], &[], &empty_coalesce());
         assert!(!plans.is_empty(), "expected at least one txn");
         for plan in &plans {
             assert!(plan.sql.starts_with("BEGIN;\n"), "{}", plan.sql);
@@ -1267,7 +1323,8 @@ mod tests {
                 search_text: "x".into(),
             })
             .collect();
-        let plans = build_event_write_plans(&normalized, None, &payloads, &[], &empty_coalesce());
+        let plans =
+            build_event_write_plans(&normalized, None, None, &payloads, &[], &empty_coalesce());
         assert_eq!(
             plans.len(),
             2,
@@ -1291,11 +1348,11 @@ mod tests {
             None,
         );
         let normalized = normalize_event(&event).expect("normalize");
-        let first = build_event_write_plans(&normalized, None, &[], &[], &coalesce);
+        let first = build_event_write_plans(&normalized, None, None, &[], &[], &coalesce);
         for (key, fingerprint) in first.iter().flat_map(|plan| plan.coalesced.iter()) {
             coalesce.insert(key.clone(), *fingerprint);
         }
-        let second = build_event_write_plans(&normalized, None, &[], &[], &coalesce);
+        let second = build_event_write_plans(&normalized, None, None, &[], &[], &coalesce);
         let second_shared = second.iter().find(|plan| plan.shared);
         assert!(
             second_shared.is_none(),

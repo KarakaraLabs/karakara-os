@@ -216,6 +216,110 @@ async fn agent_reads_its_own_participation_across_tasks_and_no_siblings() {
 }
 
 #[tokio::test]
+async fn call_message_placeholders_do_not_overwrite_transcript_order() {
+    let (store, ctx, agent) = seed_two_task_delegation().await;
+    let index_order = async || {
+        let mut response = store
+            .db()
+            .query(
+                "SELECT VALUE event_order FROM context_transcript_index \
+                 WHERE context_id = $context_id AND node_id IN (\
+                   SELECT VALUE node_id FROM prov_node \
+                   WHERE label = 'Message' AND props.a2a_message_id = 'm-b1-in'\
+                 )",
+            )
+            .bind(("context_id", ctx.as_str().to_string()))
+            .await
+            .expect("query message index order");
+        let rows: Vec<u64> = response.take(0).expect("take message index order");
+        rows.into_iter().next().expect("indexed message")
+    };
+    let before = index_order().await;
+
+    store
+        .add_event(ProvEvent::tool_call_completed_task(
+            ctx.clone(),
+            task("task-first-delegation"),
+            "support/test".to_string(),
+            None,
+            serde_json::json!({}),
+            serde_json::json!({
+                "agent_id": agent.as_str(),
+                "message_id": "m-b1-in",
+                "task_id": "task-first-delegation",
+            }),
+            1,
+            baml_rt_core::Outcome::Success,
+            None,
+        ))
+        .await
+        .expect("message-scoped tool call");
+
+    assert_eq!(index_order().await, before);
+}
+
+#[tokio::test]
+async fn agent_transcript_index_records_ownership_and_legacy_rows_fall_back() {
+    let (store, ctx, agent) = seed_two_task_delegation().await;
+    let agent_node_id = baml_rt_provenance::id_semantics::agent_node_id_string(&agent);
+    let mut response = store
+        .db()
+        .query(
+            "SELECT node_id, agent_node_id, projection_visible, agent_scope_indexed \
+             FROM context_transcript_index \
+             WHERE context_id = $context_id AND agent_node_id = $agent_node_id",
+        )
+        .bind(("context_id", ctx.as_str().to_string()))
+        .bind(("agent_node_id", agent_node_id.clone()))
+        .await
+        .expect("query transcript index");
+    let rows: Vec<serde_json::Value> = response.take(0).expect("take transcript index rows");
+    assert!(
+        !rows.is_empty(),
+        "agent-owned transcript rows must be indexed"
+    );
+    assert!(rows.iter().all(|row| {
+        row.get("agent_node_id").and_then(serde_json::Value::as_str) == Some(agent_node_id.as_str())
+            && row
+                .get("projection_visible")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            && row
+                .get("agent_scope_indexed")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+    }));
+
+    let indexed = store
+        .context_history_view(&ctx, &agent, None, None, None)
+        .await
+        .expect("index-backed view");
+    store
+        .db()
+        .query(
+            "UPDATE context_transcript_index SET agent_scope_indexed = NONE \
+             WHERE context_id = $context_id",
+        )
+        .bind(("context_id", ctx.as_str().to_string()))
+        .await
+        .expect("mark rows as legacy")
+        .check()
+        .expect("legacy update");
+    let legacy = store
+        .context_history_view(&ctx, &agent, None, None, None)
+        .await
+        .expect("legacy graph-backed view");
+
+    assert_eq!(
+        serde_json::to_value(&indexed.items).expect("serialize indexed items"),
+        serde_json::to_value(&legacy.items).expect("serialize legacy items"),
+        "legacy fallback must preserve the index-backed agent view"
+    );
+    assert_eq!(indexed.cursor, legacy.cursor);
+    assert_eq!(indexed.truncated, legacy.truncated);
+}
+
+#[tokio::test]
 async fn window_bounds_the_tail_and_reports_truncation() {
     let (store, ctx, b) = seed_two_task_delegation().await;
 

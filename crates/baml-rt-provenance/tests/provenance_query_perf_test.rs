@@ -200,6 +200,20 @@ async fn provenance_hot_read_paths_and_explain_inventory() {
         "context node sort EXPLAIN: {nodes_explain}"
     );
 
+    let agent_node = baml_rt_provenance::id_semantics::agent_node_id_string(&agent_id);
+    let transcript_agent_sql = format!(
+        "SELECT node_id, event_order FROM context_transcript_index \
+         WHERE context_id = '{ctx}' AND agent_node_id = '{agent_node}' \
+           AND projection_visible = true AND label IN ['Message', 'ToolCall'] \
+         ORDER BY event_order DESC, node_id DESC LIMIT 41"
+    );
+    let transcript_agent_explain = explain_smoke(&store, &transcript_agent_sql).await;
+    assert!(
+        transcript_agent_explain.contains("idx_transcript_ctx_agent_order")
+            || transcript_agent_explain.contains("IndexScan"),
+        "agent transcript EXPLAIN: {transcript_agent_explain}"
+    );
+
     let plan_step_sql = "SELECT node_id FROM prov_node WHERE label = 'PlanStep' \
          AND props.a2a_plan_id = 'plan-1' AND props.a2a_step_id = 'step-1' LIMIT 1"
         .to_string();
@@ -261,6 +275,19 @@ async fn schema_defines_performance_indexes() {
         assert!(
             node_info.contains(name),
             "missing prov_node index {name}: {node_info}"
+        );
+    }
+
+    let transcript_info = table_info(&store, "context_transcript_index").await;
+    for name in [
+        "idx_transcript_ctx_order",
+        "idx_transcript_ctx_agent_order",
+        "idx_transcript_ctx_scope_indexed",
+        "idx_transcript_ctx_node",
+    ] {
+        assert!(
+            transcript_info.contains(name),
+            "missing context_transcript_index index {name}: {transcript_info}"
         );
     }
 

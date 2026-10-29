@@ -43,7 +43,9 @@ use crate::{
     store::{
         ContextHistoryCursor, ContextHistoryPage, ProvenanceContextReader, ProvenanceQueryApi,
     },
-    surreal_tables::{PAYLOAD_ROW_SELECT, TBL_EDGE, TBL_NODE, TBL_PAYLOAD},
+    surreal_tables::{
+        PAYLOAD_ROW_SELECT, TBL_CONTEXT_TRANSCRIPT_INDEX, TBL_EDGE, TBL_NODE, TBL_PAYLOAD,
+    },
     vocabulary::{a2a, a2a_relations, context_scope, semantic_labels, storage_safe},
 };
 
@@ -437,9 +439,23 @@ impl SurrealProvenanceStore {
         // One extra row tells us whether anything older remains, without a second
         // count over the unfiltered context.
         let probe = window.saturating_add(1);
+        let window_started = std::time::Instant::now();
         let mut rows = self
             .fetch_agent_window_rows(context_id, agent_id, probe, cursor, task_id)
             .await?;
+        let window_elapsed = window_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_window",
+            window_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = window_elapsed.as_millis(),
+            row_count = rows.len(),
+            stage = "storage_window",
+            "context projection storage stage complete"
+        );
         // Rows arrive newest-first per label arm; keep the newest `probe` overall.
         sort_conversation_rows(&mut rows);
         let truncated = rows.len() > window;
@@ -461,7 +477,21 @@ impl SurrealProvenanceStore {
         // Elide a successful internal delegation payload only when typed lineage
         // proves the relayed message was persisted. Ambiguous or failed
         // delegations keep their payload: failure information must not vanish.
+        let delegations_started = std::time::Instant::now();
         let proven = self.persisted_delegations(context_id).await?;
+        let delegations_elapsed = delegations_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_delegations",
+            delegations_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = delegations_elapsed.as_millis(),
+            delegation_count = proven.len(),
+            stage = "storage_delegations",
+            "context projection storage stage complete"
+        );
         if !proven.is_empty() {
             rows.retain(|row| !is_elided_delegation_payload(row, &proven));
         }
@@ -477,6 +507,7 @@ impl SurrealProvenanceStore {
         }
         // Hydrate only the selected window: payloads, citations, and edge maps are
         // all keyed off these rows.
+        let hydrate_started = std::time::Instant::now();
         let items = self
             .conversation_context_filtered(
                 context_id,
@@ -491,7 +522,20 @@ impl SurrealProvenanceStore {
             .await?
             .into_iter()
             .filter(|item| item.is_visible_to_agent(agent_id))
-            .collect();
+            .collect::<Vec<_>>();
+        let hydrate_elapsed = hydrate_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_hydrate",
+            hydrate_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = hydrate_elapsed.as_millis(),
+            item_count = items.len(),
+            stage = "storage_hydrate",
+            "context projection storage stage complete"
+        );
         Ok(ContextHistoryPage {
             items,
             cursor: next_cursor.map(|cursor| cursor.encode()),
@@ -515,17 +559,46 @@ impl SurrealProvenanceStore {
         // A large-but-finite cap keeps the DB from scanning unbounded while still
         // covering any realistic agent participation in a single context.
         const UNCAPPED_READ_CAP: usize = 1_000_000;
+        let window_started = std::time::Instant::now();
         let mut rows = self
             .fetch_agent_window_rows(context_id, agent_id, UNCAPPED_READ_CAP, None, task_id)
             .await?;
+        let window_elapsed = window_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_window",
+            window_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = window_elapsed.as_millis(),
+            row_count = rows.len(),
+            stage = "storage_window",
+            "context projection storage stage complete"
+        );
         sort_conversation_rows(&mut rows);
+        let delegations_started = std::time::Instant::now();
         let proven = self.persisted_delegations(context_id).await?;
+        let delegations_elapsed = delegations_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_delegations",
+            delegations_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = delegations_elapsed.as_millis(),
+            delegation_count = proven.len(),
+            stage = "storage_delegations",
+            "context projection storage stage complete"
+        );
         if !proven.is_empty() {
             rows.retain(|row| !is_elided_delegation_payload(row, &proven));
         }
         if rows.is_empty() {
             return Ok(Vec::new());
         }
+        let hydrate_started = std::time::Instant::now();
         let items = self
             .conversation_context_filtered(
                 context_id,
@@ -540,7 +613,20 @@ impl SurrealProvenanceStore {
             .await?
             .into_iter()
             .filter(|item| item.is_visible_to_agent(agent_id))
-            .collect();
+            .collect::<Vec<_>>();
+        let hydrate_elapsed = hydrate_started.elapsed();
+        baml_rt_observability::metrics::record_context_projection_stage(
+            "storage_hydrate",
+            hydrate_elapsed,
+        );
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            duration_ms = hydrate_elapsed.as_millis(),
+            item_count = items.len(),
+            stage = "storage_hydrate",
+            "context projection storage stage complete"
+        );
         Ok(items)
     }
 
@@ -571,10 +657,158 @@ impl SurrealProvenanceStore {
     /// Bounded, agent-scoped node fetch: the storage half of
     /// [`Self::context_history_view`].
     ///
-    /// Each label arm applies its own agent traversal, the exclusive cursor
-    /// bound, a newest-first order, and the limit — so the DB never returns rows
-    /// the reading agent cannot see.
+    /// Message and ToolCall ownership is immutable, so the write-maintained
+    /// transcript index answers those arms with one ordered lookup. SessionStep
+    /// visibility follows the task's current `WAS_LAST_EXECUTED_BY` head and stays
+    /// graph-backed so task reassignment changes the view immediately.
     async fn fetch_agent_window_rows(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        limit: usize,
+        cursor: Option<&ContextHistoryCursor>,
+        task_id: Option<&TaskId>,
+    ) -> Result<Vec<Value>> {
+        if !self.agent_transcript_index_is_complete(context_id).await? {
+            return self
+                .fetch_agent_window_rows_legacy(context_id, agent_id, limit, cursor, task_id)
+                .await;
+        }
+
+        use crate::metamodel::query::conversation_session_step_agent_instances_clause;
+
+        let before_index_sql = cursor.map_or("", |_| {
+            "AND (event_order < $cursor_order \
+               OR (event_order = $cursor_order AND node_id < $cursor_node_id))"
+        });
+        let task_index_sql = task_id.map_or("", |_| "AND task_entity_id = $task_entity_id");
+        let index_sql = format!(
+            "SELECT node_id, label, event_order FROM {TBL_CONTEXT_TRANSCRIPT_INDEX} \
+             WHERE context_id = $context_id AND agent_node_id = $agent_node_id \
+               AND projection_visible = true AND label IN ['Message', 'ToolCall'] \
+               {task_index_sql} {before_index_sql} \
+             ORDER BY event_order DESC, node_id DESC LIMIT {limit}"
+        );
+        let agent_node_id = crate::id_semantics::agent_node_id_string(agent_id);
+        let mut index_query = self
+            .db
+            .query(&index_sql)
+            .bind(("context_id", context_id.as_str().to_string()))
+            .bind(("agent_node_id", agent_node_id.clone()));
+        if let Some(cursor) = cursor {
+            index_query = index_query
+                .bind(("cursor_order", cursor.event_order))
+                .bind(("cursor_node_id", cursor.node_id.clone()));
+        }
+        if let Some(task_id) = task_id {
+            index_query = index_query.bind((
+                "task_entity_id",
+                task_entity_id_string_raw(task_id.as_str()),
+            ));
+        }
+
+        let index_started = std::time::Instant::now();
+        let index_response = index_query.await.map_err(map_surreal_error)?;
+        let index_rows: Vec<Value> = check_and_take_zero(index_response, map_surreal_error)?;
+        let node_ids = index_rows
+            .iter()
+            .filter_map(|row| {
+                row.get("node_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+        let mut rows = if node_ids.is_empty() {
+            Vec::new()
+        } else {
+            let node_sql = format!(
+                "SELECT node_id, label, props, props.a2a_event_order AS event_order \
+                 FROM {TBL_NODE} WHERE node_id IN $node_ids"
+            );
+            let response = self
+                .db
+                .query(&node_sql)
+                .bind(("node_ids", node_ids))
+                .await
+                .map_err(map_surreal_error)?;
+            check_and_take_zero(response, map_surreal_error)?
+        };
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            arm = "transcript_index",
+            duration_ms = index_started.elapsed().as_millis(),
+            row_count = rows.len(),
+            "context projection storage window arm complete"
+        );
+
+        let ctx_node_id = context_entity_id_string(context_id.as_str());
+        let session_filter = conversation_session_step_agent_instances_clause("agent_nodes");
+        let task_session = task_id
+            .map(|_| task_session_step_filter_sql())
+            .unwrap_or_default();
+        let before_node_sql = cursor.map_or("", |_| {
+            "AND (props.a2a_event_order < $cursor_order \
+               OR (props.a2a_event_order = $cursor_order AND node_id < $cursor_node_id))"
+        });
+        let session_sql = conversation_node_scan_sql(
+            context_scope::SCOPED_TO,
+            &[
+                task_session.as_str(),
+                session_filter.as_str(),
+                before_node_sql,
+            ],
+            &format!("ORDER BY event_order DESC, node_id DESC LIMIT {limit}"),
+        );
+        let mut session_query = self
+            .db
+            .query(&session_sql)
+            .bind(("ctx_node_id", ctx_node_id))
+            .bind(("agent_nodes", vec![agent_node_id]));
+        if let Some(cursor) = cursor {
+            session_query = session_query
+                .bind(("cursor_order", cursor.event_order))
+                .bind(("cursor_node_id", cursor.node_id.clone()));
+        }
+        if let Some(task_id) = task_id {
+            session_query = session_query.bind((
+                "task_entity_id",
+                task_entity_id_string_raw(task_id.as_str()),
+            ));
+        }
+        let session_started = std::time::Instant::now();
+        let session_response = session_query.await.map_err(map_surreal_error)?;
+        let session_rows: Vec<Value> = check_and_take_zero(session_response, map_surreal_error)?;
+        tracing::debug!(
+            context_id = %context_id,
+            agent_id = %agent_id,
+            arm = "session",
+            duration_ms = session_started.elapsed().as_millis(),
+            row_count = session_rows.len(),
+            "context projection storage window arm complete"
+        );
+        rows.extend(session_rows);
+        Ok(rows)
+    }
+
+    /// Old stores have transcript rows without agent ownership. Keep graph traversal
+    /// as a correctness fallback until those rows are rebuilt.
+    async fn agent_transcript_index_is_complete(&self, context_id: &ContextId) -> Result<bool> {
+        let query = format!(
+            "SELECT node_id FROM {TBL_CONTEXT_TRANSCRIPT_INDEX} \
+             WHERE context_id = $context_id AND agent_scope_indexed IS NONE LIMIT 1"
+        );
+        let response = self
+            .db
+            .query(&query)
+            .bind(("context_id", context_id.as_str().to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let missing: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+        Ok(missing.is_empty())
+    }
+
+    async fn fetch_agent_window_rows_legacy(
         &self,
         context_id: &ContextId,
         agent_id: &AgentId,
@@ -609,21 +843,18 @@ impl SurrealProvenanceStore {
             }
             None => "",
         };
-        // Without a task filter the tool and session arms would run the same
-        // `label IN ['ToolCall', 'SessionStep']` clause twice and return every
-        // call twice. With a task filter the two arms are disjoint: each one is
-        // restricted to the label its task edge belongs to.
         let no_task_filter = String::new();
-        let mut arms: Vec<(&str, &str)> = vec![(task_message.as_str(), msg_filter.as_str())];
+        let mut arms: Vec<(&str, &str, &str)> =
+            vec![("message", task_message.as_str(), msg_filter.as_str())];
         if task_id.is_some() {
-            arms.push((task_tool.as_str(), tool_filter.as_str()));
-            arms.push((task_session.as_str(), session_filter.as_str()));
+            arms.push(("tool", task_tool.as_str(), tool_filter.as_str()));
+            arms.push(("session", task_session.as_str(), session_filter.as_str()));
         } else {
-            arms.push((no_task_filter.as_str(), tool_filter.as_str()));
-            arms.push((no_task_filter.as_str(), session_filter.as_str()));
+            arms.push(("tool", no_task_filter.as_str(), tool_filter.as_str()));
+            arms.push(("session", no_task_filter.as_str(), session_filter.as_str()));
         }
         let mut rows: Vec<Value> = Vec::new();
-        for (task_filter_sql, agent_filter_sql) in arms {
+        for (arm, task_filter_sql, agent_filter_sql) in arms {
             let sql = conversation_node_scan_sql(
                 scoped_to,
                 &[task_filter_sql, agent_filter_sql, before_sql],
@@ -650,8 +881,18 @@ impl SurrealProvenanceStore {
                         task_execution_activity_id_string(task_id.as_str()),
                     ));
             }
+            let arm_started = std::time::Instant::now();
             let response = q.await.map_err(map_surreal_error)?;
-            rows.extend(check_and_take_zero(response, map_surreal_error)?);
+            let arm_rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
+            tracing::debug!(
+                context_id = %context_id,
+                agent_id = %agent_id,
+                arm,
+                duration_ms = arm_started.elapsed().as_millis(),
+                row_count = arm_rows.len(),
+                "context projection legacy storage window arm complete"
+            );
+            rows.extend(arm_rows);
         }
         Ok(rows)
     }
@@ -1673,18 +1914,22 @@ impl SurrealProvenanceStore {
         &self,
         context_id: &ContextId,
     ) -> Result<std::collections::HashSet<(String, String)>> {
-        let ctx = context_id.as_str();
-        // Stored property keys are the storage-safe underscore form; a
-        // colon-bearing key never matches a row written by the normalizer.
+        let ctx_node_id = context_entity_id_string(context_id.as_str());
+        // Context membership is graph-owned. Start from the indexed SCOPED_TO edge
+        // instead of filtering a denormalized node property.
         let q = format!(
             "SELECT node_id, props FROM {TBL_NODE} WHERE label = 'Delegation' \
-             AND props.{} = $ctx",
-            storage_safe::A2A_CONTEXT_ID
+             AND node_id IN (\
+               SELECT VALUE from_id FROM {TBL_EDGE} \
+               WHERE to_id = $ctx_node_id AND rel_type = '{scoped_to}' \
+                 AND from_label = 'Delegation'\
+             )",
+            scoped_to = context_scope::SCOPED_TO,
         );
         let rows: Vec<Value> = self
             .db
             .query(&q)
-            .bind(("ctx", ctx.to_string()))
+            .bind(("ctx_node_id", ctx_node_id))
             .await
             .map_err(map_surreal_error)
             .and_then(|response| check_and_take_zero(response, map_surreal_error))?;

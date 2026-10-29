@@ -1072,9 +1072,10 @@ pub fn record_context_projection(
 /// One stage inside a prompt projection.
 ///
 /// `stage` is a fixed vocabulary so the label stays low-cardinality:
-/// `compaction_gate`, `storage_read`, `project`, `ref_prepare`, `ref_history`,
-/// `ref_archives`, `render`. The aggregate `phase = "history"` metric stays the total,
-/// so existing dashboards are unaffected.
+/// `compaction_gate`, `storage_read`, `storage_head`, `storage_window`,
+/// `storage_delegations`, `storage_hydrate`, `project`, `ref_prepare`, `ref_history`,
+/// `ref_pending_receipts`, `ref_archives`, `render`. The aggregate `phase = "history"` metric
+/// stays the total, so existing dashboards are unaffected.
 pub fn record_context_projection_stage(stage: &'static str, duration: Duration) {
     let attributes = &[KeyValue::new("stage", stage)];
     context_projection_stage_histogram().record(duration.as_millis() as f64, attributes);
