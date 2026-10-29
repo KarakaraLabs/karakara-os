@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   PKG_CLICKUP_EXECUTE,
   PKG_CLICKUP_FORMAT,
+  applyTaskFilters,
   collapseReadOnlyExecuteSteps,
   isDeterministicTaskRead,
+  taskFiltersFromIntent,
   validateClickUpPlanForExecution,
 } from "../../../agents/clickup-agent/src/clickupExecution.ts";
 
@@ -179,6 +181,11 @@ describe("validateClickUpPlanForExecution", () => {
       operation_kind: "read" as const,
       scope_hint: null,
       status_filter: null,
+      assignee_filter: null,
+      priority_filter: null,
+      due_filter: null,
+      text_filter: null,
+      unsupported: null,
     };
     expect(isDeterministicTaskRead({ ...base, action: "list_tasks" })).toBe(true);
     expect(isDeterministicTaskRead({ ...base, action: "count_tasks" })).toBe(true);
@@ -186,21 +193,25 @@ describe("validateClickUpPlanForExecution", () => {
     expect(
       isDeterministicTaskRead({ ...base, action: "list_tasks", operation_kind: "write" }),
     ).toBe(false);
-    // Constraints the deterministic traversal cannot express must fall back to the planner.
+    // Routing depends on declared typed constraints, never on request vocabulary: workspace
+    // status names and customer phrasing vary, so the classifier states what it could not encode.
     expect(
       isDeterministicTaskRead({
         ...base,
         action: "list_tasks",
-        intent: "list tasks assigned to me",
+        unsupported: ["current user"],
       }),
     ).toBe(false);
     expect(
       isDeterministicTaskRead({
         ...base,
         action: "list_tasks",
-        intent: "list tasks due this week",
+        assignee_filter: "Dana",
+        priority_filter: "urgent",
+        due_filter: "this_week",
+        unsupported: [],
       }),
-    ).toBe(false);
+    ).toBe(true);
     // Naming display fields is not a constraint: the renderer supplies them as columns, and
     // the planner paraphrases the request by listing exactly those fields.
     expect(
@@ -211,5 +222,47 @@ describe("validateClickUpPlanForExecution", () => {
           "list all tasks currently marked in progress, including names, assignees, due dates, and statuses",
       }),
     ).toBe(true);
+  });
+
+  it("keeps typed filters independent of workspace status names", () => {
+    const filters = taskFiltersFromIntent({
+      kind: "intent",
+      intent: "list tasks",
+      operation_kind: "read",
+      action: "list_tasks",
+      status_filter: "Blocked / External",
+      assignee_filter: "Dana",
+      priority_filter: "high",
+      due_filter: "overdue",
+      text_filter: "deploy",
+      unsupported: null,
+      scope_hint: null,
+    });
+    expect(filters).toEqual({
+      status: "Blocked / External",
+      assignee: "Dana",
+      priority: "high",
+      due: "overdue",
+      text: "deploy",
+    });
+  });
+
+  it("matches custom statuses exactly, then by containment, and reports a miss", () => {
+    const tasks = [
+      { id: "1", name: "A", status: "in progress", url: "", priority: "urgent" },
+      { id: "2", name: "B", status: "In Progress (Dev)", url: "", priority: "high" },
+      { id: "3", name: "C", status: "Scoping", url: "", priority: "low" },
+    ];
+    const empty = { assignee: null, priority: null, due: null, text: null };
+    expect(
+      applyTaskFilters(tasks, { ...empty, status: "in progress" }).matching.map((t) => t.id),
+    ).toEqual(["1"]);
+    expect(
+      applyTaskFilters(tasks, { ...empty, status: "progress" }).matching.map((t) => t.id),
+    ).toEqual(["1", "2"]);
+    expect(applyTaskFilters(tasks, { ...empty, status: "done" }).statusMiss).toBe(true);
+    expect(
+      applyTaskFilters(tasks, { ...empty, priority: "low" }).matching.map((t) => t.id),
+    ).toEqual(["3"]);
   });
 });

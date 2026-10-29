@@ -20,7 +20,12 @@ class ClickUpIntent {
   intent string @description("Clean, distilled goal statement — what the user wants to do in ClickUp.")
   operation_kind "read" | "write" | "delete" @description("Broad category: read (list/get), write (create/update), delete.")
   action "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other" @description("Typed read action the host can execute deterministically. list_tasks: show/list tasks. count_tasks: how many tasks. get_task: one named task. navigate: workspace hierarchy only. other: anything else, including write/delete.")
-  status_filter string? @description("Exact task status the user named, copied verbatim (e.g. in progress). Omit when the user did not ask for a status filter. Never invent one.")
+  status_filter string? @description("Exact task status the user named, copied verbatim (e.g. in progress, Blocked / External). Omit when the user did not ask for a status filter. Never invent one.")
+  assignee_filter string? @description("Use only when the request must be filtered to tasks assigned to one named person: copy their name or email text verbatim. Omit when the user merely wants assignees shown. Leave null for 'assigned to me' and name that in unsupported instead.")
+  priority_filter ("urgent" | "high" | "normal" | "low")? @description("Use only when the request must be filtered by priority. ClickUp priorities are fixed across workspaces. Omit when the user merely wants priority shown.")
+  due_filter ("overdue" | "today" | "this_week" | "next_week")? @description("Use only when the request must be filtered by due date window, relative to today. Omit when the user merely wants due dates shown.")
+  text_filter string? @description("Use only when the request must be filtered to tasks whose name or description contains specific words: copy those words verbatim. Omit for unfiltered reads.")
+  unsupported string[]? @description("Constraints no typed field above can express (custom fields, grouping, ordering by an unlisted property, current-user identity, cross-workspace aggregation). Two or three words each. Empty or omitted when the request is a plain filtered list or count.")
   scope_hint string? @description("Optional human-readable team, space, or list name the user named. A hint, never an ID.")
 }
 
@@ -73,6 +78,19 @@ You are the intent classifier for a ClickUp workspace assistant.
          named task, "navigate" when the user only wants the workspace hierarchy (teams/spaces/lists),
          and "other" for everything else (including every write or delete).
        - status_filter: copy the user's status wording verbatim when they name one; otherwise omit it.
+         ClickUp statuses are workspace-defined, so never translate, expand, or correct the wording —
+         copy what the user wrote (for example "Blocked / External" or "Scoping").
+       - Filters vs display: the fields below exist only for filtering. Leave them null when the user
+         merely wants that information shown — the renderer already displays assignees, priority, due
+         dates, status, and ID for every task.
+         * assignee_filter: one named person's name or email. Never for "me" or "my tasks":
+           leave it null and put "current user" in unsupported.
+         * priority_filter: ClickUp priorities are fixed across workspaces.
+         * due_filter: a date window relative to today.
+         * text_filter: words the task name or description must contain.
+       - unsupported: only for constraints none of the typed fields can express, such as custom fields,
+         grouping, or ordering by something other than priority. Omit it when everything is expressible;
+         a non-empty value sends the request to the general planner, which is slower.
        - scope_hint: copy a team/space/list name the user mentioned; never invent an ID.
     2. Ask one clarifying question when the message relates to project management but is too vague
        to plan (e.g. "do the thing", "fix it", "help me" with no task or workspace context).
@@ -86,7 +104,11 @@ You are the intent classifier for a ClickUp workspace assistant.
     - "what should I work on first in Engineering?" → ClickUpPriorityIntent, scope "one_best_match", scope_hint "Engineering"
     - "what is the total number of open tasks?" → count open tasks, operation_kind "read"
     - "what tasks are in progress?" → list in-progress tasks, operation_kind "read"
-    - "list tasks assigned to me" → list tasks assigned to me, operation_kind "read"
+    - "list tasks assigned to me" → list tasks, operation_kind "read", unsupported ["current user"]
+    - "which tasks are assigned to Dana?" → list tasks, operation_kind "read", assignee_filter "Dana"
+    - "show urgent in-progress tasks" → list tasks, operation_kind "read", status_filter "in progress", priority_filter urgent
+    - "what is due this week?" → list tasks, operation_kind "read", due_filter this_week
+    - "list in-progress tasks with names, assignees, and due dates" → list tasks, operation_kind "read", status_filter "in progress" (display request: no other filters)
     - "create a task called Deploy v2 in the backend list" → create that task, operation_kind "write"
     - "delete the task fix login bug" → delete that task, operation_kind "delete"
     - Host lifecycle ingress batches (clickup-created / clickup-terminal / clickup-removed record keys) →

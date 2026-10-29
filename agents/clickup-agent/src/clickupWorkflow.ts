@@ -946,7 +946,7 @@ export async function runClickUpTaskQueryWorkflow(
   intent: ClickUpIntent,
 ): Promise<SessionResult> {
   const action = intent.action === "count_tasks" ? "count_tasks" : "list_tasks";
-  const requestedStatus = intent.status_filter?.trim() || null;
+  const filters = taskFiltersFromIntent(intent);
   const querySlug = slugGoal(intent.intent);
 
   const executionSession =
@@ -974,8 +974,8 @@ export async function runClickUpTaskQueryWorkflow(
           },
           {
             stepId: "filter-tasks",
-            description: requestedStatus
-              ? `Keep tasks whose status is ${requestedStatus}.`
+            description: hasTaskFilters(filters)
+              ? `Keep tasks${describeTaskFilters(filters)}.`
               : "Keep every retrieved task.",
             order: 1,
             dependsOn: ["discover-clickup-scope"],
@@ -996,7 +996,7 @@ export async function runClickUpTaskQueryWorkflow(
   let tasks: ClickUpTaskSummary[];
   try {
     await executable?.startStep?.("discover-clickup-scope");
-    tasks = await collectScopedTasksForRead(intent);
+    tasks = await collectScopedTasksForRead(intent, filters);
     await executable?.completeStep?.("discover-clickup-scope");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -1009,20 +1009,16 @@ export async function runClickUpTaskQueryWorkflow(
   }
 
   await executable?.startStep?.("filter-tasks");
-  const matching = requestedStatus
-    ? tasks.filter(
-        (task) =>
-          normalizedStatus(task.status) === normalizedStatus(requestedStatus),
-      )
-    : tasks;
+  const { matching, statusMiss } = applyTaskFilters(tasks, filters);
   await executable?.completeStep?.("filter-tasks");
 
   await executable?.startStep?.("format-task-list");
   const message = renderTaskQueryAnswer(
     action,
     matching,
-    requestedStatus,
-    requestedStatus ? tasks : [],
+    filters,
+    tasks,
+    statusMiss,
   );
   await executable?.completeStep?.("format-task-list");
   await executable?.finish?.();
@@ -1034,36 +1030,104 @@ export async function runClickUpTaskQueryWorkflow(
  *
  * `scope_hint` is a name, never an ID, so `one_best_match` semantics (Jev disambiguation over the
  * retrieved candidates) apply whenever the user names an area.
+ *
+ * `status_filter` is deliberately not forwarded: filtering happens locally so a status the scope
+ * does not contain can be reported against the statuses that do exist, instead of coming back empty.
  */
 async function collectScopedTasksForRead(
   intent: ClickUpIntent,
+  _filters: ClickUpTaskFilters,
 ): Promise<ClickUpTaskSummary[]> {
   const scopeIntent: ClickUpPriorityIntent = {
     kind: "prioritize",
     intent: intent.intent,
     scope: intent.scope_hint?.trim() ? "one_best_match" : "all_accessible",
     scope_hint: intent.scope_hint ?? null,
-    status_filter: intent.status_filter ?? null,
+    status_filter: null,
   };
   return collectScopedTasks(scopeIntent, READ_TRAVERSAL);
+}
+
+/**
+ * Filters the deterministic read path applies to the tasks it fetched.
+ *
+ * These come from typed intent fields, never from request wording: ClickUp statuses are
+ * workspace-defined, so vocabulary matching would encode one customer's configuration.
+ */
+export interface ClickUpTaskFilters {
+  status: string | null;
+  assignee: string | null;
+  priority: "urgent" | "high" | "normal" | "low" | null;
+  due: "overdue" | "today" | "this_week" | "next_week" | null;
+  text: string | null;
+}
+
+const PRIORITY_FILTERS = ["urgent", "high", "normal", "low"] as const;
+const DUE_FILTERS = ["overdue", "today", "this_week", "next_week"] as const;
+
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function normalizedChoice<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+): T | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return allowed.find((option) => option === normalized) ?? null;
+}
+
+/** Typed filters carried by the intent, normalised and tolerant of absent fields. */
+export function taskFiltersFromIntent(
+  intent: ClickUpIntent,
+): ClickUpTaskFilters {
+  const raw = intent as {
+    assignee_filter?: unknown;
+    priority_filter?: unknown;
+    due_filter?: unknown;
+    text_filter?: unknown;
+  };
+  return {
+    status: optionalText(intent.status_filter),
+    assignee: optionalText(raw.assignee_filter),
+    priority: normalizedChoice(raw.priority_filter, PRIORITY_FILTERS),
+    due: normalizedChoice(raw.due_filter, DUE_FILTERS),
+    text: optionalText(raw.text_filter),
+  };
+}
+
+/** True when the intent narrows the task list at all. */
+export function hasTaskFilters(filters: ClickUpTaskFilters): boolean {
+  return (
+    filters.status !== null ||
+    filters.assignee !== null ||
+    filters.priority !== null ||
+    filters.due !== null ||
+    filters.text !== null
+  );
 }
 
 function renderTaskQueryAnswer(
   action: "list_tasks" | "count_tasks",
   tasks: ClickUpTaskSummary[],
-  requestedStatus: string | null,
-  unfiltered: ClickUpTaskSummary[] = [],
+  filters: ClickUpTaskFilters,
+  scopeTasks: ClickUpTaskSummary[] = [],
+  statusMiss = false,
 ): string {
-  const filterLabel = requestedStatus
-    ? ` with status "${requestedStatus}"`
-    : "";
+  const filterLabel = describeTaskFilters(filters);
   if (tasks.length === 0) {
-    if (requestedStatus && unfiltered.length > 0) {
-      // Ground the empty result in what the scope actually contains instead of a bare "none".
-      const statuses = [...new Set(unfiltered.map((t) => t.status))].sort();
+    if (filters.status && statusMiss && scopeTasks.length > 0) {
+      // Statuses are workspace-defined: report the ones that exist rather than a bare "none".
+      const statuses = [...new Set(scopeTasks.map((t) => t.status))].sort();
       return (
         `No ClickUp tasks${filterLabel} were found in the requested scope. ` +
-        `The ${unfiltered.length} task(s) retrieved have these statuses: ${statuses.join(", ")}.`
+        `The ${scopeTasks.length} task(s) retrieved have these statuses: ${statuses.join(", ")}.`
       );
     }
     return `No ClickUp tasks${filterLabel} were found in the requested scope.`;
@@ -1084,6 +1148,121 @@ function renderTaskQueryAnswer(
   const header = `${tasks.length} ClickUp task${tasks.length === 1 ? "" : "s"}${filterLabel}:`;
   return `${header}\n\n${renderTaskTable(tasks)}`;
 }
+
+/** Human-readable summary of the filters that produced the answer. */
+function describeTaskFilters(filters: ClickUpTaskFilters): string {
+  const parts: string[] = [];
+  if (filters.status) parts.push(`with status "${filters.status}"`);
+  if (filters.assignee) parts.push(`assigned to "${filters.assignee}"`);
+  if (filters.priority) parts.push(`with priority "${filters.priority}"`);
+  if (filters.due) parts.push(`due ${filters.due.replace(/_/g, " ")}`);
+  if (filters.text) parts.push(`matching "${filters.text}"`);
+  return parts.length > 0 ? ` ${parts.join(", ")}` : "";
+}
+
+const DAY_MS = 86_400_000;
+
+function startOfToday(): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function taskDueDate(task: ClickUpTaskSummary): Date | null {
+  const raw = task.due_date;
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const numeric = Number(text);
+    // ClickUp serialises due dates as epoch milliseconds; accept seconds too.
+    const date = new Date(numeric < 1e11 ? numeric * 1000 : numeric);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function matchesDueFilter(task: ClickUpTaskSummary, due: string): boolean {
+  const date = taskDueDate(task);
+  if (date === null) return false;
+  const today = startOfToday().getTime();
+  const at = date.getTime();
+  switch (due) {
+    case "overdue":
+      return at < today;
+    case "today":
+      return at >= today && at < today + DAY_MS;
+    case "this_week":
+      return at >= today && at < today + 7 * DAY_MS;
+    case "next_week":
+      return at >= today + 7 * DAY_MS && at < today + 14 * DAY_MS;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Apply the intent's typed filters to the fetched task list.
+ *
+ * Status matching is exact first, then substring in either direction, because workspaces name
+ * statuses freely ("In Progress", "In Progress (Dev)", "Scoping", "Blocked / External") and the
+ * caller asked in their own words. When nothing matches, `statusMiss` tells the renderer to list
+ * the statuses that do exist instead of claiming there are no tasks.
+ */
+export function applyTaskFilters(
+  tasks: ClickUpTaskSummary[],
+  filters: ClickUpTaskFilters,
+): { matching: ClickUpTaskSummary[]; statusMiss: boolean } {
+  let statusMiss = false;
+  let matching = tasks;
+
+  if (filters.status) {
+    const wanted = normalizedStatus(filters.status);
+    const exact = tasks.filter(
+      (task) => normalizedStatus(task.status) === wanted,
+    );
+    if (exact.length > 0) {
+      matching = exact;
+    } else {
+      const observed = tasks.filter((task) => {
+        const status = normalizedStatus(task.status);
+        return status.includes(wanted) || wanted.includes(status);
+      });
+      matching = observed;
+      statusMiss = observed.length === 0;
+    }
+  }
+  if (filters.assignee) {
+    const wanted = filters.assignee.toLocaleLowerCase();
+    matching = matching.filter((task) =>
+      (Array.isArray(task.assignees) ? task.assignees : []).some((assignee) =>
+        assignee.toLocaleLowerCase().includes(wanted),
+      ),
+    );
+  }
+  if (filters.priority) {
+    const wanted = filters.priority;
+    matching = matching.filter(
+      (task) =>
+        typeof task.priority === "string" &&
+        task.priority.trim().toLocaleLowerCase() === wanted,
+    );
+  }
+  if (filters.due) {
+    matching = matching.filter((task) => matchesDueFilter(task, filters.due!));
+  }
+  if (filters.text) {
+    const wanted = filters.text.toLocaleLowerCase();
+    matching = matching.filter((task) =>
+      `${task.name} ${task.description ?? ""}`
+        .toLocaleLowerCase()
+        .includes(wanted),
+    );
+  }
+  return { matching, statusMiss };
+}
+
 
 function renderTaskTable(tasks: ClickUpTaskSummary[]): string {
   const header = "| Task | Status | Priority | Assignees | Due | ID |";

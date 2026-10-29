@@ -51,6 +51,11 @@ intent: string;
 operation_kind: "read" | "write" | "delete";
 action: "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other";
 status_filter: string | null;
+assignee_filter: string | null;
+priority_filter: "urgent" | "high" | "normal" | "low" | null;
+due_filter: "overdue" | "today" | "this_week" | "next_week" | null;
+text_filter: string | null;
+unsupported: string[] | null;
 scope_hint: string | null;
  }
 
