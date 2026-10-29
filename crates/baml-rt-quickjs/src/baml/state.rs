@@ -68,6 +68,10 @@ pub(in crate::baml) struct BamlRuntimeState {
     pub(in crate::baml) tool_schema_prelude: Option<Arc<str>>,
     /// Deployed agent package name for per-agent config resolution (karakara gate, etc.).
     pub(in crate::baml) agent_package: Option<Arc<str>>,
+    /// Per-function prompt-context opt-outs declared in the agent package manifest.
+    /// Absent entries keep the historical behavior (history + tool catalog).
+    pub(in crate::baml) function_context:
+        std::collections::BTreeMap<String, baml_rt_core::InvocationContextRequirements>,
 }
 
 impl Default for BamlRuntimeState {
@@ -97,6 +101,7 @@ impl Default for BamlRuntimeState {
             execution_sessions: Arc::new(DashMap::new()),
             tool_schema_prelude: None,
             agent_package: None,
+            function_context: std::collections::BTreeMap::new(),
         }
     }
 }

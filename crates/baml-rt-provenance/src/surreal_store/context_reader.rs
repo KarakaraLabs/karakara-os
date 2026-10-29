@@ -544,6 +544,30 @@ impl SurrealProvenanceStore {
         Ok(items)
     }
 
+    /// Cheap post-turn compaction pre-check: `true` when fewer than `threshold` candidate rows
+    /// exist for this agent's view.
+    ///
+    /// `conversation_context_for_agent` reads and hydrates the complete participation view, which
+    /// is the most expensive part of a post-turn compaction attempt. The item threshold is checked
+    /// before bytes, so a caller below the threshold can skip that work entirely. This probe uses
+    /// the same storage arms and visibility predicate as the full read, bounded to `threshold`
+    /// rows, so a false result ("maybe at or above threshold") can only over-estimate.
+    pub async fn agent_view_below_item_threshold(
+        &self,
+        context_id: &ContextId,
+        agent_id: &AgentId,
+        task_id: Option<&TaskId>,
+        threshold: usize,
+    ) -> Result<bool> {
+        if threshold == 0 {
+            return Ok(false);
+        }
+        let rows = self
+            .fetch_agent_window_rows(context_id, agent_id, threshold, None, task_id)
+            .await?;
+        Ok(rows.len() < threshold)
+    }
+
     /// Bounded, agent-scoped node fetch: the storage half of
     /// [`Self::context_history_view`].
     ///

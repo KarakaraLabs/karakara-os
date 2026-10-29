@@ -134,7 +134,7 @@ pub use llm_text::{
     llm_completion_should_materialize_assistant_message,
 };
 pub use observation::{ObservationUpdate, kinds as ObservationKinds};
-pub use package::AgentManifest;
+pub use package::{AgentManifest, InvocationContextRequirements};
 pub use progress_probe::{ProgressProbe, ProgressProbeRegistry, register_progress_probe};
 pub use retry_after::{RetryAfter, parse_retry_after};
 pub use semantics::{ActivityOutcome, ErrorDisposition, InvocationKind, Outcome, Retryability};

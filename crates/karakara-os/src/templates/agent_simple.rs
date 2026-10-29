@@ -62,6 +62,7 @@ pub fn generate_manifest(
         tools: tool_ids.to_vec(),
         tags: tags.to_vec(),
         discovery,
+        function_context: std::collections::BTreeMap::new(),
     };
 
     serde_json::to_string_pretty(&manifest).expect("manifest serializes to JSON")

@@ -51,23 +51,30 @@ impl PlanningEmitEnv<'_> {
             .collect::<Vec<_>>();
         available_tools.sort();
         available_tools.dedup();
-        let conversation_history =
-            if let Some(provider) = self.conversation_context_provider.as_ref() {
-                let projection_started = std::time::Instant::now();
-                let turn = baml_rt_observability::turn::current_turn(scope.context_id());
-                let history = provider
-                    .conversation_history_json(scope, function_name)
-                    .await?;
-                baml_rt_observability::metrics::record_context_projection(
-                    self.agent_package.unwrap_or("unknown"),
-                    turn,
-                    "planning_context",
-                    projection_started.elapsed(),
-                );
-                history
-            } else {
-                None
-            };
+        // History projection is the expensive part, so only pay for it when the resolver reads it.
+        // The default resolver validates submitted fields only and opts out.
+        let needs_history = self
+            .planning_resolver
+            .context_requirements()
+            .conversation_history;
+        let conversation_history = if !needs_history {
+            None
+        } else if let Some(provider) = self.conversation_context_provider.as_ref() {
+            let projection_started = std::time::Instant::now();
+            let turn = baml_rt_observability::turn::current_turn(scope.context_id());
+            let history = provider
+                .conversation_history_json(scope, function_name)
+                .await?;
+            baml_rt_observability::metrics::record_context_projection(
+                self.agent_package.unwrap_or("unknown"),
+                turn,
+                "planning_context",
+                projection_started.elapsed(),
+            );
+            history
+        } else {
+            None
+        };
         Ok(PlanningDynamicContext {
             scope: scope.clone(),
             available_tools,

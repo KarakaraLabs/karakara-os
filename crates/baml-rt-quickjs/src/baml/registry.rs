@@ -12,6 +12,33 @@ impl BamlRuntimeManager {
         self.state.archive_ref_tables.clone()
     }
 
+    /// Install the per-function prompt-context opt-outs declared by the agent package manifest.
+    ///
+    /// Called once at schema load. Absent entries keep the historical behavior, so a package that
+    /// declares nothing pays nothing extra.
+    pub fn set_function_context_requirements(
+        &mut self,
+        requirements: std::collections::BTreeMap<
+            String,
+            baml_rt_core::InvocationContextRequirements,
+        >,
+    ) {
+        self.state.function_context = requirements;
+    }
+
+    /// Context requirements for `function_name`, defaulting to "build everything".
+    #[must_use]
+    pub fn invocation_context_requirements(
+        &self,
+        function_name: &str,
+    ) -> baml_rt_core::InvocationContextRequirements {
+        self.state
+            .function_context
+            .get(function_name)
+            .copied()
+            .unwrap_or_default()
+    }
+
     /// Build conversation context tags for the given scope.
     ///
     /// Graph / provider provenance only (the projection `ConversationContextProvider` exposes),
@@ -21,6 +48,9 @@ impl BamlRuntimeManager {
     /// with the same provider; both code paths share
     /// [`Self::enrich_with_tool_schema_prelude`] so plain and step-executor invocations
     /// produce byte-identical opening tags.
+    ///
+    /// A function whose manifest entry opts out of conversation history skips the projection
+    /// entirely; the prompt's transcript block then renders empty.
     pub async fn build_conversation_context_tags(
         &self,
         scope: &context::RuntimeScope,
@@ -29,10 +59,14 @@ impl BamlRuntimeManager {
         let Some(ref exec) = self.state.executor else {
             return Ok(None);
         };
-        let mut tags = exec
-            .build_conversation_context_tags(scope, function_name)
-            .await?;
-        self.enrich_with_tool_schema_prelude(&mut tags);
+        let requirements = self.invocation_context_requirements(function_name);
+        let mut tags = if requirements.conversation_history {
+            exec.build_conversation_context_tags(scope, function_name)
+                .await?
+        } else {
+            None
+        };
+        self.enrich_with_tool_schema_prelude(function_name, &mut tags);
         Ok(tags)
     }
 
@@ -43,8 +77,15 @@ impl BamlRuntimeManager {
     /// nothing else.
     pub(in crate::baml) fn enrich_with_tool_schema_prelude(
         &self,
+        function_name: &str,
         tags: &mut Option<HashMap<String, BamlValue>>,
     ) {
+        if !self
+            .invocation_context_requirements(function_name)
+            .tool_schema_prelude
+        {
+            return;
+        }
         let Some(prelude) = self.state.tool_schema_prelude.as_ref() else {
             return;
         };
@@ -210,7 +251,7 @@ mod tool_schema_prelude_tests {
         let manager = manager_with_prelude(Some(prelude_text.clone()));
 
         let mut tags: Option<HashMap<String, BamlValue>> = None;
-        manager.enrich_with_tool_schema_prelude(&mut tags);
+        manager.enrich_with_tool_schema_prelude("AnyFunction", &mut tags);
 
         let tags = tags.expect("enrichment must allocate a tag map when prelude is present");
         match tags.get(TOOL_SCHEMA_PRELUDE_TAG) {
@@ -237,7 +278,7 @@ mod tool_schema_prelude_tests {
             );
             m
         });
-        manager.enrich_with_tool_schema_prelude(&mut tags);
+        manager.enrich_with_tool_schema_prelude("AnyFunction", &mut tags);
 
         let tags = tags.expect("tag map must remain Some when prelude is present");
         assert_eq!(
@@ -254,7 +295,7 @@ mod tool_schema_prelude_tests {
         let manager = manager_with_prelude(None);
 
         let mut tags: Option<HashMap<String, BamlValue>> = None;
-        manager.enrich_with_tool_schema_prelude(&mut tags);
+        manager.enrich_with_tool_schema_prelude("AnyFunction", &mut tags);
         assert!(
             tags.is_none(),
             "no-prelude path must not allocate a tag map (cache discipline)"
@@ -265,7 +306,7 @@ mod tool_schema_prelude_tests {
             m.insert("k".to_string(), BamlValue::String("v".into()));
             m
         });
-        manager.enrich_with_tool_schema_prelude(&mut tags);
+        manager.enrich_with_tool_schema_prelude("AnyFunction", &mut tags);
         let tags = tags.expect("pre-existing map must remain");
         assert_eq!(
             tags.len(),
@@ -273,5 +314,73 @@ mod tool_schema_prelude_tests {
             "no-prelude path must not insert any tag: {tags:?}"
         );
         assert!(!tags.contains_key(TOOL_SCHEMA_PRELUDE_TAG));
+    }
+}
+
+#[cfg(test)]
+mod function_context_tests {
+    use std::sync::Arc;
+
+    use baml_rt_core::InvocationContextRequirements;
+    use baml_rt_tools::TOOL_SCHEMA_PRELUDE_TAG;
+    use baml_types::BamlValue;
+
+    use super::super::BamlRuntimeManager;
+
+    fn manager_with_prelude() -> BamlRuntimeManager {
+        let mut manager = BamlRuntimeManager::default();
+        let prelude: Arc<str> = Arc::from("RENDERED CATALOG TEXT");
+        manager.state.tool_schema_prelude = Some(prelude);
+        manager
+    }
+
+    #[test]
+    fn absent_manifest_entry_keeps_both_parts() {
+        let manager = manager_with_prelude();
+        let requirements = manager.invocation_context_requirements("SomeFunction");
+        assert_eq!(requirements, InvocationContextRequirements::default());
+        assert!(requirements.conversation_history);
+        assert!(requirements.tool_schema_prelude);
+    }
+
+    #[test]
+    fn manifest_opt_out_skips_tool_schema_prelude_for_that_function_only() {
+        let mut manager = manager_with_prelude();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "PureFormatter".to_string(),
+            InvocationContextRequirements::SUBMISSION_ONLY,
+        );
+        manager.set_function_context_requirements(map);
+
+        let mut pure_tags: Option<std::collections::HashMap<String, BamlValue>> = None;
+        manager.enrich_with_tool_schema_prelude("PureFormatter", &mut pure_tags);
+        assert!(
+            pure_tags.is_none(),
+            "opted-out function must not allocate a tag map"
+        );
+
+        let mut other_tags: Option<std::collections::HashMap<String, BamlValue>> = None;
+        manager.enrich_with_tool_schema_prelude("SomeFunction", &mut other_tags);
+        let other_tags = other_tags.expect("non-opted-out function keeps the prelude");
+        assert!(other_tags.contains_key(TOOL_SCHEMA_PRELUDE_TAG));
+    }
+
+    #[test]
+    fn manifest_entry_can_drop_only_the_tool_schema_prelude() {
+        let mut manager = manager_with_prelude();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "HistoryOnly".to_string(),
+            InvocationContextRequirements {
+                conversation_history: true,
+                tool_schema_prelude: false,
+            },
+        );
+        manager.set_function_context_requirements(map);
+
+        let requirements = manager.invocation_context_requirements("HistoryOnly");
+        assert!(requirements.conversation_history);
+        assert!(!requirements.tool_schema_prelude);
     }
 }
