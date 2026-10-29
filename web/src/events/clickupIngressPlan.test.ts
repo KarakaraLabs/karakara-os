@@ -8,6 +8,7 @@ import {
   PKG_CLICKUP_FORMAT,
   applyTaskFilters,
   collapseReadOnlyExecuteSteps,
+  describePriorityAbstain,
   isDeterministicTaskRead,
   taskFiltersFromIntent,
   validateClickUpPlanForExecution,
@@ -276,5 +277,23 @@ describe("validateClickUpPlanForExecution", () => {
     expect(
       applyTaskFilters(tasks, { ...empty, priority: "low" }).matching.map((t) => t.id),
     ).toEqual(["3"]);
+  });
+
+  it("explains an abstain instead of returning silence", () => {
+    const message = describePriorityAbstain(
+      {
+        outcome: "abstain",
+        reason: "The task records do not support a confident recommendation.",
+        evidence_sufficient: 0.51,
+        considered: 46,
+      },
+      ["to do"],
+    );
+    expect(message).toContain("do not support a confident recommendation");
+    expect(message).toContain("0.51");
+    expect(message).toContain("46 task(s)");
+    expect(message).toContain('"to do"');
+    // No field may leak through as a literal.
+    expect(message).not.toMatch(/undefined|null|NaN/);
   });
 });
