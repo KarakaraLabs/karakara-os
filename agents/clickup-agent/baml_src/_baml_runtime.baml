@@ -196,103 +196,6 @@ class ClickUpOutput {
   @@dynamic
 }
 
-class AgentEventSubscriptionDto {
-  schemaVersions string[]?
-  sourceKinds string[]?
-  sourceKeys string[]?
-  sourceKeyPrefixes string[]?
-  @@dynamic
-}
-
-class AgentCardDto {
-  name string
-  version string
-  contentHash (string | null)?
-  repositoryVersion (int | null)?
-  agentPackage string
-  tools string[]
-  description (string | null)?
-  capabilities string[]
-  tags string[]?
-  subscriptions AgentEventSubscriptionDto[]?
-  @@dynamic
-}
-
-enum HistoryContextSessionOp {
-  SearchRead
-  PageRead
-}
-
-enum HistoryContextStatus {
-  Done
-    @alias("done")
-  Streaming
-    @alias("streaming")
-  Suspended
-    @alias("suspended")
-  Error
-    @alias("error")
-}
-
-class HistoryContextV1 {
-  hop int
-  op HistoryContextSessionOp
-  status HistoryContextStatus
-  truncated bool?
-  cursor (string | null)?
-  payload (map<string, OpaqueJson> | null)?
-  @@dynamic
-}
-
-class DiscoverAgentsNextOutput {
-  agents AgentCardDto[]
-  done bool
-  historyContext (HistoryContextV1 | null)?
-  @@dynamic
-}
-
-class DiscoverAgentsOpenInput {
-  reason (string | null)?
-  @@dynamic
-}
-
-class DiscoverAgentsSendInput {
-  query (string | null)?
-  requiredCapabilities (string[] | null)?
-  requiredSchemaVersions (string[] | null)?
-  requiredSourceKinds (string[] | null)?
-  limit (int | null)?
-  offset (int | null)?
-  @@dynamic
-}
-
-class ToolDiscoveryRecordDto {
-  name string
-  bundle string
-  description string
-  tags string[]
-  eventSources string[]?
-  @@dynamic
-}
-
-class DiscoverToolsNextOutput {
-  tools ToolDiscoveryRecordDto[]
-  done bool
-  historyContext (HistoryContextV1 | null)?
-  @@dynamic
-}
-
-class DiscoverToolsOpenInput {
-  reason (string | null)?
-  @@dynamic
-}
-
-class DiscoverToolsSendInput {
-  query (string | null)?
-  limit (int | null)?
-  @@dynamic
-}
-
 class ConversationPart {
   text (string | null)? @description("Plain text content for this conversation part.")
   data (OpaqueJson | null)? @description("Structured JSON content for this conversation part.")
@@ -329,6 +232,32 @@ enum InternalA2aCompletion {
     @alias("AUTH_REQUIRED")
 }
 
+enum HistoryContextSessionOp {
+  SearchRead
+  PageRead
+}
+
+enum HistoryContextStatus {
+  Done
+    @alias("done")
+  Streaming
+    @alias("streaming")
+  Suspended
+    @alias("suspended")
+  Error
+    @alias("error")
+}
+
+class HistoryContextV1 {
+  hop int
+  op HistoryContextSessionOp
+  status HistoryContextStatus
+  truncated bool?
+  cursor (string | null)?
+  payload (map<string, OpaqueJson> | null)?
+  @@dynamic
+}
+
 class InternalA2aNextOutput {
   chunks ConversationChunk[]
   completion (InternalA2aCompletion | null)?
@@ -349,6 +278,70 @@ class InternalA2aOpenInput {
 class InternalA2aSendInput {
   parts ConversationPart[]
   @@dynamic
+}
+
+class SystemOneUsage {
+  input_tokens (int | null)?
+  output_tokens (int | null)?
+}
+
+class ChoiceAnswer {
+  choice string
+  probabilities map<string, float>
+  confidence float
+  type "choice"
+}
+
+class ScoreAnswer {
+  score float
+  probabilities map<string, float>
+  confidence float
+  type "score"
+}
+
+class NoulAnswer {
+  noul float
+  type "noul"
+}
+
+type SystemOneAnswer = ChoiceAnswer | ScoreAnswer | NoulAnswer
+
+class SystemOneOutput {
+  model string
+  answers map<string, SystemOneAnswer>
+  usage (SystemOneUsage | null)?
+}
+
+class ChoiceQuestion {
+  instructions OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  criteria map<string, OpaqueJson>
+  type "choice"
+}
+
+class ScoreQuestion {
+  instructions OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  criteria OpaqueJson[]
+  type "score"
+}
+
+class NoulCriteria {
+  field_true OpaqueJson @alias("true") @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  field_false OpaqueJson @alias("false") @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+}
+
+class NoulQuestion {
+  instructions OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  criteria (NoulCriteria | null)?
+  type "noul"
+}
+
+type SystemOneQuestion = ChoiceQuestion | ScoreQuestion | NoulQuestion
+
+class SystemOneInput {
+  state OpaqueJson @description("Opaque JSON transport value. Direct host callers may send raw JSON; generated BAML callers should use the OpaqueJson wrapper.")
+  questions map<string, SystemOneQuestion>
+  model (string | null)?
+  timeout_ms (int | null)?
 }
 
 /// Tool card for support/clickup: metadata for polymorphic Open selection.
@@ -399,101 +392,51 @@ class SupportClickupSessionPlan {
   citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
-/// Tool card for system/discover_agents: metadata for polymorphic Open selection.
-class SystemDiscoverAgentsToolCard {
-  tool_name "system/discover_agents"
-  description "Browse available agents. You can optionally filter by query, requiredCapabilities, or matching event subscriptions. Omit filters to list all agents."
+/// Tool card for typesafe/system_one: metadata for polymorphic Open selection.
+class TypesafeSystemOneToolCard {
+  tool_name "typesafe/system_one"
+  description "Ask a TypeSafe System One model independently evaluated Choice, Score, and Noul questions about supplied JSON state."
   session_policy "Strict"
-  capability "Streaming"
-  invocation_mode "session"
-  input_summary "DiscoverAgentsSendInput"
-  tags string[] @description("Tool tags: system, discovery")
+  capability "OneShot"
+  invocation_mode "single_shot"
+  input_summary "SystemOneInput"
+  tags string[] @description("Tool tags: typesafe, system_one, read")
 }
 
-class SystemDiscoverAgentsOpenStep {
+class TypesafeSystemOneOpenStep {
   op "Open"
-  tool_name "system/discover_agents" @description("Tool to open")
-  initial_input DiscoverAgentsOpenInput? @description("Optional open payload.")
+  tool_name "typesafe/system_one" @description("Tool to open")
 }
 
-class SystemDiscoverAgentsSendStep {
+class TypesafeSystemOneSendStep {
   op "Send"
-  tool_name "system/discover_agents" @description("Tool this Send targets")
-  input DiscoverAgentsSendInput @description("Payload for this step.")
+  tool_name "typesafe/system_one" @description("Tool this Send targets")
+  input SystemOneInput @description("Payload for this step.")
   citations string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
 }
 
-class SystemDiscoverAgentsSearchReadStep {
+class TypesafeSystemOneSearchReadStep {
   op "SearchRead"
   input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
 }
 
-class SystemDiscoverAgentsPageReadStep {
+class TypesafeSystemOnePageReadStep {
   op "PageRead"
   input ArchivePageReadInput @description("PageRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a contiguous window: required archive_ref; omit grep. Why: the summary line is not the body; this step materializes lines. The host line may show offset= for the next page. For line filtering, use SearchRead.")
 }
 
-class SystemDiscoverAgentsFinishStep {
+class TypesafeSystemOneFinishStep {
   op "Finish"
 }
 
-class SystemDiscoverAgentsAbortStep {
+class TypesafeSystemOneAbortStep {
   op "Abort"
 }
 
-type SystemDiscoverAgentsSessionStep = SystemDiscoverAgentsOpenStep | SystemDiscoverAgentsSendStep | SystemDiscoverAgentsSearchReadStep | SystemDiscoverAgentsPageReadStep | SystemDiscoverAgentsFinishStep | SystemDiscoverAgentsAbortStep
+type TypesafeSystemOneSessionStep = TypesafeSystemOneOpenStep | TypesafeSystemOneSendStep | TypesafeSystemOneSearchReadStep | TypesafeSystemOnePageReadStep | TypesafeSystemOneFinishStep | TypesafeSystemOneAbortStep
 
-class SystemDiscoverAgentsSessionPlan {
-  step SystemDiscoverAgentsSessionStep @description("Emit one step. Legal `op` and field shapes: this return type and the `*OpenStep` / `*SendStep` / `SearchRead` / `PageRead` / `Finish` / `Abort` classes in this file — do not paraphrase JSON field lists in the prompt. @N beside a prior Send is an archive handle for PageRead/SearchRead (archive_ref is @ only). Do not use #N as an archive handle — #N indexes transcript lines only. Access: read.")
-  citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
-}
-
-/// Tool card for system/discover_tools: metadata for polymorphic Open selection.
-class SystemDiscoverToolsToolCard {
-  tool_name "system/discover_tools"
-  description "Searches registered tools by lexical rank. Open session, then send query/limit; read() returns results. Send can be called multiple times."
-  session_policy "Strict"
-  capability "Streaming"
-  invocation_mode "session"
-  input_summary "DiscoverToolsSendInput"
-  tags string[] @description("Tool tags: system, discovery")
-}
-
-class SystemDiscoverToolsOpenStep {
-  op "Open"
-  tool_name "system/discover_tools" @description("Tool to open")
-  initial_input DiscoverToolsOpenInput? @description("Optional open payload.")
-}
-
-class SystemDiscoverToolsSendStep {
-  op "Send"
-  tool_name "system/discover_tools" @description("Tool this Send targets")
-  input DiscoverToolsSendInput @description("Payload for this step.")
-  citations string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
-}
-
-class SystemDiscoverToolsSearchReadStep {
-  op "SearchRead"
-  input ArchiveSearchReadInput @description("SearchRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a filtered window: required archive_ref and non-empty grep. A matching field inside a rendered array item materializes the complete record; non-record content returns matching lines. Continue with the returned next_offset when more results remain. For contiguous unfiltered text, use PageRead instead.")
-}
-
-class SystemDiscoverToolsPageReadStep {
-  op "PageRead"
-  input ArchivePageReadInput @description("PageRead step: archive_ref must be an @ handle (@1, @2, …) from a prior Send only — never #N or any # syntax (# indexes transcript lines, not archives). Read a contiguous window: required archive_ref; omit grep. Why: the summary line is not the body; this step materializes lines. The host line may show offset= for the next page. For line filtering, use SearchRead.")
-}
-
-class SystemDiscoverToolsFinishStep {
-  op "Finish"
-}
-
-class SystemDiscoverToolsAbortStep {
-  op "Abort"
-}
-
-type SystemDiscoverToolsSessionStep = SystemDiscoverToolsOpenStep | SystemDiscoverToolsSendStep | SystemDiscoverToolsSearchReadStep | SystemDiscoverToolsPageReadStep | SystemDiscoverToolsFinishStep | SystemDiscoverToolsAbortStep
-
-class SystemDiscoverToolsSessionPlan {
-  step SystemDiscoverToolsSessionStep @description("Emit one step. Legal `op` and field shapes: this return type and the `*OpenStep` / `*SendStep` / `SearchRead` / `PageRead` / `Finish` / `Abort` classes in this file — do not paraphrase JSON field lists in the prompt. @N beside a prior Send is an archive handle for PageRead/SearchRead (archive_ref is @ only). Do not use #N as an archive handle — #N indexes transcript lines only. Access: read.")
+class TypesafeSystemOneSessionPlan {
+  step TypesafeSystemOneSessionStep @description("Emit one step. Legal `op` and field shapes: this return type and the `*OpenStep` / `*SendStep` / `SearchRead` / `PageRead` / `Finish` / `Abort` classes in this file — do not paraphrase JSON field lists in the prompt. @N beside a prior Send is an archive handle for PageRead/SearchRead (archive_ref is @ only). Do not use #N as an archive handle — #N indexes transcript lines only. Access: read.")
   citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 

@@ -1,6 +1,7 @@
 /// <reference path="./baml-runtime.d.ts" />
 import type {
   ClickUpIntent,
+  ClickUpPriorityIntent,
   DispatchRunContext,
   HostDispatchAck,
   JsonObject,
@@ -14,6 +15,7 @@ import {
   MAX_REACT_STEPS,
   PKG_CLICKUP_EXECUTE,
   PKG_CLICKUP_FORMAT,
+  runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
 } from "./clickupWorkflow";
 
@@ -21,6 +23,7 @@ export {
   MAX_REACT_STEPS,
   PKG_CLICKUP_EXECUTE,
   PKG_CLICKUP_FORMAT,
+  runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
 };
 
@@ -41,17 +44,37 @@ export function isNeedClarification(v: unknown): v is { question: string } {
 }
 
 export function isNotRelevant(v: unknown): v is { reason: string } {
-  return isJsonObject(v) && typeof v.reason === "string" && !("question" in v) && !("intent" in v);
+  return (
+    isJsonObject(v) &&
+    typeof v.reason === "string" &&
+    !("question" in v) &&
+    !("intent" in v)
+  );
 }
 
 export function isClickUpIntent(v: unknown): v is ClickUpIntent {
   return (
     isJsonObject(v) &&
+    v.kind === "intent" &&
     typeof v.intent === "string" &&
     v.intent.trim().length > 0 &&
     typeof v.operation_kind === "string" &&
     !("question" in v) &&
     !("reason" in v)
+  );
+}
+
+export function isClickUpPriorityIntent(
+  v: unknown,
+): v is ClickUpPriorityIntent {
+  return (
+    isJsonObject(v) &&
+    v.kind === "prioritize" &&
+    typeof v.intent === "string" &&
+    v.intent.trim().length > 0 &&
+    (v.scope === "all_accessible" || v.scope === "one_best_match") &&
+    (v.scope_hint === null || typeof v.scope_hint === "string") &&
+    (v.status_filter === null || typeof v.status_filter === "string")
   );
 }
 
@@ -61,23 +84,39 @@ export function textReply(text: string): StructuredReply {
 }
 
 /** Flatten SessionResult into a short dispatch ack detail string. */
-export function sessionResultDetail(result: SessionResult, maxLen = 800): string {
+export function sessionResultDetail(
+  result: SessionResult,
+  maxLen = 800,
+): string {
   if ("error" in result) {
-    return result.error.length > maxLen ? `${result.error.slice(0, maxLen)}…` : result.error;
+    return result.error.length > maxLen
+      ? `${result.error.slice(0, maxLen)}…`
+      : result.error;
   }
   const msg = result.message;
   if (typeof msg === "string") {
     return msg.length > maxLen ? `${msg.slice(0, maxLen)}…` : msg;
   }
-  const textPart = msg.parts?.find((p) => p.type === "text" && typeof p.text === "string");
-  const text = textPart && "text" in textPart ? String(textPart.text) : "ClickUp lifecycle ingress completed.";
+  const textPart = msg.parts?.find(
+    (p) => p.type === "text" && typeof p.text === "string",
+  );
+  const text =
+    textPart && "text" in textPart
+      ? String(textPart.text)
+      : "ClickUp lifecycle ingress completed.";
   return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
 }
 
 /** Coordination-only: verify the runtime value matches ClickUpStructuredPlan after PlanClickUpWork. */
-export function parseClickUpStructuredPlanFromPlanning(v: unknown): ClickUpStructuredPlan | null {
+export function parseClickUpStructuredPlanFromPlanning(
+  v: unknown,
+): ClickUpStructuredPlan | null {
   if (!isJsonObject(v)) return null;
-  if (typeof v.intent_description !== "string" || typeof v.objective !== "string") return null;
+  if (
+    typeof v.intent_description !== "string" ||
+    typeof v.objective !== "string"
+  )
+    return null;
   if (!Array.isArray(v.plan_steps)) return null;
   const c = v.citations;
   if (c != null && !Array.isArray(c)) return null;
@@ -85,7 +124,8 @@ export function parseClickUpStructuredPlanFromPlanning(v: unknown): ClickUpStruc
 }
 
 /** @deprecated Use parseClickUpStructuredPlanFromPlanning */
-export const parseStandardStructuredPlanFromPlanning = parseClickUpStructuredPlanFromPlanning;
+export const parseStandardStructuredPlanFromPlanning =
+  parseClickUpStructuredPlanFromPlanning;
 
 export function validateClickUpPlanForExecution(
   plan: ClickUpStructuredPlan,
@@ -121,10 +161,13 @@ export function validateClickUpPlanForExecution(
     if (p === PKG_CLICKUP_EXECUTE) executeCount++;
     if (p === PKG_CLICKUP_FORMAT) formatCount++;
   }
-  if (executeCount < 1) return "plan must include at least one clickup-execute step";
-  if (formatCount !== 1) return "plan must include exactly one clickup-format step";
+  if (executeCount < 1)
+    return "plan must include at least one clickup-execute step";
+  if (formatCount !== 1)
+    return "plan must include exactly one clickup-format step";
   const lastPkg = steps[steps.length - 1]!.agent_package.trim().toLowerCase();
-  if (lastPkg !== PKG_CLICKUP_FORMAT) return "last plan step must be clickup-format";
+  if (lastPkg !== PKG_CLICKUP_FORMAT)
+    return "last plan step must be clickup-format";
 
   return steps;
 }
@@ -170,7 +213,9 @@ function normalizeOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function parseClickupSourceRecordsBatch(value: unknown): ClickupSourceRecordsBatch | null {
+export function parseClickupSourceRecordsBatch(
+  value: unknown,
+): ClickupSourceRecordsBatch | null {
   if (!isJsonObject(value)) return null;
   const schemaVersion = normalizeOptionalString(value.schema_version);
   if (!schemaVersion) return null;
@@ -231,7 +276,9 @@ export function parseClickupSourceRecordsBatch(value: unknown): ClickupSourceRec
         project_key: projectKey,
         repo_available: value.project.repo_available === true,
         repo_path:
-          typeof value.project.repo_path === "string" ? value.project.repo_path : undefined,
+          typeof value.project.repo_path === "string"
+            ? value.project.repo_path
+            : undefined,
       };
     }
   }
@@ -301,8 +348,7 @@ async function processClickupLifecycleUnit(
   } else {
     return {
       ok: false,
-      detail:
-        `${INGRESS_AGENT_NAME} InferClickUpIntent returned an unexpected shape inside withTask.`,
+      detail: `${INGRESS_AGENT_NAME} InferClickUpIntent returned an unexpected shape inside withTask.`,
     };
   }
 
@@ -338,7 +384,9 @@ async function processClickupLifecycleUnit(
   return { ok: true, detail: sessionResultDetail(result) };
 }
 
-async function handleClickupLifecycleBatch(ctx: DispatchRunContext): Promise<HostDispatchAck> {
+async function handleClickupLifecycleBatch(
+  ctx: DispatchRunContext,
+): Promise<HostDispatchAck> {
   const batch = ctx.batch as ClickupSourceRecordsBatch;
   const units = groupClickupLifecycleUnits(batch.records);
   if (units.length === 0) {
@@ -349,7 +397,8 @@ async function handleClickupLifecycleBatch(ctx: DispatchRunContext): Promise<Hos
   const unitSummaries: string[] = [];
 
   for (const unit of units) {
-    let unitOutcome: { ok: true; detail: string } | { ok: false; detail: string };
+    let unitOutcome:
+      { ok: true; detail: string } | { ok: false; detail: string };
     try {
       unitOutcome = await ctx.withTask(
         {
@@ -384,7 +433,9 @@ async function handleClickupLifecycleBatch(ctx: DispatchRunContext): Promise<Hos
   };
 }
 
-export async function onClickupSourceDispatch(ctx: DispatchRunContext): Promise<HostDispatchAck> {
+export async function onClickupSourceDispatch(
+  ctx: DispatchRunContext,
+): Promise<HostDispatchAck> {
   const request = ctx.request;
   const messageType = normalizeOptionalString(request.message_type);
   if (messageType !== RAW_SOURCE_SCHEMA_VERSION) {

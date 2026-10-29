@@ -21,7 +21,15 @@ class ClickUpIntent {
   operation_kind "read" | "write" | "delete" @description("Broad category: read (list/get), write (create/update), delete.")
 }
 
-function InferClickUpIntent() -> NeedClarification | NotRelevant | ClickUpIntent {
+class ClickUpPriorityIntent {
+  kind "prioritize"
+  intent string @description("The user's task-prioritization goal.")
+  scope "all_accessible" | "one_best_match" @description("all_accessible traverses every available team, space, and folderless list within limits. one_best_match selects one branch from the runtime candidates.")
+  scope_hint string? @description("Optional team, space, or list name supplied by the user. This is a hint, never an ID.")
+  status_filter string? @description("Optional exact task status requested by the user, such as in progress. Omit when the user did not request a status filter.")
+}
+
+function InferClickUpIntent() -> NeedClarification | NotRelevant | ClickUpIntent | ClickUpPriorityIntent {
   client DefaultClient
   prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
@@ -47,6 +55,12 @@ You are the intent classifier for a ClickUp workspace assistant.
     due dates, statuses, priorities, or any project-management concept — whether the user wants to
     READ data (list, count, search, summarise) or WRITE data (create, update, delete).
 
+    A request to rank, prioritize, recommend the next task, or decide what to work on first is a
+    priority request. Return ClickUpPriorityIntent for it. Use scope "all_accessible" only when the
+    user clearly asks across their workspace. Use "one_best_match" when they name or imply one area,
+    and copy that human-readable hint into scope_hint when available. When they explicitly name a
+    task status, copy its human-readable value into status_filter. Do not invent IDs.
+
     Decision rules:
     1. Treat the request as a real ClickUp intent when the message is about tasks, lists, spaces, or workspace state.
        - intent: plain-English goal statement (normalised, no filler)
@@ -58,6 +72,9 @@ You are the intent classifier for a ClickUp workspace assistant.
 
     Examples:
     - "how many tasks are in progress?" → count in-progress tasks, operation_kind "read"
+    - "which task should I work on first?" → ClickUpPriorityIntent, scope "all_accessible"
+    - "which in-progress task should I work on first?" → ClickUpPriorityIntent, scope "all_accessible", status_filter "in progress"
+    - "what should I work on first in Engineering?" → ClickUpPriorityIntent, scope "one_best_match", scope_hint "Engineering"
     - "what is the total number of open tasks?" → count open tasks, operation_kind "read"
     - "what tasks are in progress?" → list in-progress tasks, operation_kind "read"
     - "list tasks assigned to me" → list tasks assigned to me, operation_kind "read"
@@ -87,6 +104,7 @@ Select the object shape with discriminator `kind`:
 - `kind: "clarify"` -> NeedClarification
 - `kind: "not_relevant"` -> NotRelevant
 - `kind: "intent"` -> ClickUpIntent
+- `kind: "prioritize"` -> ClickUpPriorityIntent
 Set `kind` exactly. Do not mix fields from different object shapes.
 Do not add text before or after the JSON object.
 "#
@@ -158,14 +176,50 @@ Do not add text before or after the JSON object.
 "#
 }
 
-/// Step executor: called repeatedly by runGeneratedStepExecutor for ONE plan step at a time.
-/// Prior results are threaded forward so execute steps can use IDs found in navigate steps.
 class FinalResponse {
   message string @description("Final answer or summary when this step is complete. For the 'format' step, prefer GitHub-flavored Markdown; navigate/execute completions may stay brief plain text.")
   structured_json string? @description("Optional strict JSON for UI/tools (e.g. task ids, list ids); omit when not needed.")
   citations string[] @description("URLs or stable refs from tool results; use [] if none.")
 }
 
+/// Formats a priority result after TypeScript has traversed ClickUp and validated Jev's typed output.
+/// It receives evidence only; it does not choose tools or re-rank tasks.
+function FormatClickUpPrioritization(intent: string, decision_json: string) -> FinalResponse {
+  client DefaultClient
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
+Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+
+{% if ctx.tags['tool_schema_prelude'] %}
+Tool and operation types:
+{{ ctx.tags['tool_schema_prelude'] }}
+
+{% endif %}
+{% if ctx.tags['conversation_transcript'] %}
+Session history:
+{{ ctx.tags['conversation_transcript'] }}
+{% endif %}
+Current step instructions:
+
+You are formatting a ClickUp task-prioritization result.
+
+User goal: {{ intent }}
+Validated decision JSON:
+{{ decision_json }}
+
+Use the decision JSON as the authority for recommendation versus abstention. Do not select a
+new task, change the task ID, infer missing evidence, or call tools. If it says abstain, explain
+what evidence is missing and ask one concise follow-up question. If it recommends a task, explain
+why using only the returned task fields. Include the task URL when present. Return concise Markdown.
+
+{{ ctx.output_format }}
+
+Return exactly one `FinalResponse` JSON object.
+Do not add text before or after the JSON object.
+"#
+}
+
+/// Step executor: called repeatedly by runGeneratedStepExecutor for ONE plan step at a time.
+/// Prior results are threaded forward so execute steps can use IDs found in navigate steps.
 function ChooseClickUpAction(
   goal: string,
   step_description: string,
