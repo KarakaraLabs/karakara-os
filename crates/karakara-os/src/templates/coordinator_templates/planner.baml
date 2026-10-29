@@ -139,6 +139,13 @@ function RouteCoordinatorRequest(
     - unsupported only for constraints no capability can express (custom fields, grouping,
       current-user identity, ordering by an unlisted property). It routes to the slower planner.
 
+    Conversation continuity:
+    - If an earlier turn established a task filter (status, assignee, priority, due, or an area) and the
+      new message does not change it, carry that filter into `filters`. Example: after asking about
+      in-progress tasks, "which should I start first?" still means in-progress.
+    - Never invent a filter the user has not stated in this conversation.
+
+
     {{ ctx.output_format }}
 
     ---AVAILABLE AGENTS---

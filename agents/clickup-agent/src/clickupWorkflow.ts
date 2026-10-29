@@ -908,6 +908,23 @@ export async function runClickUpPriorityWorkflow(
     const decision = await prioritizeTasks(intent, tasks);
     await executable?.completeStep?.("evaluate-priority");
 
+    if (decision.outcome === "abstain") {
+      // Nothing to format: the records did not support a recommendation. Spending a model round
+      // trip to hedge about a decision that was never made adds seconds and no information.
+      await executable?.completeStep?.("format-priority-result");
+      await executable?.finish?.();
+      const scope = intent.status_filter
+        ? ` with status "${intent.status_filter}"`
+        : "";
+      return {
+        message: textReply(
+          `I can't recommend a task from these records: ${decision.reason} ` +
+            `I looked at ${tasks.length} task(s)${scope}. Narrow the request by status, ` +
+            `area, or priority and I'll try again.`,
+        ),
+      };
+    }
+
     await executable?.startStep?.("format-priority-result");
     const formatted = await FormatClickUpPrioritization({
       intent: intent.intent,
