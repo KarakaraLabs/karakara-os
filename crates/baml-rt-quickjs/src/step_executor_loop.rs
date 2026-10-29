@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -28,9 +28,13 @@
 //! Hosts record the surfaced reply from the chat completion path, not a duplicate scraped
 //! from step envelopes.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use baml_rt_core::{BamlFunctionId, BamlPromptName, BamlRtError, Result, VariantPhase, context};
+use baml_rt_observability::metrics;
 use baml_rt_tools::{
     ToolName, ToolSlug, archive_refs::ArchiveReceipt,
     phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
@@ -581,6 +585,57 @@ fn extract_tool_binding(result: &Value) -> Option<ToolBinding> {
     })
 }
 
+/// Low-cardinality phase label for step-executor metrics.
+fn phase_label(phase: &Phase) -> &'static str {
+    match phase {
+        Phase::Entry => "entry",
+        Phase::Active { .. } => "active",
+        Phase::Consume { .. } => "consume",
+        Phase::Terminal(_) => "terminal",
+    }
+}
+
+/// Records one step-executor hop on drop.
+///
+/// Defaults to `result="success"`; call [`Self::set_result`] before returning an
+/// error so the hop is attributed correctly. A drop guard keeps the metric accurate
+/// across the loop's many `break` and `?` exits.
+struct HopDurationGuard<'a> {
+    started: Instant,
+    agent_package: &'a str,
+    turn: u64,
+    phase: &'static str,
+    result: Option<&'static str>,
+}
+
+impl<'a> HopDurationGuard<'a> {
+    fn new(agent_package: &'a str, turn: u64, phase: &'static str) -> Self {
+        Self {
+            started: Instant::now(),
+            agent_package,
+            turn,
+            phase,
+            result: None,
+        }
+    }
+
+    fn set_result(&mut self, result: &'static str) {
+        self.result = Some(result);
+    }
+}
+
+impl Drop for HopDurationGuard<'_> {
+    fn drop(&mut self) {
+        metrics::record_step_executor_hop(
+            self.agent_package,
+            self.turn,
+            self.phase,
+            self.result.unwrap_or("success"),
+            self.started.elapsed(),
+        );
+    }
+}
+
 /// Run the step executor loop entirely in Rust.
 ///
 /// Locks the manager per-hop (not for the entire loop) so other host helpers
@@ -600,6 +655,10 @@ pub async fn run_step_executor_loop(
     max_steps: usize,
     step_intra_supplement_mirror: Option<Arc<Mutex<Vec<Value>>>>,
 ) -> Result<StepExecutorResult> {
+    let agent_package = manager.read().await.agent_package();
+    let agent_package = agent_package.as_deref().unwrap_or("unknown").to_string();
+    let turn = baml_rt_observability::turn::current_turn(scope.context_id());
+
     let base = BamlPromptName::new(function_name);
     let mut phase = Phase::Entry;
     let mut steps: Vec<Value> = Vec::new();
@@ -617,6 +676,9 @@ pub async fn run_step_executor_loop(
             break;
         }
 
+        let hop_phase = phase_label(&phase);
+        let mut hop_guard = HopDurationGuard::new(agent_package.as_str(), turn, hop_phase);
+
         let function_id = phase_function_id(&base, &phase);
         let candidate = function_id.full_name();
 
@@ -627,6 +689,7 @@ pub async fn run_step_executor_loop(
         {
             let guard = manager.read().await;
             if guard.get_function_signature(&candidate).is_none() {
+                hop_guard.set_result("error");
                 return Err(BamlRtError::InvalidArgument(format!(
                     "step executor: phase function '{candidate}' not found in agent schema. \
                      Rebuild the agent package to regenerate phase functions.",
@@ -656,10 +719,25 @@ pub async fn run_step_executor_loop(
         let p_before = if let Some(rows) = prev_hop_graph_rows.take() {
             rows
         } else {
+            let stage_started = Instant::now();
             let guard = manager.read().await;
-            guard
+            let rows = guard
                 .read_provider_conversation_rows(scope, &current_function)
-                .await?
+                .await;
+            metrics::record_step_executor_stage(
+                agent_package.as_str(),
+                turn,
+                hop_phase,
+                "history_before",
+                stage_started.elapsed(),
+            );
+            match rows {
+                Ok(rows) => rows,
+                Err(err) => {
+                    hop_guard.set_result("error");
+                    return Err(err);
+                }
+            }
         };
 
         if let Some(m) = step_intra_supplement_mirror.as_ref() {
@@ -668,19 +746,33 @@ pub async fn run_step_executor_loop(
                 step_intra_supplement.clone();
         }
 
+        let invoke_started = Instant::now();
         let result = {
             let guard = manager.read().await;
             guard
                 .invoke_function_with_intra(scope, &current_function, args, &step_intra_supplement)
                 .await
         };
+        metrics::record_step_executor_stage(
+            agent_package.as_str(),
+            turn,
+            hop_phase,
+            "invoke",
+            invoke_started.elapsed(),
+        );
 
         match &result {
             Ok(v) => tracing::debug!(hop = hop_idx, result = %v, "step_executor_loop: hop ok"),
             Err(e) => tracing::error!(hop = hop_idx, error = %e, "step_executor_loop: hop error"),
         }
 
-        let result = result?;
+        let result = match result {
+            Ok(result) => result,
+            Err(err) => {
+                hop_guard.set_result("error");
+                return Err(err);
+            }
+        };
 
         let read_only_finish = result_is_read_only_finish(&result);
         let status = match extract_status(&result) {
@@ -718,8 +810,24 @@ pub async fn run_step_executor_loop(
             None
         };
 
+        let history_after_started = Instant::now();
         let p_after =
-            read_provider_conversation_rows_after_hop(manager, scope, &current_function).await?;
+            read_provider_conversation_rows_after_hop(manager, scope, &current_function).await;
+        metrics::record_step_executor_stage(
+            agent_package.as_str(),
+            turn,
+            hop_phase,
+            "history_after",
+            history_after_started.elapsed(),
+        );
+        let p_after = match p_after {
+            Ok(p_after) => p_after,
+            Err(err) => {
+                hop_guard.set_result("error");
+                return Err(err);
+            }
+        };
+        let transition_started = Instant::now();
         let appended = append_step_intra_deltas(&mut step_intra_supplement, &p_before, &p_after);
         if hop_promises_visible_read(&result) && appended.is_empty() {
             tracing::warn!(
@@ -758,9 +866,13 @@ pub async fn run_step_executor_loop(
 
         if let Some(archive_ref) = consumed_receipt_ref {
             let guard = manager.read().await;
-            guard
+            if let Err(err) = guard
                 .mark_archive_send_consumed(scope.context_id(), scope.agent_id(), archive_ref)
-                .await?;
+                .await
+            {
+                hop_guard.set_result("error");
+                return Err(err);
+            }
         }
 
         // Capture the last result with meaningful output (Done has output,
@@ -938,6 +1050,14 @@ pub async fn run_step_executor_loop(
                 Phase::Terminal(_) => break,
             }
         };
+
+        metrics::record_step_executor_stage(
+            agent_package.as_str(),
+            turn,
+            hop_phase,
+            "transition",
+            transition_started.elapsed(),
+        );
 
         if matches!(phase, Phase::Terminal(_)) {
             break;

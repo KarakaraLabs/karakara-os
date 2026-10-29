@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -56,10 +57,20 @@ pub(crate) fn record_session_open(tool_name: &str) {
     tool_session_open_counter().add(1, &[KeyValue::new("tool", tool_name.to_string())]);
 }
 
-/// Record tool session operation (send, next, finish) with duration.
-pub(crate) fn record_session_operation(operation: &str, duration: Duration) {
+/// Record a tool session FSM operation (`open`, `send`, `read`, `finish`, `abort`)
+/// with the owning tool name, outcome, and duration.
+pub(crate) fn record_session_operation(
+    operation: &str,
+    tool_name: &str,
+    result: &str,
+    duration: Duration,
+) {
     tool_session_operation_histogram().record(
         duration.as_millis() as f64,
-        &[KeyValue::new("operation", operation.to_string())],
+        &[
+            KeyValue::new("operation", operation.to_string()),
+            KeyValue::new("tool", tool_name.to_string()),
+            KeyValue::new("result", result.to_string()),
+        ],
     );
 }

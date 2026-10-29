@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 // SPDX-FileCopyrightText: 2026 Karakara Labs
+// SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -881,6 +881,20 @@ pub(super) async fn register_step_executor_runtime_helpers(bridge: &QuickJSBridg
     Ok(())
 }
 
+/// Low-cardinality operation label for `__execution_session_invoke` metrics.
+fn execution_session_operation_name(cmd: &ExecutionSessionCommand) -> &'static str {
+    match cmd {
+        ExecutionSessionCommand::Open => "open",
+        ExecutionSessionCommand::SubmitIntent { .. } => "submit_intent",
+        ExecutionSessionCommand::SubmitPlan { .. } => "submit_plan",
+        ExecutionSessionCommand::StartStep { .. } => "start_step",
+        ExecutionSessionCommand::CompleteStep { .. } => "complete_step",
+        ExecutionSessionCommand::Finish { .. } => "finish",
+        ExecutionSessionCommand::Abort { .. } => "abort",
+        ExecutionSessionCommand::SubmitGrounding { .. } => "submit_grounding",
+    }
+}
+
 /// Register `__execution_session_invoke(payload_json)` so execution-session state lives in Rust.
 pub(super) async fn register_execution_session_helper(bridge: &QuickJSBridge) -> Result<()> {
     let manager_clone = bridge.baml_manager().clone();
@@ -949,6 +963,10 @@ pub(super) async fn register_execution_session_helper(bridge: &QuickJSBridge) ->
 
             Ok(JsValueFacade::new_promise::<JsValueFacade, _, ()>(async move {
                 let _in_flight_guard = InFlightGuard(guard_counter);
+                let operation = execution_session_operation_name(&cmd_for_run);
+                let agent_package = manager_for_promise.read().await.agent_package();
+                let agent_package = agent_package.as_deref().unwrap_or("unknown").to_string();
+                let turn = baml_rt_observability::turn::current_turn(scope_for_run.context_id());
                 let run = async move {
                     context::with_scope(invocation_scope, async move {
                         match &cmd_for_run {
@@ -1442,11 +1460,21 @@ pub(super) async fn register_execution_session_helper(bridge: &QuickJSBridge) ->
                     })
                     .await
                 };
-                if let Some(correlation_id) = correlation_id {
+                let started = std::time::Instant::now();
+                let outcome = if let Some(correlation_id) = correlation_id {
                     correlation::with_correlation_id(correlation_id, run).await
                 } else {
                     run.await
-                }
+                };
+                let result = if outcome.is_ok() { "success" } else { "error" };
+                baml_rt_observability::metrics::record_execution_session_operation(
+                    agent_package.as_str(),
+                    turn,
+                    operation,
+                    result,
+                    started.elapsed(),
+                );
+                outcome
             }))
         },
     )

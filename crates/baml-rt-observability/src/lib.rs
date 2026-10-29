@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Karakara Labs
 // SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -10,6 +11,7 @@ pub mod runner_identity;
 pub mod scope;
 pub mod spans;
 pub mod tracing_setup;
+pub mod turn;
 
 #[cfg(test)]
 pub(crate) mod test_env;
@@ -23,3 +25,4 @@ pub use runner_identity::{
 pub use scope::*;
 pub use spans::*;
 pub use tracing_setup::*;
+pub use turn::{begin_turn, current_turn, current_turn_label};
