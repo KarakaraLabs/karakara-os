@@ -201,5 +201,15 @@ describe("validateClickUpPlanForExecution", () => {
         intent: "list tasks due this week",
       }),
     ).toBe(false);
+    // Naming display fields is not a constraint: the renderer supplies them as columns, and
+    // the planner paraphrases the request by listing exactly those fields.
+    expect(
+      isDeterministicTaskRead({
+        ...base,
+        action: "list_tasks",
+        intent:
+          "list all tasks currently marked in progress, including names, assignees, due dates, and statuses",
+      }),
+    ).toBe(true);
   });
 });
