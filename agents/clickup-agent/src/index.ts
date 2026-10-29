@@ -2,10 +2,12 @@
 import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
   isClickUpIntent,
+  isClickUpPriorityIntent,
   isNeedClarification,
   isNotRelevant,
   onClickupSourceDispatch,
   parseClickUpStructuredPlanFromPlanning,
+  runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   textReply,
   validateClickUpPlanForExecution,
@@ -13,20 +15,28 @@ import {
 
 __chat_register({
   run: async (ctx: RunContext): Promise<SessionResult> => {
-    const originalText = typeof ctx.text === "string" && ctx.text.length > 0 ? ctx.text : "unknown";
+    const originalText =
+      typeof ctx.text === "string" && ctx.text.length > 0
+        ? ctx.text
+        : "unknown";
     let text = originalText;
 
     let resolvedIntent: ClickUpIntent | null = null;
     while (true) {
       const intentResult = await InferClickUpIntent({});
 
+      if (isClickUpPriorityIntent(intentResult)) {
+        return runClickUpPriorityWorkflow(intentResult);
+      }
       if (isClickUpIntent(intentResult)) {
         resolvedIntent = intentResult;
         break;
       }
       if (isNotRelevant(intentResult)) {
         return {
-          message: textReply(`This doesn't look like a ClickUp request — ${intentResult.reason}`),
+          message: textReply(
+            `This doesn't look like a ClickUp request — ${intentResult.reason}`,
+          ),
         };
       }
       if (isNeedClarification(intentResult)) {
@@ -40,7 +50,8 @@ __chat_register({
           "InferClickUpIntent returned an unexpected shape — expected ClickUpIntent, NeedClarification, or NotRelevant.",
       };
     }
-    if (!resolvedIntent) return { error: "Could not determine a valid ClickUp intent." };
+    if (!resolvedIntent)
+      return { error: "Could not determine a valid ClickUp intent." };
 
     const planResult = await PlanClickUpWork({
       intent: resolvedIntent.intent,

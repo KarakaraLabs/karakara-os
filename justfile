@@ -357,6 +357,13 @@ coordinator-agent: build-release
       {{karak_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
       {{karak_bin}} install agent --path agents/notion-agent --repository-url {{repository_url}} --url {{runner_base_url}}
       {{karak_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
+      # Do not change the stored policy without a credential. With one, persist
+      # the local runner policy so priority requests can invoke Jev.
+      if [[ -n "${TYPESAFE_API_KEY:-}" ]]; then
+        curl --fail --silent --show-error -X PUT "{{runner_base_url}}/config/typesafe" \
+          -H 'Content-Type: application/json' \
+          --data '{"enabled":true}' >/dev/null
+      fi
     ) &
     exec {{karak_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
 
@@ -372,6 +379,12 @@ coordinator-agent-debug: build-debug
       {{karak_debug_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
       {{karak_debug_bin}} install agent --path agents/notion-agent --repository-url {{repository_url}} --url {{runner_base_url}}
       {{karak_debug_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
+      # Match the release stack: change the stored Jev policy only with a credential.
+      if [[ -n "${TYPESAFE_API_KEY:-}" ]]; then
+        curl --fail --silent --show-error -X PUT "{{runner_base_url}}/config/typesafe" \
+          -H 'Content-Type: application/json' \
+          --data '{"enabled":true}' >/dev/null
+      fi
     ) &
     exec {{karak_debug_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
 

@@ -6,28 +6,6 @@
 
 /** Types for BAML function arguments and return values (classes, enums, aliases). */
 
-export interface AgentCardDto {
-  name: string;
-  version: string;
-  contentHash?: string | null;
-  repositoryVersion?: number | null;
-  agentPackage: string;
-  tools: string[];
-  description?: string | null;
-  capabilities: string[];
-  tags?: string[];
-  subscriptions?: AgentEventSubscriptionDto[];
-  [key: string]: JsonValue | undefined;
-}
-
-export interface AgentEventSubscriptionDto {
-  schemaVersions?: string[];
-  sourceKinds?: string[];
-  sourceKeys?: string[];
-  sourceKeyPrefixes?: string[];
-  [key: string]: JsonValue | undefined;
-}
-
 export interface ArchiveLedgerEntry { archive_ref: string;
 header: string;
  }
@@ -53,6 +31,19 @@ offset: number | null;
 limit: number | null;
  }
 
+export interface ChoiceAnswer {
+  choice: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+  type: "choice";
+}
+
+export interface ChoiceQuestion {
+  instructions: JsonValue;
+  criteria: Record<string, JsonValue>;
+  type: "choice";
+}
+
 export type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | ListTasksInput | GetTaskInput | CreateTaskInput | UpdateTaskInput | DeleteTaskInput;
 
 export interface ClickUpIntent { kind: "intent";
@@ -76,6 +67,13 @@ export interface ClickUpOutput {
 
 export interface ClickUpPlanStep { agent_package: string;
 sub_message: string;
+ }
+
+export interface ClickUpPriorityIntent { kind: "prioritize";
+intent: string;
+scope: "all_accessible" | "one_best_match";
+scope_hint: string | null;
+status_filter: string | null;
  }
 
 export interface ClickUpStructuredPlan { intent_description: string;
@@ -130,46 +128,6 @@ export interface CreateTaskInput {
 export interface DeleteTaskInput {
   task_id: string;
   confirm_delete: boolean;
-}
-
-export interface DiscoverAgentsNextOutput {
-  agents: AgentCardDto[];
-  done: boolean;
-  historyContext?: HistoryContextV1 | null;
-  [key: string]: JsonValue | undefined;
-}
-
-export interface DiscoverAgentsOpenInput {
-  reason?: string | null;
-  [key: string]: JsonValue | undefined;
-}
-
-export interface DiscoverAgentsSendInput {
-  query?: string | null;
-  requiredCapabilities?: string[] | null;
-  requiredSchemaVersions?: string[] | null;
-  requiredSourceKinds?: string[] | null;
-  limit?: number | null;
-  offset?: number | null;
-  [key: string]: JsonValue | undefined;
-}
-
-export interface DiscoverToolsNextOutput {
-  tools: ToolDiscoveryRecordDto[];
-  done: boolean;
-  historyContext?: HistoryContextV1 | null;
-  [key: string]: JsonValue | undefined;
-}
-
-export interface DiscoverToolsOpenInput {
-  reason?: string | null;
-  [key: string]: JsonValue | undefined;
-}
-
-export interface DiscoverToolsSendInput {
-  query?: string | null;
-  limit?: number | null;
-  [key: string]: JsonValue | undefined;
 }
 
 export interface FinalResponse { message: string;
@@ -242,6 +200,35 @@ export interface NotRelevant { kind: "not_relevant";
 reason: string;
  }
 
+export interface NoulAnswer {
+  noul: number;
+  type: "noul";
+}
+
+export interface NoulCriteria {
+  true: JsonValue;
+  false: JsonValue;
+}
+
+export interface NoulQuestion {
+  instructions: JsonValue;
+  criteria?: NoulCriteria | null;
+  type: "noul";
+}
+
+export interface ScoreAnswer {
+  score: number;
+  probabilities: Record<string, number>;
+  confidence: number;
+  type: "score";
+}
+
+export interface ScoreQuestion {
+  instructions: JsonValue;
+  criteria: JsonValue[];
+  type: "score";
+}
+
 export interface SessionContext { contract_version: string;
 session_open: boolean;
 status: string;
@@ -282,13 +269,26 @@ export interface SupportClickupSessionPlan { step: SupportClickupOpenStep | Supp
 citations: string[];
  }
 
-export interface ToolDiscoveryRecordDto {
-  name: string;
-  bundle: string;
-  description: string;
-  tags: string[];
-  eventSources?: string[];
-  [key: string]: JsonValue | undefined;
+export type SystemOneAnswer = ChoiceAnswer | ScoreAnswer | NoulAnswer;
+
+export interface SystemOneInput {
+  state: JsonValue;
+  questions: Record<string, SystemOneQuestion>;
+  model?: string | null;
+  timeout_ms?: number | null;
+}
+
+export interface SystemOneOutput {
+  model: string;
+  answers: Record<string, SystemOneAnswer>;
+  usage?: SystemOneUsage | null;
+}
+
+export type SystemOneQuestion = ChoiceQuestion | ScoreQuestion | NoulQuestion;
+
+export interface SystemOneUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
 }
 
 export interface UpdateTaskInput {
@@ -305,7 +305,9 @@ declare global {
 
 declare function ChooseClickUpAction(args: { goal: string; step_description: string; operation_kind: string; prior_results: string | null; session_context: SessionContext | null } & { __baml_invocation_token?: string }): Promise<FinalResponse | SupportClickupSessionPlan>;
 
-declare function InferClickUpIntent(args: Record<string, never> & { __baml_invocation_token?: string }): Promise<NeedClarification | NotRelevant | ClickUpIntent>;
+declare function FormatClickUpPrioritization(args: { intent: string; decision_json: string } & { __baml_invocation_token?: string }): Promise<FinalResponse>;
+
+declare function InferClickUpIntent(args: Record<string, never> & { __baml_invocation_token?: string }): Promise<NeedClarification | NotRelevant | ClickUpIntent | ClickUpPriorityIntent>;
 
 declare function PlanClickUpWork(args: { intent: string; operation_kind: string } & { __baml_invocation_token?: string }): Promise<ClickUpStructuredPlan>;
 
@@ -685,29 +687,25 @@ export interface ToolFailure {
 
 export type ToolName =
   | "support/clickup"
-  | "system/discover_agents"
-  | "system/discover_tools"
-  | "system/internal_a2a";
+  | "system/internal_a2a"
+  | "typesafe/system_one";
 
 export interface ToolInputMap {
   "support/clickup": ClickUpInput;
-  "system/discover_agents": DiscoverAgentsSendInput;
-  "system/discover_tools": DiscoverToolsSendInput;
   "system/internal_a2a": InternalA2aSendInput;
+  "typesafe/system_one": SystemOneInput;
 }
 
 export interface ToolOutputMap {
   "support/clickup": ClickUpOutput;
-  "system/discover_agents": DiscoverAgentsNextOutput;
-  "system/discover_tools": DiscoverToolsNextOutput;
   "system/internal_a2a": InternalA2aNextOutput;
+  "typesafe/system_one": SystemOneOutput;
 }
 
 export interface ToolOpenInputMap {
   "support/clickup": Record<string, never>;
-  "system/discover_agents": DiscoverAgentsOpenInput;
-  "system/discover_tools": DiscoverToolsOpenInput;
   "system/internal_a2a": InternalA2aOpenInput;
+  "typesafe/system_one": Record<string, never>;
 }
 
 export type ToolInput<T extends ToolName> = ToolInputMap[T];
@@ -723,7 +721,8 @@ export type ToolOpenArgs<T extends ToolName> =
     : [openInput?: ToolOpenInput<T>];
 
 export type OneShotToolName =
-  | "support/clickup";
+  | "support/clickup"
+  | "typesafe/system_one";
 
 export type ToolOutcome<O> =
   | { status: "done"; result: O }

@@ -1,39 +1,43 @@
 {
-  "version": "1.0.0",
-  "name": "clickup-agent",
-  "entry_point": "src/index.ts",
-  "signature": "clickup-agent@1.0.0",
-  "tools": [
-    "support/clickup",
-    "system/discover_agents",
-    "system/discover_tools",
-    "system/internal_a2a"
-  ],
-  "tags": [
-    "clickup",
-    "project-management",
-    "tasks",
-    "ingress",
-    "event-driven"
-  ],
-  "discovery": {
-    "description": "ClickUp assistant for conversational task work and host.source-records.v1 lifecycle ingress.",
-    "capabilities": [
-      "clickup:list-tasks",
-      "clickup:get-task",
-      "clickup:list-spaces",
-      "clickup:create-task",
-      "clickup:intake",
-      "ingress:clickup-lifecycle",
-      "project-management:create-task",
-      "project-management:task-tracking",
-      "project-management:sprint-status"
+    "version": "1.0.0",
+    "name": "clickup-agent",
+    "entry_point": "src/index.ts",
+    "signature": "clickup-agent@1.0.0",
+    "tools": [
+        "support/clickup",
+        "typesafe/system_one",
+        "system/internal_a2a"
     ],
-    "subscriptions": [
-      {
-        "schema_versions": ["host.source-records.v1"],
-        "source_kinds": ["clickup"]
-      }
-    ]
-  }
+    "tags": [
+        "clickup",
+        "project-management",
+        "tasks",
+        "ingress",
+        "event-driven"
+    ],
+    "discovery": {
+        "description": "ClickUp assistant for conversational task work and host.source-records.v1 lifecycle ingress.",
+        "capabilities": [
+            "clickup:list-tasks",
+            "clickup:get-task",
+            "clickup:list-spaces",
+            "clickup:create-task",
+            "clickup:intake",
+            "clickup:prioritize",
+            "ingress:clickup-lifecycle",
+            "project-management:create-task",
+            "project-management:task-tracking",
+            "project-management:sprint-status"
+        ],
+        "subscriptions": [
+            {
+                "schema_versions": [
+                    "host.source-records.v1"
+                ],
+                "source_kinds": [
+                    "clickup"
+                ]
+            }
+        ]
+    }
 }

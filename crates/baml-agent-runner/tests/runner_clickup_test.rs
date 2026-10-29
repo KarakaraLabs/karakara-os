@@ -8,6 +8,8 @@ mod common;
 
 use std::{fs, path::PathBuf, sync::Arc};
 
+#[cfg(feature = "typesafe")]
+use async_trait::async_trait;
 use baml_rt::baml::BamlRuntimeManager;
 use baml_rt_conversation::view::{
     ConversationItemContent, ProvenanceConversationContextItem, ToolOutcome,
@@ -20,7 +22,11 @@ use baml_rt_provenance::{
     AgentType, PlanningPlanRecord, PlanningPlanStepRecord, ProvEvent, ProvenanceContextReader,
     ProvenancePlanningQuery, ProvenanceWriter, SurrealProvenanceStore,
 };
+#[cfg(feature = "typesafe")]
+use baml_rt_tools::{BundleName, ConfigResolver, ToolSecretResolver, ToolSecretValue};
 use baml_tools_clickup::ClickUpTool;
+#[cfg(feature = "typesafe")]
+use baml_tools_typesafe::{SystemOneConfig, SystemOneTool};
 use common::{
     RunningHttpServer, TempDirCleanup, build_clickup_agent_to_temp_async, e2e_serial_gate,
     fetch_context_mermaid, post_a2a_sse_collect, start_http_server, start_runner_api_server,
@@ -32,6 +38,36 @@ use test_support::common::{
     workspace_fnox_path,
 };
 use tokio::time::{Duration, sleep, timeout};
+
+#[cfg(feature = "typesafe")]
+struct LiveTypesafeConfigResolver;
+
+#[cfg(feature = "typesafe")]
+#[async_trait]
+impl ConfigResolver for LiveTypesafeConfigResolver {
+    async fn get_config(&self, bundle_name: &BundleName) -> baml_rt_core::Result<Option<Value>> {
+        if bundle_name.as_str() != "typesafe" {
+            return Ok(None);
+        }
+        let config = SystemOneConfig {
+            enabled: true,
+            ..SystemOneConfig::default()
+        };
+        Ok(Some(
+            serde_json::to_value(config).expect("serialize TypeSafe test config"),
+        ))
+    }
+}
+
+#[cfg(feature = "typesafe")]
+struct EnvironmentToolSecrets;
+
+#[cfg(feature = "typesafe")]
+impl ToolSecretResolver for EnvironmentToolSecrets {
+    fn resolve_tool_secret(&self, name: &str) -> Option<ToolSecretValue> {
+        std::env::var(name).ok().map(ToolSecretValue::new)
+    }
+}
 
 /// `task-901` description embedded in list/get-task JSON (E2E uses list payload shape).
 const FIXTURE_TASK_901_DESCRIPTION: &str =
@@ -177,6 +213,19 @@ async fn setup_clickup_agent_with_provenance(
         )
         .await
         .expect("register clickup tool");
+    #[cfg(feature = "typesafe")]
+    {
+        manager
+            .register_tool(SystemOneTool)
+            .await
+            .expect("register TypeSafe tool");
+        manager
+            .tool_registry()
+            .set_config_resolver(Some(Arc::new(LiveTypesafeConfigResolver)));
+        manager
+            .tool_registry()
+            .set_secret_resolver(Some(Arc::new(EnvironmentToolSecrets)));
+    }
 
     let provenance = test_surreal_store().await;
     let agent_id = AgentId::from_uuid(UuidId::new(uuid::Uuid::new_v4()));
@@ -277,6 +326,22 @@ fn provenance_has_tooling_activity_shape(items: &[ProvenanceConversationContextI
                 | ConversationItemContent::ToolResult(_)
                 | ConversationItemContent::SessionStep(_)
         )
+    })
+}
+
+#[cfg(feature = "typesafe")]
+fn typesafe_result(items: &[ProvenanceConversationContextItem]) -> Option<Value> {
+    items.iter().find_map(|item| {
+        let ConversationItemContent::ToolResult(result) = &item.content else {
+            return None;
+        };
+        if result.tool_name != "typesafe/system_one" {
+            return None;
+        }
+        match &result.outcome {
+            ToolOutcome::Result(value) => Some(value.clone()),
+            ToolOutcome::Error(_) | ToolOutcome::StatusOnly => None,
+        }
     })
 }
 
@@ -680,6 +745,118 @@ async fn test_e2e_clickup_real_model_with_plan_discovery() {
     assert!(
         mermaid.contains("ChooseClickUpAction") || mermaid.contains("Choose Click Up Action"),
         "Expected ChooseClickUpAction/Choose Click Up Action (step executor) in context mermaid; got: {mermaid}"
+    );
+
+    runner_api.stop().await;
+    mock_server.stop().await;
+}
+
+/// Manual live vertical slice. The ClickUp boundary is local and deterministic;
+/// OpenRouter and TypeSafe are real calls, so this remains ignored in CI.
+#[cfg(feature = "typesafe")]
+#[tokio::test]
+#[ignore = "requires RUN_LIVE_TYPESAFE_CLICKUP_E2E=1 plus OpenRouter, ClickUp, and TypeSafe credentials"]
+async fn test_e2e_clickup_priority_with_live_llm_and_jev() {
+    if std::env::var("RUN_LIVE_TYPESAFE_CLICKUP_E2E").as_deref() != Ok("1") {
+        eprintln!("Skipping live ClickUp + Jev E2E: RUN_LIVE_TYPESAFE_CLICKUP_E2E is not 1");
+        return;
+    }
+    if std::env::var("BAML_SKIP_LLM_TESTS").is_ok()
+        || !fnox_has_openrouter_key()
+        || !fnox_has_clickup_key()
+        || std::env::var("TYPESAFE_API_KEY").is_err()
+    {
+        eprintln!("Skipping live ClickUp + Jev E2E: required credentials are unavailable");
+        return;
+    }
+
+    let _permit = e2e_serial_gate().acquire().await.expect("acquire e2e gate");
+    let (mock_server, mock_state) = start_clickup_mock_server()
+        .await
+        .expect("start ClickUp mock server");
+    let (agent, provenance_reader, built_dir) =
+        setup_clickup_agent_with_provenance(&mock_server.base_url).await;
+    let _built_dir_guard = TempDirCleanup::new(built_dir);
+    let runner_api = start_runner_api_server("clickup-agent", agent, provenance_reader.clone())
+        .await
+        .expect("start runner API server");
+
+    let http_client = reqwest::Client::new();
+    let a2a_url = format!("{}/agents/clickup-agent/a2a/sse", runner_api.base_url);
+    let context_id = ContextId::new(77, 8);
+    let task_id = TaskId::from_external(ExternalId::new("clickup-live-jev-priority"));
+    let request = send_stream_request_with_task(
+        "clickup-live-jev-priority",
+        "Which in-progress task should I work on first across all accessible ClickUp work?",
+        baml_rt_core::correlation::generate_correlation_id().as_str(),
+        Some(context_id.clone()),
+        Some(task_id.clone()),
+    );
+    let responses = timeout(
+        Duration::from_secs(300),
+        post_a2a_sse_collect(&http_client, &a2a_url, &request),
+    )
+    .await
+    .expect("priority request timed out")
+    .expect("priority request failed");
+    assert!(
+        !responses.is_empty(),
+        "expected a streamed priority response"
+    );
+
+    let mut items = Vec::new();
+    for _ in 0..100 {
+        items = provenance_reader
+            .conversation_context(&context_id, None)
+            .await
+            .expect("read conversation context");
+        if typesafe_result(&items).is_some() {
+            break;
+        }
+        sleep(Duration::from_millis(200)).await;
+    }
+    let jev = typesafe_result(&items).expect("expected a successful typesafe/system_one result");
+    assert_eq!(jev["answers"]["recommended_task"]["type"], "choice");
+    assert_eq!(jev["answers"]["urgency"]["type"], "score");
+    assert_eq!(jev["answers"]["sufficient_evidence"]["type"], "noul");
+
+    let selected = jev["answers"]["recommended_task"]["choice"]
+        .as_str()
+        .expect("Jev choice is a string");
+    assert!(
+        matches!(selected, "task-901" | "task-902" | "none"),
+        "Jev choice must be a fetched task or abstention, got {selected:?}"
+    );
+    assert!(
+        provenance_mentions_clickup_tool(&items),
+        "expected ClickUp tool activity before Jev evaluation"
+    );
+
+    let plan = resolve_latest_clickup_plan_for_observability(&provenance_reader, &task_id)
+        .await
+        .expect("expected priority execution plan");
+    let ids = plan
+        .steps
+        .iter()
+        .map(|step| step.step_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "discover-clickup-scope",
+            "evaluate-priority",
+            "format-priority-result",
+        ],
+        "priority path must commit its deterministic execution plan"
+    );
+
+    let hits = mock_state.snapshot().await;
+    assert!(
+        hits.iter().any(|hit| hit == "GET /api/v2/team")
+            && hits
+                .iter()
+                .any(|hit| hit.contains("/list/") && hit.contains("/task")),
+        "priority path must traverse the ClickUp mock before calling Jev, hits={hits:?}"
     );
 
     runner_api.stop().await;
