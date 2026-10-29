@@ -181,6 +181,7 @@ describe("validateClickUpPlanForExecution", () => {
       operation_kind: "read" as const,
       scope_hint: null,
       status_filter: null,
+      statuses: null,
       assignee_filter: null,
       priority_filter: null,
       due_filter: null,
@@ -231,6 +232,7 @@ describe("validateClickUpPlanForExecution", () => {
       operation_kind: "read",
       action: "list_tasks",
       status_filter: "Blocked / External",
+      statuses: ["Blocked / External", "Scoping"],
       assignee_filter: "Dana",
       priority_filter: "high",
       due_filter: "overdue",
@@ -239,7 +241,7 @@ describe("validateClickUpPlanForExecution", () => {
       scope_hint: null,
     });
     expect(filters).toEqual({
-      status: "Blocked / External",
+      statuses: ["Blocked / External", "Scoping"],
       assignee: "Dana",
       priority: "high",
       due: "overdue",
@@ -253,14 +255,17 @@ describe("validateClickUpPlanForExecution", () => {
       { id: "2", name: "B", status: "In Progress (Dev)", url: "", priority: "high" },
       { id: "3", name: "C", status: "Scoping", url: "", priority: "low" },
     ];
-    const empty = { assignee: null, priority: null, due: null, text: null };
+    const empty = { statuses: [] as string[], assignee: null, priority: null, due: null, text: null };
     expect(
-      applyTaskFilters(tasks, { ...empty, status: "in progress" }).matching.map((t) => t.id),
+      applyTaskFilters(tasks, { ...empty, statuses: ["in progress"] }).matching.map((t) => t.id),
     ).toEqual(["1"]);
     expect(
-      applyTaskFilters(tasks, { ...empty, status: "progress" }).matching.map((t) => t.id),
+      applyTaskFilters(tasks, { ...empty, statuses: ["progress"] }).matching.map((t) => t.id),
     ).toEqual(["1", "2"]);
-    expect(applyTaskFilters(tasks, { ...empty, status: "done" }).statusMiss).toBe(true);
+    expect(
+      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "Scoping"] }).matching.map((t) => t.id),
+    ).toEqual(["1"]);
+    expect(applyTaskFilters(tasks, { ...empty, statuses: ["done"] }).statusMiss).toBe(true);
     expect(
       applyTaskFilters(tasks, { ...empty, priority: "low" }).matching.map((t) => t.id),
     ).toEqual(["3"]);

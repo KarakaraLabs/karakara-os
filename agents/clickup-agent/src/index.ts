@@ -70,7 +70,9 @@ __chat_register({
     const declaredRoute = declaredRouteFromMessage(ctx.message);
     if (declaredRoute) {
       const declaredPriority = clickUpPriorityIntentFromDeclaredRoute(declaredRoute);
-      if (declaredPriority) return runClickUpPriorityWorkflow(declaredPriority);
+      if (declaredPriority) {
+        return runClickUpPriorityWorkflow(declaredPriority, declaredRoute.scope_note);
+      }
       const declaredIntent = clickUpIntentFromDeclaredRoute(declaredRoute);
       if (declaredIntent) {
         if (isDeterministicTaskRead(declaredIntent)) {

@@ -12,7 +12,8 @@ class CoordinatorRouteTarget {
 }
 
 class CoordinatorRouteFilters {
-  status string? @description("Task status the user named, copied verbatim. Omit unless the user filtered by status.")
+  statuses string[]? @description("Every task status the conversation is currently about, copied verbatim: the statuses of tasks a specialist just listed, or the status the user named this turn. Emit all of them. Do not copy a status the user is not discussing, and do not narrow to one when they are looking at several.")
+  scope_note string? @description("One clause naming the task set the user means, in their own terms: for example 'the in-progress tasks just listed' or 'the to-do list just listed'. Omit only when no set has been established.")
   assignee string? @description("Person the user named when filtering by assignee. Never for 'me'/'my tasks': leave null and list it in unsupported.")
   priority ("urgent" | "high" | "normal" | "low")? @description("Priority filter only when the user filtered by priority; omit when they merely want it shown.")
   due ("overdue" | "today" | "this_week" | "next_week")? @description("Due-date window only when the user filtered by it; omit when they merely want dates shown.")
@@ -100,12 +101,16 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
       the request to the slower planner.
     - When no capability fits, omit `route` entirely. The host will then plan from the goal.
 
-    Conversation continuity:
-    - If an earlier turn established a task filter (status, assignee, priority, due, or an area) and the
-      new message does not change it, carry that filter into `filters`. Example: after asking about
-      in-progress tasks, "which should I start first?" still means in-progress.
-    - Never invent a filter the user has not stated in this conversation.
-
+    Conversation continuity (infer the scope, do not copy it mechanically):
+    - Infer which task set the user is talking about from the conversation: the statuses of tasks a
+      specialist just listed, or the statuses the user named this turn. Put every status you find in
+      `statuses`, verbatim, and describe the set in `scope_note` in the user's own terms.
+    - Follow the subject of the conversation, not the previous filter: after "which tasks are in todo?"
+      a follow-up "what should I start first?" is about the to-do tasks, not about whatever was discussed
+      before that.
+    - Leave `statuses` empty and say so in `scope_note` when the user asks openly with no established set
+      ("what should I work on next?" with nothing listed).
+    - Never invent a status the user has not mentioned and that has not appeared in the records.
 
     ---AVAILABLE AGENTS---
     {{ available_agents }}

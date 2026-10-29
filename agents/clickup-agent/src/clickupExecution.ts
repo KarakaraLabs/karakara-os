@@ -487,6 +487,7 @@ async function processClickupLifecycleUnit(
       // takes the generic planner path.
       action: "other",
       status_filter: null,
+      statuses: null,
       assignee_filter: null,
       priority_filter: null,
       due_filter: null,

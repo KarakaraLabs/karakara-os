@@ -51,6 +51,7 @@ intent: string;
 operation_kind: "read" | "write" | "delete";
 action: "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other";
 status_filter: string | null;
+statuses: string[] | null;
 assignee_filter: string | null;
 priority_filter: "urgent" | "high" | "normal" | "low" | null;
 due_filter: "overdue" | "today" | "this_week" | "next_week" | null;
@@ -83,6 +84,7 @@ intent: string;
 scope: "all_accessible" | "one_best_match";
 scope_hint: string | null;
 status_filter: string | null;
+statuses: string[] | null;
  }
 
 export interface ClickUpStructuredPlan { intent_description: string;
