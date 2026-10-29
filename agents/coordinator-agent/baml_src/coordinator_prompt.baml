@@ -1,9 +1,40 @@
+class CoordinatorAgentCandidate {
+  agent_package string
+  name string
+  description string?
+  capabilities string[]
+  tools string[]
+}
+
+class CoordinatorRouteTarget {
+  agent_package string @description("Exact agent_package from AVAILABLE AGENTS.")
+  capability string @description("One capability string that agent advertises. Copy it verbatim.")
+}
+
+class CoordinatorRouteFilters {
+  status string? @description("Task status the user named, copied verbatim. Omit unless the user filtered by status.")
+  assignee string? @description("Person the user named when filtering by assignee. Never for 'me'/'my tasks': leave null and list it in unsupported.")
+  priority ("urgent" | "high" | "normal" | "low")? @description("Priority filter only when the user filtered by priority; omit when they merely want it shown.")
+  due ("overdue" | "today" | "this_week" | "next_week")? @description("Due-date window only when the user filtered by it; omit when they merely want dates shown.")
+  text string? @description("Words the task name or description must contain, copied verbatim. Omit otherwise.")
+}
+
+class CoordinatorRoute {
+  shape "single" | "sequence" | "foreach" | "aggregate" @description("single: one target capability answers the whole request. sequence: ordered independent calls. foreach: apply an action to each item from an upstream result. aggregate: combine several results into one answer.")
+  targets CoordinatorRouteTarget[] @description("The specialists this request needs. Exactly one for shape single.")
+  goal string @description("Goal-level instruction for the target agent. Keep the user's own terms; never add constraints they did not state.")
+  filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. Omit when the request is not a task filter and when the user only wants those fields displayed.")
+  expected_output string? @description("What the answer must contain, in one short clause.")
+  unsupported string[]? @description("Constraints no target capability can express. A non-empty value sends the request to the slower planning path, so keep it empty unless genuinely needed.")
+}
+
 // --- Coordinator classification (before discovery) ---
 // Exactly one variant: delegatable task ready, need user input to form a task, or meta-only (no routing).
 
 class CoordinatorReadyIntent {
   kind "ready"
   inferred_intent string @description("Single goal-level sentence for agent discovery — coordinated outcome only. No agent names, tools, or delegation mechanics.")
+  route CoordinatorRoute? @description("Routing decision for this turn. Fill it whenever the request maps to known capabilities; a valid single-target route lets the host skip the planner.")
 }
 
 class CoordinatorNeedTaskClarification {
@@ -16,7 +47,10 @@ class CoordinatorMetaOnly {
   reason string @description("Short label for logging: e.g. greeting, capabilities_list, casual_chat — no specialist work request.")
 }
 
-function ClassifyCoordinatorTurn(user_message: string) -> CoordinatorReadyIntent | CoordinatorNeedTaskClarification | CoordinatorMetaOnly {
+function ClassifyCoordinatorTurn(
+  user_message: string,
+  available_agents: CoordinatorAgentCandidate[],
+) -> CoordinatorReadyIntent | CoordinatorNeedTaskClarification | CoordinatorMetaOnly {
   client DefaultClient
   prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
@@ -53,6 +87,22 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
     - **Bare greetings** (\"hi\", \"hello\", \"hey\") with no other ask should trigger one clarification question, not a ready-to-route task.
     - If torn between ready work and clarification, prefer clarification.
     - Do not treat the turn as ready-to-route when the user gave no actionable anchor.
+
+    Routing rules for `route`:
+    - AVAILABLE AGENTS is the complete registry result for this turn. Use only exact `agent_package` and
+      `capability` strings from it. Never invent either, and never route to yourself.
+    - shape "single" only when one capability answers the whole request. Then `targets` has exactly one entry.
+    - shape "sequence" when the request needs several independent calls, "foreach" when an action applies to
+      each item produced upstream (e.g. \"create a task for each document\"), "aggregate" when several results
+      must be merged. Those shapes still need a plan; the host will build it.
+      add requirements they did not state. Put such constraints in `filters` only when they are real filters.
+      identity, ordering by an unlisted property). Keep it empty or omitted otherwise: a non-empty value sends
+      the request to the slower planner.
+    - When no capability fits, omit `route` entirely. The host will then plan from the goal.
+
+    ---AVAILABLE AGENTS---
+    {{ available_agents }}
+    ---END AVAILABLE AGENTS---
 
     {{ _.role('user') }}
     {{ user_message }}
@@ -114,13 +164,6 @@ Do not add text before or after the JSON object.
 
 // Planning step: output a structured plan against an explicit discovered-agent list.
 // Never plan a step for coordinator-agent. For capability/meta requests, return plan_steps as [].
-class CoordinatorAgentCandidate {
-  agent_package string
-  name string
-  description string?
-  capabilities string[]
-  tools string[]
-}
 
 function MakeStructuredPlan(
   user_message: string,

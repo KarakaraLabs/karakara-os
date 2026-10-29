@@ -13,6 +13,13 @@
  *   4b. One delegation — host forwards its terminal structured reply; multiple delegations use the FSM
  *   5. CoordinatorSynthesizeReply — only for multi-agent plans
  */
+import {
+  type CoordinatorRoute,
+  type CoordinatorRouteTarget,
+  declaredRoutePayload,
+  directRouteTarget,
+  parseCoordinatorRoute,
+} from "./routing";
 import type {
   A2aExecutionSessionExecutable,
   AgentCardDto,
@@ -33,7 +40,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 type CoordinatorTurn =
-  | { kind: "ready"; inferred_intent: string }
+  | { kind: "ready"; inferred_intent: string; route: CoordinatorRoute | null }
   | { kind: "clarify"; question: string }
   | { kind: "meta"; reason: string };
 
@@ -42,7 +49,7 @@ function parseCoordinatorTurn(v: unknown): CoordinatorTurn | null {
   switch (v.kind) {
     case "ready":
       return typeof v.inferred_intent === "string" && v.inferred_intent.trim().length > 0
-        ? { kind: "ready", inferred_intent: v.inferred_intent }
+        ? { kind: "ready", inferred_intent: v.inferred_intent, route: parseCoordinatorRoute(v.route) }
         : null;
     case "clarify":
       return typeof v.question === "string" && v.question.trim().length > 0
@@ -180,16 +187,25 @@ async function forwardSingleDelegation(
   ctx: RunContext,
   agent_package: string,
   goal: string,
+  declaredRoute: ReturnType<typeof declaredRoutePayload> | null = null,
 ): Promise<StructuredReply> {
   const session = await openToolSession("system/internal_a2a", {
     target: { agent_package },
   });
   let nextMessage = goal;
   let finished = false;
+  let declaredSent = false;
 
   try {
     while (true) {
-      await session.send({ parts: [{ text: nextMessage }] });
+      // The declared route rides along once, with the first message: it describes the request, not
+      // each follow-up. Specialists that understand it skip their classifier; others ignore it.
+      const parts: { text?: string; data?: unknown }[] = [{ text: nextMessage }];
+      if (!declaredSent && declaredRoute) {
+        parts.push({ data: declaredRoute });
+        declaredSent = true;
+      }
+      await session.send({ parts } as never);
 
       while (true) {
         const step = await session.continue();
@@ -226,15 +242,91 @@ async function forwardSingleDelegation(
   }
 }
 
+/**
+ * Discover specialists for one routing decision, recording it as a provenance step.
+ *
+ * Deterministic registry lookup: no model call. Throws when discovery fails so the caller can stop
+ * before spending a classification call.
+ */
+async function discoverAgentsForTurn(
+  query: string,
+): Promise<CoordinatorAgentCandidate[]> {
+  let discoveryExecutable: A2aExecutionSessionExecutable | null = null;
+  try {
+    const discoverySession = typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession("coordinator-discover-" + Date.now())
+      : null;
+    const intentId = "intent-" + slug(query, "coord");
+    const discoveryIntentPhase = discoverySession
+      ? await discoverySession.submitIntent({ intentId, description: query })
+      : null;
+    discoveryExecutable = discoveryIntentPhase
+      ? await discoveryIntentPhase.submitPlan({
+          intentId,
+          planId: "plan-discover-" + slug(query, "coord"),
+          steps: [
+            {
+              stepId: "step-discover",
+              description: "Discover available agents.",
+              order: 0,
+              dependsOn: [],
+            },
+          ],
+        })
+      : null;
+
+    await discoveryExecutable?.startStep("step-discover");
+    const agents = await discoverAgents(query);
+    await discoveryExecutable?.completeStep("step-discover");
+    await discoveryExecutable?.finish();
+    return agents;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    try {
+      await discoveryExecutable?.abort(message);
+    } catch {
+      // Best effort. Preserve the original discovery failure.
+    }
+    throw e;
+  }
+}
+
 __chat_register({
   run: async (ctx): Promise<SessionResult> => {
     let text = (ctx.text ?? "").trim() || "unknown";
 
+    const rawUserText = text;
+
     let runDiscovery = false;
     let intentText = "";
+    let directTarget: CoordinatorRouteTarget | null = null;
+    let directRoute: CoordinatorRoute | null = null;
+    let availableAgents: CoordinatorAgentCandidate[] = [];
+
+    // Discovery runs before classification because the classifier routes against the registry: it
+    // needs the real agent packages and capabilities, not a guess. It is a deterministic registry
+    // lookup (~100ms), and it runs once per distinct user text.
+    let discoveryFailure: string | null = null;
+    const agentsForText = async (query: string): Promise<CoordinatorAgentCandidate[]> => {
+      if (discoveredFor === query) return availableAgents;
+      try {
+        const agents = await discoverAgentsForTurn(query);
+        availableAgents = agents;
+        discoveredFor = query;
+        return agents;
+      } catch (e) {
+        discoveryFailure = e instanceof Error ? e.message : String(e);
+        return [];
+      }
+    };
+    let discoveredFor: string | null = null;
 
     while (true) {
-      const rawTurn = await ClassifyCoordinatorTurn({ user_message: text });
+      const agents = await agentsForText(text);
+      const rawTurn = await ClassifyCoordinatorTurn({
+        user_message: text,
+        available_agents: agents,
+      });
       const turn = parseCoordinatorTurn(rawTurn);
       if (turn?.kind === "clarify") {
         const reply = await ctx.emit.awaitInput(turn.question.trim());
@@ -243,10 +335,17 @@ __chat_register({
         continue;
       }
       if (turn?.kind === "ready") {
+        if (discoveryFailure) {
+          // A routable turn needs the registry; meta/clarify turns do not, so they pass through.
+          ctx.emit.message(`[discovery failed: ${discoveryFailure}]`);
+          return { error: discoveryFailure };
+        }
         const cand = turn.inferred_intent.trim();
         if (isUsableReadyIntent(cand)) {
           intentText = cand;
           runDiscovery = true;
+          directRoute = turn.route;
+          directTarget = directRouteTarget(turn.route, agents);
           break;
         }
         const reply = await ctx.emit.awaitInput(
@@ -268,51 +367,28 @@ __chat_register({
       continue;
     }
 
-    let availableAgents: CoordinatorAgentCandidate[] = [];
-    if (runDiscovery) {
-      let discoveryExecutable: A2aExecutionSessionExecutable | null = null;
-      try {
-        const discoverySession = typeof openA2aExecutionSession === "function"
-          ? await openA2aExecutionSession("coordinator-discover-" + Date.now())
-          : null;
-        const discoveryIntentPhase = discoverySession
-          ? await discoverySession.submitIntent({
-              intentId: "intent-" + slug(intentText, "coord"),
-              description: intentText,
-            })
-          : null;
-        discoveryExecutable = discoveryIntentPhase
-          ? await discoveryIntentPhase.submitPlan({
-              intentId: "intent-" + slug(intentText, "coord"),
-              planId: "plan-discover-" + slug(intentText, "coord"),
-              steps: [{ stepId: "step-discover", description: "Discover available agents.", order: 0, dependsOn: [] }],
-            })
-          : null;
-
-        await discoveryExecutable?.startStep("step-discover");
-        availableAgents = await discoverAgents(text);
-        if (availableAgents.length === 0) {
-          throw new Error("No specialist agents matched this request.");
-        }
-        await discoveryExecutable?.completeStep("step-discover");
-        await discoveryExecutable?.finish();
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        try {
-          await discoveryExecutable?.abort(message);
-        } catch {
-          // Best effort. Preserve the original discovery failure.
-        }
-        ctx.emit.message(`[discovery failed: ${message}]`);
-        return { error: message };
-      }
+    if (runDiscovery && availableAgents.length === 0) {
+      const message = "No specialist agents matched this request.";
+      ctx.emit.message(`[discovery failed: ${message}]`);
+      return { error: message };
     }
 
     try {
-      const plan = await MakeStructuredPlan({
-        user_message: text,
-        available_agents: availableAgents,
-      }) as StandardStructuredPlan;
+      // A validated single-target route is the plan: the classifier already named the agent, the
+      // capability, and the goal, so buying a second opinion costs a call and re-paraphrases the ask.
+      const plan = (directTarget && directRoute
+        ? {
+            intent_description: directRoute.goal,
+            objective: directRoute.expected_output ?? directRoute.goal,
+            plan_steps: [
+              { agent_package: directTarget.agent_package, sub_message: directRoute.goal },
+            ],
+            citations: null,
+          }
+        : await MakeStructuredPlan({
+            user_message: text,
+            available_agents: availableAgents,
+          })) as StandardStructuredPlan;
       const steps = Array.isArray(plan?.plan_steps) ? plan.plan_steps : [];
       if (runDiscovery && steps.length === 0) {
         throw new Error("Routing planner returned no delegation steps for a specialist request.");
@@ -375,8 +451,12 @@ __chat_register({
         const goal = String(step.sub_message ?? objective);
         if (!agent_package) throw new Error("Delegation step did not name an agent package.");
 
+        const declared =
+          directTarget && directRoute && agent_package === directTarget.agent_package
+            ? declaredRoutePayload(directRoute, directTarget, rawUserText)
+            : null;
         await delegateExecutable?.startStep(stepId);
-        const forwarded = await forwardSingleDelegation(ctx, agent_package, goal);
+        const forwarded = await forwardSingleDelegation(ctx, agent_package, goal, declared);
         await delegateExecutable?.completeStep(stepId);
         await delegateExecutable?.finish();
         return { message: forwarded };
