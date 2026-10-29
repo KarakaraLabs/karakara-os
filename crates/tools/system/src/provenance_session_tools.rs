@@ -394,6 +394,10 @@ fn projection_content_to_value(content: PromptProjectionContent) -> Value {
             "covered_event_order_start": covered_event_order_start,
             "covered_event_order_end": covered_event_order_end,
         }),
+        PromptProjectionContent::Notice { text } => json!({
+            "kind": "notice",
+            "text": text,
+        }),
     }
 }
 

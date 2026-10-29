@@ -1224,6 +1224,7 @@ globalThis.onChatMessage = async function(_message) {
             discovery: None,
             tags: vec![],
             signature: String::new(),
+            function_context: Default::default(),
         };
         BootedAgent {
             agent,
@@ -1970,6 +1971,7 @@ globalThis.onChatMessage = async function(_message) {
                 discovery: None,
                 tags: vec![],
                 signature: String::new(),
+                function_context: Default::default(),
             },
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Repository {
@@ -2209,6 +2211,7 @@ globalThis.onChatMessage = async function(_message) {
                 discovery: None,
                 tags: vec![],
                 signature: String::new(),
+                function_context: Default::default(),
             },
             baml_functions: vec![],
             provenance: crate::agent_package::DeploymentProvenance::Ephemeral,

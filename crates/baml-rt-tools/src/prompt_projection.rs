@@ -141,6 +141,12 @@ pub enum PromptProjectionContent {
         covered_event_order_start: u64,
         covered_event_order_end: u64,
     },
+    /// Host-authored notice rendered **without** a `#N` history ref.
+    ///
+    /// Used for synthetic lines such as the window-truncation marker: their text is derived from
+    /// host state, not from a durable provenance activity, so giving them a history identity would
+    /// advertise a citable ref that no anchor backs.
+    Notice { text: String },
 }
 
 /// Planning lifecycle projection payload (mirrors conversation planning rows).
@@ -609,6 +615,18 @@ fn render_projection_content(
             }
         }
 
+        // Host-authored notice: rendered verbatim, never given a `#N`. Allocating a history
+        // identity here would publish a citable ref with no durable anchor behind it.
+        PromptProjectionContent::Notice { text } => {
+            if text.trim().is_empty() {
+                return RenderedEntry::Filtered;
+            }
+            RenderedEntry::One {
+                content: text.clone(),
+                message_citations: None,
+            }
+        }
+
         PromptProjectionContent::SessionStep(s) => match &s.op {
             SessionStepProjection::Open => RenderedEntry::Filtered,
             SessionStepProjection::SendDone {
@@ -725,6 +743,35 @@ mod tests {
             send_done_replay_payload: None,
             read_replay_payload: None,
         })
+    }
+
+    #[test]
+    fn notice_renders_without_history_ref() {
+        let table = RefTable::new();
+        let registry = ToolRegistry::default();
+        let items = vec![PromptProjectionItem {
+            timestamp_ms: 0,
+            activity_anchor: String::new(),
+            role: "system".to_string(),
+            content: PromptProjectionContent::Notice {
+                text: "[3 older event(s) are outside this window.]".to_string(),
+            },
+        }];
+        let history = project_prompt_context(items, &registry, &table, None);
+        let rows = history.as_array().expect("array");
+        assert_eq!(rows.len(), 1);
+        let content = rows[0]["content"].as_str().expect("content");
+        assert_eq!(content, "[3 older event(s) are outside this window.]");
+        assert!(
+            !content.contains('#'),
+            "host notice must not advertise a citable history ref: {content}"
+        );
+        assert!(
+            table
+                .get_history(crate::archive_read::HistoryRef::new(1))
+                .is_none(),
+            "host notice must not allocate a #N slot"
+        );
     }
 
     fn session_step_with_replay(

@@ -163,6 +163,39 @@ impl ContextCompactionSubscriber {
     }
 
     pub async fn evaluate_post_turn(&self, request: &CompactionRequest, function_name: &str) {
+        // The item threshold is decided before bytes, and the policy is cheap to resolve. Probe the
+        // bounded row count first so a below-threshold context never pays for payload loading,
+        // archive hydration, rendering, or safety-signal resolution.
+        let policy = self.trigger_policy_for(function_name);
+        let below_item_threshold = policy.item_threshold > 0
+            && matches!(
+                self.store
+                    .agent_view_below_item_threshold(
+                        &request.context_id,
+                        &request.agent_id,
+                        None,
+                        policy.item_threshold,
+                    )
+                    .await,
+                Ok(true)
+            );
+        if below_item_threshold {
+            // `item_count: 0` is below any non-zero threshold, so the shared decision path records
+            // the same `below_item_threshold` skip it would have produced after the full read.
+            self.evaluate_and_compact(
+                request,
+                CompactionTriggerInput {
+                    source: CompactionTriggerSource::PostTurn,
+                    item_count: 0,
+                    prompt_bytes: 0,
+                    safety: CompactionSafetySignals::default(),
+                    force: false,
+                },
+                function_name,
+            )
+            .await;
+            return;
+        }
         let items = self
             .store
             .conversation_context_for_agent(&request.context_id, &request.agent_id, None)

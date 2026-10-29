@@ -12,7 +12,7 @@ use baml_rt_conversation::view::ProvenanceConversationContextItem;
 use baml_rt_core::{Result, context};
 use baml_rt_provenance::{
     CompactionRequest, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvenanceReadPrincipal,
-    STEP_EXECUTOR_DELTA_ROW_CAP, estimate_compaction_prompt_bytes,
+    STEP_EXECUTOR_DELTA_ROW_CAP, wire_history_byte_len,
 };
 use baml_rt_quickjs::baml_execution::ConversationContextProvider;
 use baml_rt_tools::{
@@ -31,6 +31,15 @@ type BoxedArchiveReader = Box<dyn Fn(&str, Option<&str>, usize, usize) -> Option
 struct PromptEvaluationContext {
     item_count: usize,
     prompt_bytes: u64,
+}
+
+/// Wire rows of a projected prompt payload, or an empty slice when the payload is empty.
+fn prompt_rows(payload: &Option<Value>) -> &[Value] {
+    payload
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 /// Projects [`ProvenanceConversationContextItem`] rows into **wire** conversation JSON.
@@ -77,46 +86,18 @@ impl ProjectingConversationContextProvider {
         )
     }
 
-    async fn load_prompt_evaluation(
-        &self,
-        scope: &context::RuntimeScope,
-    ) -> Result<Option<PromptEvaluationContext>> {
-        let Some(store) = self.provenance_store.as_ref() else {
-            return Ok(None);
-        };
-        let context_id = scope.context_id();
-        let agent_id = scope.agent_id().clone();
-        // Budget is measured on the same materialization the prompt path renders: this
-        // agent's compacted (summary + bounded tail) or windowed view. Measuring raw history
-        // here would keep tripping the emergency trigger after a summary already shrank the
-        // prompt (P4 review finding 2).
-        let agent_items = store
-            .conversation_context_for_agent_prompt(
-                context_id,
-                &agent_id,
-                Some(DEFAULT_LLM_CONTEXT_ITEM_CAP),
-                None,
-            )
-            .await
-            .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
-                source: Box::new(e),
-            })?;
-        let item_count = agent_items.len();
-        let prompt_bytes = estimate_compaction_prompt_bytes(
-            store,
-            context_id,
-            &ProvenanceReadPrincipal::Agent(agent_id),
-            &agent_items,
-            self.tool_registry.as_ref(),
-        )
-        .await
-        .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
-            source: Box::new(e),
-        })?;
-        Ok(Some(PromptEvaluationContext {
-            item_count,
-            prompt_bytes,
-        }))
+    /// Measure the prompt from the wire rows that will actually be sent.
+    ///
+    /// This used to read the uncapped agent history and render it separately, which meant the
+    /// emergency gate measured a different materialization than the prompt and paid a full-history
+    /// read on every model call. The transcript bytes of the projected rows are the same bytes the
+    /// model sees, so the gate and the prompt now agree by construction.
+    fn evaluate_prompt_payload(payload: &Option<Value>) -> PromptEvaluationContext {
+        let rows = prompt_rows(payload);
+        PromptEvaluationContext {
+            item_count: rows.len(),
+            prompt_bytes: wire_history_byte_len(rows),
+        }
     }
 
     async fn project_conversation_to_json(
@@ -362,33 +343,35 @@ impl ConversationContextProvider for ProjectingConversationContextProvider {
         scope: &context::RuntimeScope,
         function_name: &str,
     ) -> Result<Option<Value>> {
-        let evaluation = self.load_prompt_evaluation(scope).await?;
-        let needs_emergency = evaluation.as_ref().is_some_and(|ctx| {
-            self.compaction_subscriber.as_ref().is_some_and(|sub| {
-                sub.pre_model_exceeds_emergency(ctx.prompt_bytes, ctx.item_count, function_name)
-            })
-        });
-        if needs_emergency {
-            if let (Some(subscriber), Some(ctx)) =
-                (self.compaction_subscriber.as_ref(), evaluation.as_ref())
-            {
-                let request = CompactionRequest {
-                    context_id: scope.context_id().clone(),
-                    agent_id: scope.agent_id().clone(),
-                };
-                subscriber
-                    .evaluate_pre_model_emergency(
-                        &request,
-                        ctx.prompt_bytes,
-                        ctx.item_count,
-                        function_name,
-                    )
-                    .await;
-            }
-            return self
-                .project_conversation_to_json(scope, Some(DEFAULT_LLM_CONTEXT_ITEM_CAP))
-                .await;
+        // One materialization per model call: the same rows feed the emergency gate and the prompt.
+        let payload = self
+            .project_conversation_to_json(scope, Some(DEFAULT_LLM_CONTEXT_ITEM_CAP))
+            .await?;
+        let Some(subscriber) = self.compaction_subscriber.as_ref() else {
+            return Ok(payload);
+        };
+        let evaluation = Self::evaluate_prompt_payload(&payload);
+        if !subscriber.pre_model_exceeds_emergency(
+            evaluation.prompt_bytes,
+            evaluation.item_count,
+            function_name,
+        ) {
+            return Ok(payload);
         }
+        let request = CompactionRequest {
+            context_id: scope.context_id().clone(),
+            agent_id: scope.agent_id().clone(),
+        };
+        subscriber
+            .evaluate_pre_model_emergency(
+                &request,
+                evaluation.prompt_bytes,
+                evaluation.item_count,
+                function_name,
+            )
+            .await;
+        // A compaction head changes the materialization, so the pre-compaction rows must not be
+        // returned. Re-read once; the snapshot is not reused across the new head.
         self.project_conversation_to_json(scope, Some(DEFAULT_LLM_CONTEXT_ITEM_CAP))
             .await
     }

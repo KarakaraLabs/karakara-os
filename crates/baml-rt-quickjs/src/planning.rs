@@ -36,6 +36,32 @@ pub struct PlanningDynamicContext {
     pub conversation_history: Option<Value>,
 }
 
+/// What a [`PlanningResolver`] actually reads from [`PlanningDynamicContext`].
+///
+/// Projecting conversation history is the expensive part of building the dynamic context, so a
+/// resolver that validates only the submitted fields declares that here and the host skips the
+/// projection entirely. Custom resolvers default to the historical behavior (history required).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanningContextRequirements {
+    /// Whether [`PlanningDynamicContext::conversation_history`] must be populated.
+    pub conversation_history: bool,
+}
+
+impl PlanningContextRequirements {
+    /// Requirements for resolvers that read neither history nor tools.
+    pub const SUBMISSION_ONLY: Self = Self {
+        conversation_history: false,
+    };
+}
+
+impl Default for PlanningContextRequirements {
+    fn default() -> Self {
+        Self {
+            conversation_history: true,
+        }
+    }
+}
+
 /// Resolved intent submission: passed to [`PlanningResolver`] and provenance after wire parse +
 /// host lineage / supersession bookkeeping.
 #[derive(Debug, Clone)]
@@ -68,6 +94,15 @@ pub struct PlanStepStatusChange {
 
 #[async_trait]
 pub trait PlanningResolver: Send + Sync {
+    /// Declare which parts of [`PlanningDynamicContext`] this resolver reads.
+    ///
+    /// Defaults to requiring conversation history so custom resolvers keep the behavior they were
+    /// written against. Resolvers that only validate submitted fields should return
+    /// [`PlanningContextRequirements::SUBMISSION_ONLY`] to skip the history projection.
+    fn context_requirements(&self) -> PlanningContextRequirements {
+        PlanningContextRequirements::default()
+    }
+
     async fn resolve_intent(
         &self,
         context: &PlanningDynamicContext,
@@ -89,6 +124,13 @@ pub(crate) struct DefaultPlanningResolver;
 
 #[async_trait]
 impl PlanningResolver for DefaultPlanningResolver {
+    // Every method below validates the submitted fields only; `_context` is unused. Declaring that
+    // keeps the host from projecting conversation history around intent / plan / step-status
+    // bookkeeping, which is where most of the measured host latency lives.
+    fn context_requirements(&self) -> PlanningContextRequirements {
+        PlanningContextRequirements::SUBMISSION_ONLY
+    }
+
     async fn resolve_intent(
         &self,
         _context: &PlanningDynamicContext,
@@ -163,5 +205,57 @@ impl PlanningResolver for DefaultPlanningResolver {
             ));
         }
         Ok(submission)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DefaultPlanningResolver, PlanningContextRequirements, PlanningResolver};
+
+    #[test]
+    fn default_resolver_opts_out_of_conversation_history() {
+        // The default resolver validates submitted fields only. If this flips back to `true`, the
+        // host pays a full agent-history projection around every intent / plan / step-status
+        // transition for no behavioural reason.
+        assert!(
+            !DefaultPlanningResolver
+                .context_requirements()
+                .conversation_history
+        );
+    }
+
+    #[test]
+    fn custom_resolver_default_keeps_history() {
+        struct CustomResolver;
+        #[async_trait::async_trait]
+        impl PlanningResolver for CustomResolver {
+            async fn resolve_intent(
+                &self,
+                _context: &super::PlanningDynamicContext,
+                submission: super::IntentSubmission,
+            ) -> baml_rt_core::Result<super::IntentSubmission> {
+                Ok(submission)
+            }
+            async fn resolve_plan(
+                &self,
+                _context: &super::PlanningDynamicContext,
+                submission: super::PlanSubmission,
+            ) -> baml_rt_core::Result<super::PlanSubmission> {
+                Ok(submission)
+            }
+            async fn resolve_step_status(
+                &self,
+                _context: &super::PlanningDynamicContext,
+                submission: super::PlanStepStatusChange,
+            ) -> baml_rt_core::Result<super::PlanStepStatusChange> {
+                Ok(submission)
+            }
+        }
+
+        assert_eq!(
+            CustomResolver.context_requirements(),
+            PlanningContextRequirements::default()
+        );
+        assert!(CustomResolver.context_requirements().conversation_history);
     }
 }

@@ -157,18 +157,21 @@ pub fn agent_view_projection_item(
 /// A silent item cap reads to the model as "this is everything that happened".
 /// The marker names the omission so the model can page older events back instead
 /// of assuming the window is complete.
+///
+/// The marker is host-authored, not a provenance activity, so it renders as an
+/// unreferenced [`PromptProjectionContent::Notice`]. Giving it a real `#N` would
+/// advertise a citable ref whose text changes with the omitted-row count.
 #[must_use]
 pub fn truncation_marker(older_rows_omitted: usize) -> PromptProjectionItem {
     PromptProjectionItem {
         timestamp_ms: 0,
         activity_anchor: String::new(),
         role: "system".to_string(),
-        content: PromptProjectionContent::Message {
+        content: PromptProjectionContent::Notice {
             text: format!(
                 "[{older_rows_omitted} older event(s) are outside this window. \
                  They are retained and retrievable; this window is not the full history.]"
             ),
-            citations: Vec::new(),
         },
     }
 }

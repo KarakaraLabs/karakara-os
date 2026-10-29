@@ -147,6 +147,7 @@ impl AgentPackage {
             BamlRtError::InvalidArgument("BAML source path contains invalid UTF-8".to_string())
         })?;
         runtime_manager.load_schema(baml_src_str)?;
+        runtime_manager.set_function_context_requirements(self.manifest.function_context.clone());
         info!(agent = self.manifest.name, "BAML schema loaded");
         Ok(SchemaLoaded { runtime_manager })
     }

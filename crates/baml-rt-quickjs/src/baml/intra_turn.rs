@@ -119,6 +119,12 @@ impl BamlRuntimeManager {
         let Some(ref exec) = self.state.executor else {
             return Ok(Value::Array(vec![]));
         };
+        if !self
+            .invocation_context_requirements(function_name)
+            .conversation_history
+        {
+            return Ok(Value::Array(vec![]));
+        }
         let prov = exec
             .provider_conversation_history_lines_for_llm(scope, function_name)
             .await?;
@@ -141,13 +147,17 @@ impl BamlRuntimeManager {
         let Some(ref exec) = self.state.executor else {
             return Ok(None);
         };
-        let prov = exec
-            .provider_conversation_history_lines_for_llm(scope, function_name)
-            .await?;
+        let requirements = self.invocation_context_requirements(function_name);
+        let prov = if requirements.conversation_history {
+            exec.provider_conversation_history_lines_for_llm(scope, function_name)
+                .await?
+        } else {
+            Vec::new()
+        };
         let merged =
             append_intra_lines_to_provider_then_cap(prov, step_intra_supplement.iter().cloned());
         let mut tags = exec.tags_from_merged_conversation_lines(merged)?;
-        self.enrich_with_tool_schema_prelude(&mut tags);
+        self.enrich_with_tool_schema_prelude(function_name, &mut tags);
         Ok(tags)
     }
 
