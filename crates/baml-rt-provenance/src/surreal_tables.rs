@@ -24,7 +24,7 @@ pub(crate) const TBL_AGENT_IDENTITY_REGISTRY: &str = "agent_identity_registry";
 pub(crate) const TBL_AGENT_ARTIFACT_REGISTRY: &str = "agent_artifact_registry";
 /// Materialized context picker rows (latest message per context).
 pub(crate) const TBL_CONTEXT_PICKER_INDEX: &str = "context_picker_index";
-/// Ordered transcript index rows (Message / ToolCall / SessionStep per context).
+/// Ordered transcript rows with prompt ownership (Message / ToolCall / SessionStep per context).
 pub(crate) const TBL_CONTEXT_TRANSCRIPT_INDEX: &str = "context_transcript_index";
 /// Write-maintained planning heads per `(context_id, task_id)`.
 pub(crate) const TBL_CONTEXT_PLANNING_INDEX: &str = "context_planning_index";

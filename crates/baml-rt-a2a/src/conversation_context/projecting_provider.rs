@@ -116,12 +116,26 @@ impl ProjectingConversationContextProvider {
         // recent tail (P4.7); otherwise it is the bounded newest window.
         let storage_started = std::time::Instant::now();
         let (items, truncated) = if let Some(store) = self.provenance_store.as_ref() {
+            let head_started = std::time::Instant::now();
             let head = store
                 .latest_compaction_head(context_id, Some(&agent_id), None)
                 .await
                 .map_err(|e| baml_rt_core::BamlRtError::ProvenanceContextRead {
                     source: Box::new(e),
                 })?;
+            let head_elapsed = head_started.elapsed();
+            baml_rt_observability::metrics::record_context_projection_stage(
+                "storage_head",
+                head_elapsed,
+            );
+            tracing::debug!(
+                context_id = %context_id,
+                agent_id = %agent_id,
+                duration_ms = head_elapsed.as_millis(),
+                head_found = head.is_some(),
+                stage = "storage_head",
+                "context projection storage stage complete"
+            );
             if head.is_some() {
                 let items = store
                     .conversation_context_for_agent_prompt(context_id, &agent_id, item_limit, None)

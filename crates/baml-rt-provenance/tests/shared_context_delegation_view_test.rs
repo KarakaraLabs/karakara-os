@@ -319,6 +319,59 @@ async fn session_step_rows_are_visible_to_the_agent() {
     );
 }
 
+#[tokio::test]
+async fn session_step_visibility_follows_task_reassignment() {
+    let store = build_isolated_store().await;
+    let ctx = ContextId::new(9405, 1);
+    let first = agent_id("00000000-0000-0000-0000-0000000000e2");
+    let second = agent_id("00000000-0000-0000-0000-0000000000e3");
+    let task_id = task("reassigned-task");
+    boot(&store, &first, "first-agent").await;
+    boot(&store, &second, "second-agent").await;
+    ensure_task(&store, &ctx, &task_id, &first).await;
+
+    store
+        .add_event(ProvEvent::tool_session_step(
+            ctx.clone(),
+            CallScope::Task {
+                task_id: task_id.clone(),
+            },
+            "support/clickup".to_string(),
+            "session-reassigned".to_string(),
+            &SessionStepOp::PageRead {
+                archive_ref: "@1".to_string(),
+                offset: 0,
+                limit: 10,
+            },
+        ))
+        .await
+        .expect("session step");
+    store
+        .add_event(ProvEvent::task_execution_started(
+            ctx.clone(),
+            task_id,
+            second.clone(),
+        ))
+        .await
+        .expect("reassign task");
+
+    let first_view = store
+        .context_history_view(&ctx, &first, Some(100), None, None)
+        .await
+        .expect("first agent view");
+    let second_view = store
+        .context_history_view(&ctx, &second, Some(100), None, None)
+        .await
+        .expect("second agent view");
+    let has_session_step = |items: &[ProvenanceConversationContextItem]| {
+        items
+            .iter()
+            .any(|item| matches!(&item.content, ConversationItemContent::SessionStep(_)))
+    };
+    assert!(!has_session_step(&first_view.items));
+    assert!(has_session_step(&second_view.items));
+}
+
 /// Appending coordinator and Notion rows to a shared context must not change any row already
 /// returned to ClickUp. This pins both sibling exclusion and stable identity, order, and rendering
 /// across consecutive agent-scoped reads.
