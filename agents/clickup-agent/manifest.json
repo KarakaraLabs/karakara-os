@@ -15,6 +15,12 @@
         "ingress",
         "event-driven"
     ],
+    "function_context": {
+        "FormatClickUpPrioritization": {
+            "conversation_history": false,
+            "tool_schema_prelude": false
+        }
+    },
     "discovery": {
         "description": "ClickUp assistant for conversational task work and host.source-records.v1 lifecycle ingress.",
         "capabilities": [

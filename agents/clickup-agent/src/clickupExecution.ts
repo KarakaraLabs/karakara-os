@@ -17,6 +17,7 @@ import {
   PKG_CLICKUP_FORMAT,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
+  runClickUpTaskQueryWorkflow,
 } from "./clickupWorkflow";
 
 export {
@@ -25,6 +26,7 @@ export {
   PKG_CLICKUP_FORMAT,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
+  runClickUpTaskQueryWorkflow,
 };
 
 export function isJsonObject(v: unknown): v is JsonObject {
@@ -62,6 +64,53 @@ export function isClickUpIntent(v: unknown): v is ClickUpIntent {
     !("question" in v) &&
     !("reason" in v)
   );
+}
+
+const READ_ACTIONS = [
+  "list_tasks",
+  "count_tasks",
+  "get_task",
+  "navigate",
+  "other",
+] as const;
+
+/**
+ * Request qualifiers the deterministic read path cannot express yet.
+ *
+ * The deterministic traversal only filters by task status. When the request also constrains the
+ * assignee, dates, priority, or text, taking that path would silently drop the constraint, so such
+ * requests fall back to the generic planner instead. Extend this list (and the traversal) together.
+ */
+const UNSUPPORTED_READ_QUALIFIERS =
+  /\b(assign(?:ee|ed)?|owner|due|overdue|today|tomorrow|this week|next week|deadline|created|updated|priority|urgent|high|low|normal|search|contains|named|called|title)\b/i;
+
+/**
+ * Typed read action for this intent, tolerating plans produced before `action` existed.
+ *
+ * An unknown or missing action falls back to `other`, which routes to the generic planner, so a
+ * classification gap degrades to previous behavior instead of guessing a read shape.
+ */
+export function clickUpIntentAction(
+  intent: ClickUpIntent,
+): (typeof READ_ACTIONS)[number] {
+  const raw = (intent as { action?: unknown }).action;
+  return typeof raw === "string" &&
+    (READ_ACTIONS as readonly string[]).includes(raw)
+    ? (raw as (typeof READ_ACTIONS)[number])
+    : "other";
+}
+
+/** True when the host can answer this read deterministically, without a model-driven plan. */
+export function isDeterministicTaskRead(intent: ClickUpIntent): boolean {
+  if (intent.operation_kind !== "read") return false;
+  const action = clickUpIntentAction(intent);
+  if (action !== "list_tasks" && action !== "count_tasks") return false;
+  return !unsupportedReadQualifier(intent.intent);
+}
+
+/** Qualifier the deterministic read path would ignore, so the request needs the generic planner. */
+export function unsupportedReadQualifier(intentText: string): string | null {
+  return UNSUPPORTED_READ_QUALIFIERS.exec(intentText)?.[0] ?? null;
 }
 
 export function isClickUpPriorityIntent(
@@ -127,8 +176,76 @@ export function parseClickUpStructuredPlanFromPlanning(
 export const parseStandardStructuredPlanFromPlanning =
   parseClickUpStructuredPlanFromPlanning;
 
+const EXPECTS_VALUES = [
+  "task_list",
+  "task_detail",
+  "navigation",
+  "write_confirmation",
+  "none",
+] as const;
+
+type ExpectedEvidence = (typeof EXPECTS_VALUES)[number];
+
+function normalizeExpects(
+  value: unknown,
+  operationKind: string,
+  subMessage: string,
+): ExpectedEvidence {
+  if (typeof value === "string" && (EXPECTS_VALUES as readonly string[]).includes(value)) {
+    return value as ExpectedEvidence;
+  }
+  // Fallback for plans produced before `expects` existed. Only the wording the model actually
+  // emitted is available here, so keep the heuristics narrow.
+  const text = subMessage.toLocaleLowerCase();
+  if (/\b(create|update|delete|assign|move|rename|set status)\b/.test(text))
+    return "write_confirmation";
+  if (/\b(list|count|find|show)\b[^.]*\btasks?\b/.test(text)) return "task_list";
+  if (/\bget\b[^.]*\btask\b/.test(text)) return "task_detail";
+  if (/\b(team|space|list)s?\b/.test(text) && operationKind === "read")
+    return "navigation";
+  return operationKind === "read" ? "task_list" : "none";
+}
+
+/**
+ * Collapse consecutive read-only execute steps into one.
+ *
+ * Each `clickup-execute` row runs its own executor loop, and evidence does not carry across loops
+ * (`prior_results` is text and is capped). A plan that splits navigation into several read steps
+ * therefore loses the earlier results and tends to stop after the first hop. One read pass with the
+ * concatenated instruction keeps the whole traversal inside a single loop.
+ */
+export function collapseReadOnlyExecuteSteps(
+  steps: ClickUpPlanStep[],
+): ClickUpPlanStep[] {
+  const out: ClickUpPlanStep[] = [];
+  for (const step of steps) {
+    const pkg = step.agent_package.trim().toLocaleLowerCase();
+    const previous = out[out.length - 1];
+    const previousIsReadExecute =
+      previous !== undefined &&
+      previous.agent_package.trim().toLocaleLowerCase() === PKG_CLICKUP_EXECUTE &&
+      previous.expects !== "write_confirmation";
+    if (
+      pkg === PKG_CLICKUP_EXECUTE &&
+      step.expects !== "write_confirmation" &&
+      previousIsReadExecute
+    ) {
+      previous.sub_message = `${previous.sub_message}\n${step.sub_message}`;
+      // The merged step must satisfy every contributing requirement.
+      if (previous.expects !== step.expects) {
+        previous.expects =
+          previous.expects === "navigation" ? step.expects : previous.expects;
+      }
+      continue;
+    }
+    out.push({ ...step });
+  }
+  return out;
+}
+
 export function validateClickUpPlanForExecution(
   plan: ClickUpStructuredPlan,
+  operationKind = "read",
 ): ClickUpPlanStep[] | string {
   const raw = plan.plan_steps;
   if (raw.length === 0) return "plan_steps is empty";
@@ -151,12 +268,18 @@ export function validateClickUpPlanForExecution(
     steps.push({
       agent_package: pkgRaw.trim(),
       sub_message: s.sub_message,
+      expects:
+        pkg === PKG_CLICKUP_FORMAT
+          ? "none"
+          : normalizeExpects(s.expects, operationKind, s.sub_message),
     });
   }
 
+  const collapsed = collapseReadOnlyExecuteSteps(steps);
+
   let executeCount = 0;
   let formatCount = 0;
-  for (const st of steps) {
+  for (const st of collapsed) {
     const p = st.agent_package.trim().toLowerCase();
     if (p === PKG_CLICKUP_EXECUTE) executeCount++;
     if (p === PKG_CLICKUP_FORMAT) formatCount++;
@@ -165,11 +288,13 @@ export function validateClickUpPlanForExecution(
     return "plan must include at least one clickup-execute step";
   if (formatCount !== 1)
     return "plan must include exactly one clickup-format step";
-  const lastPkg = steps[steps.length - 1]!.agent_package.trim().toLowerCase();
+  const lastPkg = collapsed[collapsed.length - 1]!.agent_package
+    .trim()
+    .toLowerCase();
   if (lastPkg !== PKG_CLICKUP_FORMAT)
     return "last plan step must be clickup-format";
 
-  return steps;
+  return collapsed;
 }
 
 // ── Host source-records ingress (host.source-records.v1 / clickup) ───────────
@@ -342,6 +467,11 @@ async function processClickupLifecycleUnit(
       kind: "intent",
       intent: "Reconcile ClickUp lifecycle ingress records for this unit",
       operation_kind: "read",
+      // Lifecycle reconciliation reads arbitrary records, not a single typed task query, so it
+      // takes the generic planner path.
+      action: "other",
+      status_filter: null,
+      scope_hint: null,
     };
   } else if (isClickUpIntent(intentResult)) {
     resolvedIntent = intentResult;
@@ -363,7 +493,10 @@ async function processClickupLifecycleUnit(
       detail: `${INGRESS_AGENT_NAME} planning failed: PlanClickUpWork did not return ClickUpStructuredPlan.`,
     };
   }
-  const stepsOrErr = validateClickUpPlanForExecution(structured);
+  const stepsOrErr = validateClickUpPlanForExecution(
+    structured,
+    resolvedIntent.operation_kind,
+  );
   if (typeof stepsOrErr === "string") {
     return {
       ok: false,
