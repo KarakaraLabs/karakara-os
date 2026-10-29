@@ -100,6 +100,13 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
       the request to the slower planner.
     - When no capability fits, omit `route` entirely. The host will then plan from the goal.
 
+    Conversation continuity:
+    - If an earlier turn established a task filter (status, assignee, priority, due, or an area) and the
+      new message does not change it, carry that filter into `filters`. Example: after asking about
+      in-progress tasks, "which should I start first?" still means in-progress.
+    - Never invent a filter the user has not stated in this conversation.
+
+
     ---AVAILABLE AGENTS---
     {{ available_agents }}
     ---END AVAILABLE AGENTS---
