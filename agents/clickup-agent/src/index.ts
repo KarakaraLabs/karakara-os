@@ -3,12 +3,14 @@ import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
   isClickUpIntent,
   isClickUpPriorityIntent,
+  isDeterministicTaskRead,
   isNeedClarification,
   isNotRelevant,
   onClickupSourceDispatch,
   parseClickUpStructuredPlanFromPlanning,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
+  runClickUpTaskQueryWorkflow,
   textReply,
   validateClickUpPlanForExecution,
 } from "./clickupExecution";
@@ -53,6 +55,13 @@ __chat_register({
     if (!resolvedIntent)
       return { error: "Could not determine a valid ClickUp intent." };
 
+    // Task listing and counting run on a deterministic traversal: the model classifies the request
+    // and TypeScript owns teams → spaces → lists → tasks → status filter. Nothing about whether the
+    // traversal is complete is left to a step-scoped executor decision.
+    if (isDeterministicTaskRead(resolvedIntent)) {
+      return runClickUpTaskQueryWorkflow(resolvedIntent);
+    }
+
     const planResult = await PlanClickUpWork({
       intent: resolvedIntent.intent,
       operation_kind: resolvedIntent.operation_kind,
@@ -64,7 +73,10 @@ __chat_register({
           "Planning failed: PlanClickUpWork did not return a valid ClickUpStructuredPlan shape. Try rephrasing your request.",
       };
     }
-    const stepsOrErr = validateClickUpPlanForExecution(structured);
+    const stepsOrErr = validateClickUpPlanForExecution(
+      structured,
+      resolvedIntent.operation_kind,
+    );
     if (typeof stepsOrErr === "string") {
       return {
         error: `Planning output did not satisfy the ClickUp execution contract: ${stepsOrErr}`,

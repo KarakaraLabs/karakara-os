@@ -49,6 +49,9 @@ export type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | L
 export interface ClickUpIntent { kind: "intent";
 intent: string;
 operation_kind: "read" | "write" | "delete";
+action: "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other";
+status_filter: string | null;
+scope_hint: string | null;
  }
 
 export interface ClickUpItem {
@@ -67,6 +70,7 @@ export interface ClickUpOutput {
 
 export interface ClickUpPlanStep { agent_package: string;
 sub_message: string;
+expects: "task_list" | "task_detail" | "navigation" | "write_confirmation" | "none";
  }
 
 export interface ClickUpPriorityIntent { kind: "prioritize";

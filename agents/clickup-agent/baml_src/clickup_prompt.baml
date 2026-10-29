@@ -19,6 +19,9 @@ class ClickUpIntent {
   kind "intent"
   intent string @description("Clean, distilled goal statement — what the user wants to do in ClickUp.")
   operation_kind "read" | "write" | "delete" @description("Broad category: read (list/get), write (create/update), delete.")
+  action "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other" @description("Typed read action the host can execute deterministically. list_tasks: show/list tasks. count_tasks: how many tasks. get_task: one named task. navigate: workspace hierarchy only. other: anything else, including write/delete.")
+  status_filter string? @description("Exact task status the user named, copied verbatim (e.g. in progress). Omit when the user did not ask for a status filter. Never invent one.")
+  scope_hint string? @description("Optional human-readable team, space, or list name the user named. A hint, never an ID.")
 }
 
 class ClickUpPriorityIntent {
@@ -65,6 +68,12 @@ You are the intent classifier for a ClickUp workspace assistant.
     1. Treat the request as a real ClickUp intent when the message is about tasks, lists, spaces, or workspace state.
        - intent: plain-English goal statement (normalised, no filler)
        - operation_kind: "read" for any query/count/search; "write" for create/update; "delete" for delete
+       - action: the typed read operation the host can run without a plan.
+         "list_tasks" for showing/listing/finding tasks, "count_tasks" for how many, "get_task" for one
+         named task, "navigate" when the user only wants the workspace hierarchy (teams/spaces/lists),
+         and "other" for everything else (including every write or delete).
+       - status_filter: copy the user's status wording verbatim when they name one; otherwise omit it.
+       - scope_hint: copy a team/space/list name the user mentioned; never invent an ID.
     2. Ask one clarifying question when the message relates to project management but is too vague
        to plan (e.g. "do the thing", "fix it", "help me" with no task or workspace context).
     3. Mark it not relevant ONLY when the message has NO connection whatsoever to project management,
@@ -114,6 +123,7 @@ Do not add text before or after the JSON object.
 class ClickUpPlanStep {
   agent_package string @description("Sentinel only: clickup-execute (one ClickUp tool session pass: navigate/list/get/create/update/delete) or clickup-format (final user answer from session evidence; no new API calls). Never clickup-agent, support/clickup, or discovery agent_package names.")
   sub_message string @description("clickup-execute: concrete executor instruction (IDs, operation, limits). clickup-format: how to frame the final reply (counts, table, summary).")
+  expects "task_list" | "task_detail" | "navigation" | "write_confirmation" | "none" @description("Evidence this step must produce before it can complete. task_list: a ClickUp task list result. task_detail: one task record. navigation: teams/spaces/lists only. write_confirmation: a successful create/update/delete. none: no evidence requirement (format steps).")
 }
 
 /// ClickUp host structured plan — top-level keys align with shared StandardStructuredPlan for coordination code.
@@ -163,7 +173,12 @@ You are the planner for a ClickUp workspace assistant.
     RULES:
     - At least one clickup-execute step, then end with exactly one clickup-format step.
     - NEVER emit a plan whose only step is clickup-format — that is invalid. TypeScript coordination rejects it.
-    - Multiple clickup-execute steps when separate tool passes are needed (e.g. list teams then list tasks).
+    - Prefer ONE clickup-execute step. Extra execute steps are accepted only when they are genuinely separate
+      passes, and TypeScript collapses consecutive read-only execute steps into one anyway because evidence
+      does not carry across executor loops.
+    - Set `expects` on every execute step to the evidence that step must produce: "task_list" when the step
+      must return tasks, "task_detail" for one task record, "navigation" for teams/spaces/lists only,
+      "write_confirmation" for a successful create/update/delete. Use "none" for clickup-format.
     - Respect operation_kind: read vs write vs delete in sub_messages (delete flow needs confirmation semantics in executor).
     - If the intent already names a task_id or list_id, fold that into the first execute sub_message.
     - citations (optional): when the session transcript below is present, set citations to #N line refs; you may shorten later

@@ -5,6 +5,7 @@
  */
 import type {
   ClickUpInput,
+  ClickUpIntent,
   ClickUpItem,
   ClickUpOutput,
   ClickUpPlanStep,
@@ -94,6 +95,209 @@ function isReadOnlyFinish(
   );
 }
 
+// ── Step evidence ────────────────────────────────────────────────────────────
+//
+// `run.outcome === "completed"` only means the executor loop terminated cleanly. It says nothing
+// about whether the step produced the data the plan needed. Evidence is derived from what the
+// executor actually saw: Send receipts, archive-read headers, and inline result payloads.
+
+export type ExpectedEvidence = ClickUpPlanStep["expects"];
+
+export type StepEvidence = {
+  /// A ClickUp task list was retrieved (Send or a read of its archive).
+  listedTasks: boolean;
+  /// A single task record was retrieved.
+  taskDetail: boolean;
+  /// Teams, spaces, or lists were retrieved.
+  navigated: boolean;
+  /// A create/update/delete completed.
+  wrote: boolean;
+  /// Largest task array observed in one result.
+  taskCount: number;
+  /// Action identities observed, for diagnostics.
+  actions: string[];
+};
+
+function emptyEvidence(): StepEvidence {
+  return {
+    listedTasks: false,
+    taskDetail: false,
+    navigated: false,
+    wrote: false,
+    taskCount: 0,
+    actions: [],
+  };
+}
+
+/**
+ * Fold one executor step into the running evidence record.
+ *
+ * The action identity appears as `Send(list_tasks list_id=…)` on the receipt and at the head of an
+ * archive-read output (`@4 · support/clickup:Send(list_tasks …)`), so scanning the rendered step
+ * text catches both a live Send and a later read of that Send's archive.
+ */
+function accumulateEvidence(evidence: StepEvidence, step: unknown): void {
+  if (!isJsonObject(step)) return;
+  const receipt = isJsonObject(step.receipt) ? step.receipt : null;
+  const identity =
+    receipt !== null && typeof receipt.action_identity === "string"
+      ? receipt.action_identity
+      : null;
+  if (identity !== null) evidence.actions.push(identity);
+
+  const rendered = stringifyUnknown(step, 20000);
+  const actionMatches = rendered.match(
+    /Send\(([a-z_]+)(?:\s[^\)]*)?\)/g,
+  );
+  const ops = new Set<string>();
+  for (const raw of actionMatches ?? []) {
+    const op = /Send\(([a-z_]+)/.exec(raw)?.[1];
+    if (op) ops.add(op);
+  }
+  if (identity !== null) {
+    const op = /Send\(([a-z_]+)/.exec(identity)?.[1];
+    if (op) ops.add(op);
+  }
+  if (ops.has("list_tasks")) evidence.listedTasks = true;
+  if (ops.has("get_task")) evidence.taskDetail = true;
+  if (
+    ops.has("list_teams") ||
+    ops.has("list_spaces") ||
+    ops.has("list_lists")
+  )
+    evidence.navigated = true;
+  if (
+    ops.has("create_task") ||
+    ops.has("update_task") ||
+    ops.has("delete_task")
+  )
+    evidence.wrote = true;
+
+  // Step-executor hops wrap the payload as `{ status, output, receipt, result }`, so look at both
+  // the step itself (plain tool result) and its `result` field (executor envelope).
+  const payload = extractToolLikePayload(step) ?? extractToolLikePayload(step.result);
+  const tasks = payload?.tasks;
+  if (Array.isArray(tasks)) {
+    evidence.listedTasks = true;
+    evidence.taskCount = Math.max(evidence.taskCount, tasks.length);
+  }
+  if (isJsonObject(step.result) && isJsonObject(step.result.task))
+    evidence.taskDetail = true;
+  const items = payload?.items;
+  if (Array.isArray(items) && tasks === undefined) evidence.navigated = true;
+}
+
+export function collectStepEvidence(steps: unknown[]): StepEvidence {
+  const evidence = emptyEvidence();
+  for (const step of steps) accumulateEvidence(evidence, step);
+  return evidence;
+}
+
+function evidenceSatisfies(
+  expects: ExpectedEvidence,
+  evidence: StepEvidence,
+): boolean {
+  switch (expects) {
+    case "task_list":
+      return evidence.listedTasks;
+    case "task_detail":
+      return evidence.taskDetail;
+    case "navigation":
+      return evidence.navigated;
+    case "write_confirmation":
+      return evidence.wrote;
+    case "none":
+      return true;
+  }
+}
+
+/** Prose that announces the next navigation hop instead of answering the request. */
+function looksLikePartialNavigation(text: string): boolean {
+  return /\bnext (would|step|is to)\b/i.test(text) ||
+    /\bwould (then )?(list|fetch|query|filter)\b/i.test(text) ||
+    /\bnext: ?list/i.test(text);
+}
+
+/**
+ * Whether a navigation-continuation phrase disqualifies a terminal reply.
+ *
+ * A hierarchy answer is allowed to mention what would come next ("1 team, 1 space. Next would list
+ * lists.") because the hierarchy IS the answer. Task-level and write plans must not end that way:
+ * the phrase means the executor stopped before retrieving the data it was asked for.
+ */
+function requiresTaskLevelEvidence(expects: ExpectedEvidence): boolean {
+  return (
+    expects === "task_list" ||
+    expects === "task_detail" ||
+    expects === "write_confirmation"
+  );
+}
+
+/**
+ * Candidate task ids Jev scored, minus the synthetic "none" option.
+ *
+ * The formatter receives the decision JSON, not the ranking, so a message that names a different
+ * candidate is a re-ranking the prompt forbade. The ids come from Jev's own probability map so this
+ * check cannot drift from the evaluated candidate set.
+ */
+function scoredCandidateIds(decision: PriorityDecision): string[] {
+  const answer = decision.jev?.answers?.recommended_task;
+  if (answer === undefined || answer.type !== "choice") return [];
+  return Object.keys(answer.probabilities).filter((id) => id !== "none");
+}
+
+/**
+ * Deterministic rendering of a validated recommendation. Used as the fallback whenever the
+ * formatter output cannot be trusted to preserve the validated task.
+ */
+function renderValidatedRecommendation(decision: PriorityDecision): string {
+  const task = decision.task;
+  if (task === undefined) {
+    return `I could not recommend a task. ${decision.reason ?? ""}`.trim();
+  }
+  const lines = [
+    `**Recommended task to start immediately: ${task.name} (ID: ${task.id})**`,
+  ];
+  if (task.status) lines.push("", `- Status: ${task.status}`);
+  if (task.priority) lines.push(`- Priority: ${task.priority}`);
+  if (task.description)
+    lines.push(
+      `- Description: ${truncate(task.description, DESCRIPTION_MAX_CHARS)}`,
+    );
+  if (task.url) lines.push(`- URL: ${task.url}`);
+  if (typeof decision.urgency === "number") {
+    lines.push(
+      "",
+      `Urgency: ${decision.urgency} (evidence sufficiency: ${decision.evidence_sufficient ?? "unknown"}).`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Keep the formatter from changing the validated recommendation.
+ *
+ * The formatter's return type already forbids tool operations, but its `message` is free text, so
+ * "do not select a new task" was only a prompt instruction. Replace the message when it names a
+ * scored candidate other than the validated one, or when it omits the validated task entirely.
+ */
+function enforceValidatedRecommendation(
+  message: string,
+  decision: PriorityDecision,
+): string {
+  const chosen = decision.task?.id;
+  if (decision.outcome !== "recommend" || chosen === undefined) return message;
+  const mentions = (id: string) =>
+    new RegExp(`(^|[^0-9a-z])${id}([^0-9a-z]|$)`, "i").test(message);
+  const otherCandidates = scoredCandidateIds(decision).filter(
+    (id) => id !== chosen && mentions(id),
+  );
+  if (otherCandidates.length > 0 || !mentions(chosen)) {
+    return renderValidatedRecommendation(decision);
+  }
+  return message;
+}
+
 function finalResponseToStructured(fr: FinalResponse): StructuredReply {
   const msg = fr.message.trim() || "Done.";
   const parts: StructuredReply["parts"] = [{ type: "text", text: msg }];
@@ -149,25 +353,108 @@ function formatListLikeToolPayload(output: JsonObject): string {
   return response;
 }
 
-function extractFinalMessage(steps: unknown[]): StructuredReply {
+export type FinalMessageOutcome =
+  | { kind: "message"; reply: StructuredReply }
+  | { kind: "incomplete"; reason: string };
+
+/**
+ * Pick the user-visible answer, but only when the plan's required evidence actually arrived.
+ *
+ * Two failure modes are rejected here:
+ * 1. the required evidence (e.g. a task list) was never retrieved, and
+ * 2. the terminal reply is navigation bookkeeping prose ("Next would list …") rather than an answer.
+ */
+export function extractFinalMessage(
+  steps: unknown[],
+  required: ExpectedEvidence = "none",
+): FinalMessageOutcome {
+  const evidence = collectStepEvidence(steps);
+  if (!evidenceSatisfies(required, evidence)) {
+    return {
+      kind: "incomplete",
+      reason:
+        `the plan required ${describeEvidence(required)} but the executor produced ` +
+        `${describeObserved(evidence)}`,
+    };
+  }
+
   for (const step of [...steps].reverse()) {
-    if (isReadOnlyFinish(step)) return step.reply;
-    if (isFinalResponse(step)) return finalResponseToStructured(step);
+    if (isReadOnlyFinish(step)) {
+      const text = replyText(step.reply);
+      if (requiresTaskLevelEvidence(required) && looksLikePartialNavigation(text)) {
+        return {
+          kind: "incomplete",
+          reason: `the terminal reply only described the next navigation hop: "${text.slice(0, 160)}"`,
+        };
+      }
+      return { kind: "message", reply: step.reply };
+    }
+    if (isFinalResponse(step)) {
+      if (requiresTaskLevelEvidence(required) && looksLikePartialNavigation(step.message)) {
+        return {
+          kind: "incomplete",
+          reason: `the final response only described the next navigation hop: "${step.message.slice(0, 160)}"`,
+        };
+      }
+      return { kind: "message", reply: finalResponseToStructured(step) };
+    }
     const toolLike = extractToolLikePayload(step);
-    if (toolLike) return textReply(formatListLikeToolPayload(toolLike));
+    if (toolLike)
+      return { kind: "message", reply: textReply(formatListLikeToolPayload(toolLike)) };
     if (
       isJsonObject(step) &&
       typeof step.message === "string" &&
       step.message.trim()
     ) {
-      return textReply(step.message.trim());
+      const text = step.message.trim();
+      if (requiresTaskLevelEvidence(required) && looksLikePartialNavigation(text)) {
+        return {
+          kind: "incomplete",
+          reason: `the terminal message only described the next navigation hop: "${text.slice(0, 160)}"`,
+        };
+      }
+      return { kind: "message", reply: textReply(text) };
     }
   }
-  if (steps.length > 0) {
-    const raw = stringifyUnknown(steps[steps.length - 1], 4000);
-    if (raw.trim()) return textReply(`ClickUp session produced:\n${raw}`);
+  return {
+    kind: "incomplete",
+    reason: `the executor produced ${describeObserved(evidence)} but no user-visible answer`,
+  };
+}
+
+function replyText(reply: StructuredReply): string {
+  return reply.parts
+    .map((p) => (p.type === "text" && typeof p.text === "string" ? p.text : ""))
+    .join("\n")
+    .trim();
+}
+
+function describeEvidence(expects: ExpectedEvidence): string {
+  switch (expects) {
+    case "task_list":
+      return "a ClickUp task list result";
+    case "task_detail":
+      return "a single task record";
+    case "navigation":
+      return "a workspace navigation result";
+    case "write_confirmation":
+      return "a completed create/update/delete";
+    case "none":
+      return "no specific evidence";
   }
-  return textReply("ClickUp returned no usable response for this request.");
+}
+
+function describeObserved(evidence: StepEvidence): string {
+  const seen: string[] = [];
+  if (evidence.listedTasks)
+    seen.push(`a task list (${evidence.taskCount} task(s) inline)`);
+  if (evidence.taskDetail) seen.push("a task record");
+  if (evidence.navigated) seen.push("navigation rows");
+  if (evidence.wrote) seen.push("a write result");
+  const actions = evidence.actions.length
+    ? ` actions=[${evidence.actions.slice(0, 6).join(", ")}]`
+    : "";
+  return seen.length ? `${seen.join(", ")}${actions}` : `no ClickUp data${actions}`;
 }
 
 function executorStepToPriorContextText(step: unknown): string {
@@ -213,6 +500,9 @@ const MAX_ALL_TEAMS = 8;
 const MAX_ALL_SPACES = 24;
 const MAX_ALL_LISTS = 48;
 const MAX_ALL_TASKS = 64;
+/// Listing is a read: the fan-out caps still apply, but the task cap is what a table can render
+/// without silently dropping rows, not the prioritization cap.
+const MAX_READ_TASKS = 500;
 const DESCRIPTION_MAX_CHARS = 1_000;
 const CHOICE_PROBABILITY_THRESHOLD = 0.6;
 const CHOICE_CONFIDENCE_THRESHOLD = 0.4;
@@ -372,7 +662,20 @@ async function chooseDiscoveryItem(
     : null;
 }
 
-async function collectAllTasks(): Promise<ClickUpTaskSummary[]> {
+type TraversalLimits = { maxTasks: number; purpose: string };
+
+const PRIORITY_TRAVERSAL: TraversalLimits = {
+  maxTasks: MAX_ALL_TASKS,
+  purpose: "prioritize",
+};
+const READ_TRAVERSAL: TraversalLimits = {
+  maxTasks: MAX_READ_TASKS,
+  purpose: "list",
+};
+
+async function collectAllTasks(
+  limits: TraversalLimits = PRIORITY_TRAVERSAL,
+): Promise<ClickUpTaskSummary[]> {
   const teams = (await callClickUp({})).items ?? [];
   if (teams.length > MAX_ALL_TEAMS) {
     throw new Error(
@@ -403,9 +706,9 @@ async function collectAllTasks(): Promise<ClickUpTaskSummary[]> {
   const tasks: ClickUpTaskSummary[] = [];
   for (const list of lists) {
     tasks.push(...((await callClickUp({ list_id: list.id })).tasks ?? []));
-    if (tasks.length > MAX_ALL_TASKS) {
+    if (tasks.length > limits.maxTasks) {
       throw new Error(
-        "There are too many tasks to prioritize safely. Name a workspace, space, or list.",
+        `There are too many tasks to ${limits.purpose} safely. Name a workspace, space, or list.`,
       );
     }
   }
@@ -414,8 +717,9 @@ async function collectAllTasks(): Promise<ClickUpTaskSummary[]> {
 
 async function collectScopedTasks(
   intent: ClickUpPriorityIntent,
+  limits: TraversalLimits = PRIORITY_TRAVERSAL,
 ): Promise<ClickUpTaskSummary[]> {
-  if (intent.scope === "all_accessible") return collectAllTasks();
+  if (intent.scope === "all_accessible") return collectAllTasks(limits);
 
   const team = await chooseDiscoveryItem(
     "team",
@@ -611,7 +915,12 @@ export async function runClickUpPriorityWorkflow(
     });
     await executable?.completeStep?.("format-priority-result");
     await executable?.finish?.();
-    return { message: finalResponseToStructured(formatted) };
+    return {
+      message: finalResponseToStructured({
+        ...formatted,
+        message: enforceValidatedRecommendation(formatted.message, decision),
+      }),
+    };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     try {
@@ -623,6 +932,181 @@ export async function runClickUpPriorityWorkflow(
       message: textReply(`I could not prioritize those tasks. ${reason}`),
     };
   }
+}
+
+/**
+ * Deterministic read path for task listing and counting.
+ *
+ * The model classifies the request (`action`, `status_filter`, `scope_hint`) and never decides
+ * whether traversal is complete: TypeScript walks teams → spaces → lists → tasks, filters by
+ * status, and renders the answer from the validated records. This removes the failure mode where
+ * a step-scoped executor stops after navigation and reports "no tasks".
+ */
+export async function runClickUpTaskQueryWorkflow(
+  intent: ClickUpIntent,
+): Promise<SessionResult> {
+  const action = intent.action === "count_tasks" ? "count_tasks" : "list_tasks";
+  const requestedStatus = intent.status_filter?.trim() || null;
+  const querySlug = slugGoal(intent.intent);
+
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-query-${querySlug}`)
+      : null;
+  const intentId = `intent-clickup-query-${querySlug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({
+        intentId,
+        description: intent.intent,
+      })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-query-${querySlug}`,
+        steps: [
+          {
+            stepId: "discover-clickup-scope",
+            description:
+              "Traverse the requested ClickUp scope with validated IDs.",
+            order: 0,
+            dependsOn: [],
+          },
+          {
+            stepId: "filter-tasks",
+            description: requestedStatus
+              ? `Keep tasks whose status is ${requestedStatus}.`
+              : "Keep every retrieved task.",
+            order: 1,
+            dependsOn: ["discover-clickup-scope"],
+          },
+          {
+            stepId: "format-task-list",
+            description:
+              action === "count_tasks"
+                ? "Render the validated task count."
+                : "Render the validated task list.",
+            order: 2,
+            dependsOn: ["filter-tasks"],
+          },
+        ],
+      })
+    : null;
+
+  let tasks: ClickUpTaskSummary[];
+  try {
+    await executable?.startStep?.("discover-clickup-scope");
+    tasks = await collectScopedTasksForRead(intent);
+    await executable?.completeStep?.("discover-clickup-scope");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original failure is more useful than a best-effort abort failure.
+    }
+    return { message: textReply(`I could not read those tasks. ${reason}`) };
+  }
+
+  await executable?.startStep?.("filter-tasks");
+  const matching = requestedStatus
+    ? tasks.filter(
+        (task) =>
+          normalizedStatus(task.status) === normalizedStatus(requestedStatus),
+      )
+    : tasks;
+  await executable?.completeStep?.("filter-tasks");
+
+  await executable?.startStep?.("format-task-list");
+  const message = renderTaskQueryAnswer(
+    action,
+    matching,
+    requestedStatus,
+    requestedStatus ? tasks : [],
+  );
+  await executable?.completeStep?.("format-task-list");
+  await executable?.finish?.();
+  return { message: textReply(message) };
+}
+
+/**
+ * Reuse the deterministic traversal that the priority path already trusts.
+ *
+ * `scope_hint` is a name, never an ID, so `one_best_match` semantics (Jev disambiguation over the
+ * retrieved candidates) apply whenever the user names an area.
+ */
+async function collectScopedTasksForRead(
+  intent: ClickUpIntent,
+): Promise<ClickUpTaskSummary[]> {
+  const scopeIntent: ClickUpPriorityIntent = {
+    kind: "prioritize",
+    intent: intent.intent,
+    scope: intent.scope_hint?.trim() ? "one_best_match" : "all_accessible",
+    scope_hint: intent.scope_hint ?? null,
+    status_filter: intent.status_filter ?? null,
+  };
+  return collectScopedTasks(scopeIntent, READ_TRAVERSAL);
+}
+
+function renderTaskQueryAnswer(
+  action: "list_tasks" | "count_tasks",
+  tasks: ClickUpTaskSummary[],
+  requestedStatus: string | null,
+  unfiltered: ClickUpTaskSummary[] = [],
+): string {
+  const filterLabel = requestedStatus
+    ? ` with status "${requestedStatus}"`
+    : "";
+  if (tasks.length === 0) {
+    if (requestedStatus && unfiltered.length > 0) {
+      // Ground the empty result in what the scope actually contains instead of a bare "none".
+      const statuses = [...new Set(unfiltered.map((t) => t.status))].sort();
+      return (
+        `No ClickUp tasks${filterLabel} were found in the requested scope. ` +
+        `The ${unfiltered.length} task(s) retrieved have these statuses: ${statuses.join(", ")}.`
+      );
+    }
+    return `No ClickUp tasks${filterLabel} were found in the requested scope.`;
+  }
+  if (action === "count_tasks") {
+    // A count request wants the number and the distribution, not 49 table rows.
+    const header = `${tasks.length} ClickUp task${tasks.length === 1 ? "" : "s"}${filterLabel}.`;
+    const byStatus = new Map<string, number>();
+    for (const task of tasks) {
+      byStatus.set(task.status, (byStatus.get(task.status) ?? 0) + 1);
+    }
+    const breakdown = [...byStatus.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([status, count]) => `- ${status}: ${count}`)
+      .join("\n");
+    return `${header}\n\n${breakdown}`;
+  }
+  const header = `${tasks.length} ClickUp task${tasks.length === 1 ? "" : "s"}${filterLabel}:`;
+  return `${header}\n\n${renderTaskTable(tasks)}`;
+}
+
+function renderTaskTable(tasks: ClickUpTaskSummary[]): string {
+  const header = "| Task | Status | Priority | Assignees | Due | ID |";
+  const divider = "| --- | --- | --- | --- | --- | --- |";
+  const rows = tasks.map((task) => {
+    const name = task.url
+      ? `[${escapeTableCell(task.name)}](${task.url})`
+      : escapeTableCell(task.name);
+    const assignees =
+      Array.isArray(task.assignees) && task.assignees.length > 0
+        ? task.assignees.map(escapeTableCell).join(", ")
+        : "—";
+    return `| ${name} | ${escapeTableCell(task.status)} | ${escapeTableCell(
+      task.priority ?? "—",
+    )} | ${assignees} | ${escapeTableCell(
+      task.due_date ?? "—",
+    )} | ${escapeTableCell(task.id)} |`;
+  });
+  return [header, divider, ...rows].join("\n");
+}
+
+function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
 }
 
 /**
@@ -667,6 +1151,8 @@ export async function runClickUpStructuredPlan(
 
   const allStepOutputsNested: unknown[][] = [];
   let priorResultsText: string | null = null;
+  // Evidence the whole plan must produce before a terminal answer is accepted.
+  const requiredEvidence: ExpectedEvidence[] = [];
 
   try {
     for (let i = 0; i < steps.length; i++) {
@@ -693,14 +1179,38 @@ export async function runClickUpStructuredPlan(
           }
           throw new Error(run.message);
         }
+
+        // `completed` only means the loop terminated. Check the step produced the evidence its
+        // plan row declared before recording progress or letting the answer stand.
+        const evidence = collectStepEvidence(run.steps);
+        if (!evidenceSatisfies(step.expects, evidence)) {
+          throw new Error(
+            `incomplete-execution: step "${step.sub_message}" required ` +
+              `${describeEvidence(step.expects)} but produced ` +
+              `${describeObserved(evidence)}`,
+          );
+        }
+
         allStepOutputsNested.push(run.steps);
-        priorResultsText = collectStepResultsForPriorContext(run.steps);
+        // Accumulate instead of replacing: a later step must still see what earlier steps retrieved.
+        priorResultsText = appendPriorResults(
+          priorResultsText,
+          collectStepResultsForPriorContext(run.steps),
+        );
+        if (step.expects !== "none") requiredEvidence.push(step.expects);
         if (executable) await executable.completeStep?.(stepId);
       } else if (pkg === PKG_CLICKUP_FORMAT) {
-        const finalMessage = extractFinalMessage(allStepOutputsNested.flat());
+        const required = strongestEvidence(requiredEvidence);
+        const outcome = extractFinalMessage(
+          allStepOutputsNested.flat(),
+          required,
+        );
+        if (outcome.kind === "incomplete") {
+          throw new Error(`incomplete-execution: ${outcome.reason}`);
+        }
         if (executable) await executable.completeStep?.(stepId);
         if (executable) await executable.finish?.();
-        return { message: finalMessage };
+        return { message: outcome.reply };
       } else {
         if (executable) await executable.completeStep?.(stepId);
       }
@@ -717,6 +1227,33 @@ export async function runClickUpStructuredPlan(
     } catch {
       /* best-effort */
     }
+    if (errMsg.startsWith("incomplete-execution:")) {
+      return {
+        error:
+          `ClickUp agent error: ${errMsg}. The request was not completed; no partial answer was returned.`,
+      };
+    }
     return { error: `ClickUp agent error: ${errMsg}` };
   }
+}
+
+/** Keep a bounded, append-only prior-results buffer across executor loops. */
+function appendPriorResults(previous: string | null, next: string): string {
+  const combined = previous?.trim()
+    ? `${previous}\n\n---\n\n${next}`
+    : next;
+  if (combined.length <= PRIOR_RESULTS_MAX_CHARS) return combined;
+  // Drop from the front so the newest evidence survives the cap.
+  return `${combined.slice(combined.length - PRIOR_RESULTS_MAX_CHARS)}`;
+}
+
+/** Strongest evidence requirement across a plan's execute steps. */
+function strongestEvidence(
+  required: ExpectedEvidence[],
+): ExpectedEvidence {
+  if (required.includes("task_list")) return "task_list";
+  if (required.includes("write_confirmation")) return "write_confirmation";
+  if (required.includes("task_detail")) return "task_detail";
+  if (required.includes("navigation")) return "navigation";
+  return "none";
 }
