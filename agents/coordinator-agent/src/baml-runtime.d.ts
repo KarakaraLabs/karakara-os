@@ -80,6 +80,26 @@ question: string;
 
 export interface CoordinatorReadyIntent { kind: "ready";
 inferred_intent: string;
+route: CoordinatorRoute | null;
+ }
+
+export interface CoordinatorRoute { shape: "single" | "sequence" | "foreach" | "aggregate";
+targets: CoordinatorRouteTarget[];
+goal: string;
+filters: CoordinatorRouteFilters | null;
+expected_output: string | null;
+unsupported: string[] | null;
+ }
+
+export interface CoordinatorRouteFilters { status: string | null;
+assignee: string | null;
+priority: "urgent" | "high" | "normal" | "low" | null;
+due: "overdue" | "today" | "this_week" | "next_week" | null;
+text: string | null;
+ }
+
+export interface CoordinatorRouteTarget { agent_package: string;
+capability: string;
  }
 
 export interface DiscoverAgentsNextOutput {
@@ -216,7 +236,7 @@ export interface ToolDiscoveryRecordDto {
 
 declare global {
 
-declare function ClassifyCoordinatorTurn(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<CoordinatorReadyIntent | CoordinatorNeedTaskClarification | CoordinatorMetaOnly>;
+declare function ClassifyCoordinatorTurn(args: { user_message: string; available_agents: CoordinatorAgentCandidate[] } & { __baml_invocation_token?: string }): Promise<CoordinatorReadyIntent | CoordinatorNeedTaskClarification | CoordinatorMetaOnly>;
 
 declare function CoordinatorSynthesizeReply(args: { user_message: string; plan_objective: string } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
 
