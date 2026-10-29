@@ -567,6 +567,17 @@ function normalizedStatus(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 }
 
+/**
+ * Status comparison key: case, spaces, and punctuation are insignificant.
+ *
+ * ClickUp statuses are workspace-defined and written freely: the same status appears as
+ * `to do`, `To Do`, `todo`, `in progress`, `In-Progress`, `Blocked / External`. Comparing
+ * normalized prose alone makes `todo` miss `to do`, which is a wrong answer, not a slow one.
+ */
+function statusKey(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 async function callClickUp(input: ClickUpInput): Promise<ClickUpOutput> {
   const session = await openToolSession("support/clickup");
   try {
@@ -783,11 +794,13 @@ async function prioritizeTasks(
   scopeNote: string | null = null,
 ): Promise<PriorityDecision> {
   const requestedStatuses = intentStatuses(intent);
-  const wanted = requestedStatuses.map(normalizedStatus);
+  const wanted = requestedStatuses
+    .map(statusKey)
+    .filter((key) => key.length > 0);
   const candidates =
     wanted.length > 0
       ? tasks.filter((task) => {
-          const status = normalizedStatus(task.status);
+          const status = statusKey(task.status);
           return wanted.some(
             (value) => status === value || status.includes(value) || value.includes(status),
           );
@@ -1202,6 +1215,7 @@ export interface DeclaredRoute {
 /** Capabilities this agent advertises in its manifest, mapped to the typed read action. */
 const CAPABILITY_READ_ACTIONS: Record<string, ClickUpIntent["action"]> = {
   "clickup:list-tasks": "list_tasks",
+  "clickup:count-tasks": "count_tasks",
   "clickup:get-task": "get_task",
   "clickup:list-spaces": "navigate",
 };
@@ -1453,16 +1467,16 @@ export function applyTaskFilters(
   let matching = tasks;
 
   if (filters.statuses.length > 0) {
-    const wanted = filters.statuses.map(normalizedStatus);
+    const wanted = filters.statuses.map(statusKey).filter((key) => key.length > 0);
     const exact = tasks.filter((task) =>
-      wanted.includes(normalizedStatus(task.status)),
+      wanted.includes(statusKey(task.status)),
     );
     if (exact.length > 0) {
       matching = exact;
     } else {
       // Workspace-defined statuses: fall back to containment before reporting a miss.
       const observed = tasks.filter((task) => {
-        const status = normalizedStatus(task.status);
+        const status = statusKey(task.status);
         return wanted.some(
           (value) => status.includes(value) || value.includes(status),
         );
