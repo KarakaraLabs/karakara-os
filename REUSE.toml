@@ -36,6 +36,7 @@ path = [
   "**/.prettierrc",
   "**/*.template",
   "**/Dockerfile",
+  "**/*.Dockerfile",
   "justfile",
   "LICENSE",
   "NOTICE",

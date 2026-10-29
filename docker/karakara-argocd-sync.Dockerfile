@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Semiotic AI, Inc.
+# SPDX-FileCopyrightText: 2026 Karakara Labs
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Ephemeral image: workspace copy of deploy/helm + deploy/values for `argocd app sync --local` inside a Job.
 ARG ARGOCD_BASE=quay.io/argoproj/argocd
 ARG ARGOCD_TAG=v2.13.3
