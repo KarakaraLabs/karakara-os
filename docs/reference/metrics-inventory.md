@@ -42,7 +42,15 @@ Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, 
 | `baml_rt.a2a.live_stream.phase_duration_ms` | Histogram | Time between phases on live stream (`phase`). |
 | `baml_rt.a2a.sse.first_data_from_stream_ms` | Histogram | Stream open → first bus chunk mapped to SSE `data:`. |
 | `baml_rt.a2a.sse.ttfb_from_handler_entry_ms` | Histogram | HTTP handler entry → first SSE data (full TTFB). |
-| `baml_rt.llm.call_total` | Counter | LLM calls by `function`, `client`, `model`, `result`. |
+| `baml_rt.a2a.live_stream.turn_duration_ms` | Histogram | Wall-clock duration of one complete live-stream turn by `agent_package` and `turn` (turn dequeued → terminal chunk forwarded). |
+| `baml_rt.a2a.live_stream.terminal_forward_duration_ms` | Histogram | Time from receiving a terminal collector chunk until it is forwarded to the client by `agent_package` and `turn` (includes `store_result`). |
+| `baml_rt.a2a.live_stream.store_result_duration_ms` | Histogram | Time to persist one live-stream chunk via `store_result` by `agent_package` and `turn`. |
+| `baml_rt.quickjs.context_projection.duration_ms` | Histogram | Conversation-history projection latency by `agent_package`, `turn`, and `phase` (`planning_context` for execution-session transitions, `history` for per-LLM prompt projection). |
+| `baml_rt.quickjs.execution_session.operation_duration_ms` | Histogram | Host `__execution_session_invoke` action latency by `agent_package`, `turn`, `operation` (`open`, `submit_intent`, `submit_plan`, `start_step`, `complete_step`, `finish`, `abort`, `submit_grounding`), and `result`. |
+| `baml_rt.quickjs.step_executor.hop_duration_ms` | Histogram | One step-executor hop by `agent_package`, `turn`, `phase` (`entry`, `active`, `consume`), and `result`. |
+| `baml_rt.quickjs.step_executor.stage_duration_ms` | Histogram | Stage inside a hop by `agent_package`, `turn`, `phase`, and `stage` (`history_before`, `invoke`, `history_after`, `transition`). |
+| `baml_rt.quickjs.stream_finalize.duration_ms` | Histogram | QuickJS stream-invocation teardown by `agent_package`, `turn`, and `phase` (`resolve_scope`, `drain_pending_jobs`, `close_cancel_session`, `close_tool_sessions`, `exit_context`, `remove_session`, `total`). |
+| `baml_rt.llm.call_total` | Counter | LLM calls by `function`, `client`, `model`, `result`, and `turn`. |
 | `baml_rt.llm.call_duration_ms` | Histogram | LLM round-trip latency. |
 | `baml_rt.llm.prompt_bytes` | Histogram | Serialized prompt size (provenance subscriber path). |
 | `baml_rt.llm.tokens_in_total` | Counter | Input tokens (when usage available). |
@@ -57,6 +65,13 @@ Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, 
 | `baml_rt.context_compaction.bytes_before` | Histogram | Pre-compaction prompt bytes (success only). |
 | `baml_rt.context_compaction.bytes_after` | Histogram | Post-compaction summary bytes (success only). |
 | `baml_rt.context_compaction.covered_rows` | Histogram | Prefix rows compacted (success only). |
+
+### Turn ordinals
+
+Metrics on the agent execution path carry a `turn` label: a per-`context_id` 1-based counter of
+user-originated requests. Internal agent-to-agent delegations (`metadata.kind = "agent-to-agent"`)
+reuse the initiating turn, so coordinator and child series share the same `turn` while remaining
+separable by `agent_package`. `turn=0` means no user turn has been recorded for the context yet.
 
 ---
 
@@ -139,7 +154,7 @@ Registry lifecycle and session FSM timings. **Tool run completion** totals use `
 |-------------|------|---------|
 | `baml_rt_tools.tool.registration.total` | Counter | Tool registered into registry (`tool`). |
 | `baml_rt_tools.tool.session.open.total` | Counter | Session opens (`tool`). |
-| `baml_rt_tools.tool.session.operation.duration_ms` | Histogram | FSM ops: `open`, `send`, `read`, `finish`, `abort` (`operation`). |
+| `baml_rt_tools.tool.session.operation.duration_ms` | Histogram | FSM ops by `operation` (`open`, `send`, `read`, `finish`, `abort`), owning `tool`, and `result`. |
 
 ---
 
