@@ -11,7 +11,7 @@ name = "karak"
 path = "src/main.rs"
 
 [dependencies]
-baml-agent-runner = { path = "../baml-agent-runner", features = ["http-tools", "memory", "sandbox-provider", "dev-tools"] }
+baml-agent-runner = { path = "../baml-agent-runner", default-features = false }
 baml-rt-core = { path = "../baml-rt-core" }
 baml-sandbox-protocol = { path = "../baml-sandbox-protocol" }
 baml-rt-tools = { path = "../baml-rt-tools", default-features = false }
@@ -47,8 +47,16 @@ dirs = "6"
 
 [features]
 default = ["http-tools", "memory", "sandbox-provider", "dev-tools"]
-http-tools = ["baml-agent-runner/http-tools"]
+clickup = ["baml-agent-runner/clickup"]
+github = ["baml-agent-runner/github"]
 memory = ["baml-agent-runner/memory"]
+notion = ["baml-agent-runner/notion"]
+slack = ["baml-agent-runner/slack"]
+slack-notify = ["baml-agent-runner/slack-notify"]
+typesafe = ["baml-agent-runner/typesafe"]
+grafana-alerts = ["baml-agent-runner/grafana-alerts"]
+security-eval = ["baml-agent-runner/security-eval"]
+http-tools = ["baml-agent-runner/http-tools"]
 sandbox-provider = ["baml-agent-runner/sandbox-provider"]
 dev-tools = ["baml-agent-runner/dev-tools"]
 
