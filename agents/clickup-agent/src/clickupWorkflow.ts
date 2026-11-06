@@ -1128,6 +1128,224 @@ export async function runClickUpTaskQueryWorkflow(
 }
 
 /**
+ * Largest bulk update applied without an explicit id before the host refuses and asks to narrow.
+ *
+ * A filter-selected update is powerful: "move the in-progress tasks to to do" could rewrite dozens
+ * of tasks. A known id is exact and bypasses the cap; a filter match beyond this is treated as too
+ * broad to apply blindly, so the host asks for a narrower scope instead of mass-mutating.
+ */
+const MAX_BULK_UPDATE = 10;
+
+/** One task's outcome in a deterministic update pass. */
+type UpdateOutcome =
+  | { kind: "updated"; task: ClickUpTaskSummary }
+  | { kind: "unchanged"; task: ClickUpTaskSummary };
+
+/**
+ * Deterministic status/priority update path.
+ *
+ * TypeScript owns resolution and execution: a known id goes straight to `update_task`; otherwise the
+ * trusted traversal retrieves the scope, typed filters select the tasks (exact status first), and
+ * every match is updated. No intent classification, no `PlanClickUpWork`, and no `ChooseClickUpAction`
+ * ReAct loop — the model is not on this path at all.
+ */
+export async function runClickUpWriteWorkflow(
+  spec: ClickUpUpdateSpec,
+): Promise<SessionResult> {
+  const slug = slugGoal(spec.intent);
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-update-${slug}`)
+      : null;
+  const intentId = `intent-clickup-update-${slug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({ intentId, description: spec.intent })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-update-${slug}`,
+        steps: [
+          {
+            stepId: "resolve-update-targets",
+            description: spec.task_id
+              ? "Validate the named task id."
+              : "Traverse the requested ClickUp scope and select the tasks to update.",
+            order: 0,
+            dependsOn: [],
+          },
+          {
+            stepId: "apply-updates",
+            description: "Apply the status/priority change to each selected task.",
+            order: 1,
+            dependsOn: ["resolve-update-targets"],
+          },
+          {
+            stepId: "format-update-result",
+            description: "Confirm the applied changes.",
+            order: 2,
+            dependsOn: ["apply-updates"],
+          },
+        ],
+      })
+    : null;
+
+  try {
+    await executable?.startStep?.("resolve-update-targets");
+    const resolution = await resolveUpdateTargets(spec);
+    await executable?.completeStep?.("resolve-update-targets");
+
+    // Nothing matched, or the filter was too broad to apply without an id: answer deterministically
+    // without touching ClickUp. These still cycle the remaining steps through the FSM (no model call).
+    if (resolution.kind !== "targets") {
+      await executable?.startStep?.("apply-updates");
+      await executable?.completeStep?.("apply-updates");
+      await executable?.startStep?.("format-update-result");
+      await executable?.completeStep?.("format-update-result");
+      await executable?.finish?.();
+      return { message: textReply(resolution.message) };
+    }
+
+    await executable?.startStep?.("apply-updates");
+    const outcomes: UpdateOutcome[] = [];
+    for (const task of resolution.targets) {
+      outcomes.push(await applyTaskUpdate(task, spec));
+    }
+    await executable?.completeStep?.("apply-updates");
+
+    await executable?.startStep?.("format-update-result");
+    const message = renderUpdateConfirmation(outcomes, spec);
+    await executable?.completeStep?.("format-update-result");
+    await executable?.finish?.();
+    return { message: textReply(message) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original workflow error is more useful than a best-effort abort failure.
+    }
+    return { error: `ClickUp agent error: ${reason}` };
+  }
+}
+
+type UpdateResolution =
+  | { kind: "targets"; targets: ClickUpTaskSummary[] }
+  | { kind: "message"; message: string };
+
+/** Resolve the tasks an update applies to: exact id, or typed-filter selection over the scope. */
+async function resolveUpdateTargets(
+  spec: ClickUpUpdateSpec,
+): Promise<UpdateResolution> {
+  if (spec.task_id) {
+    const out = await callClickUp({ task_id: spec.task_id });
+    const task = (out.tasks ?? [])[0];
+    if (!task) {
+      return {
+        kind: "message",
+        message: `No ClickUp task was found with id ${spec.task_id}.`,
+      };
+    }
+    return { kind: "targets", targets: [task] };
+  }
+
+  const scopeIntent: ClickUpPriorityIntent = {
+    kind: "prioritize",
+    intent: spec.intent,
+    scope: spec.scope_hint?.trim() ? "one_best_match" : "all_accessible",
+    scope_hint: spec.scope_hint ?? null,
+    status_filter: null,
+    statuses: null,
+  };
+  const scopeTasks = await collectScopedTasks(scopeIntent, READ_TRAVERSAL);
+  const { matching, statusMiss } = applyTaskFilters(scopeTasks, spec.filters);
+
+  if (matching.length === 0) {
+    const label = describeTaskFilters(spec.filters);
+    if (spec.filters.statuses.length > 0 && statusMiss && scopeTasks.length > 0) {
+      const statuses = [...new Set(scopeTasks.map((t) => t.status))].sort();
+      return {
+        kind: "message",
+        message:
+          `No ClickUp tasks${label} were found to update. ` +
+          `The ${scopeTasks.length} task(s) retrieved have these statuses: ${statuses.join(", ")}.`,
+      };
+    }
+    return {
+      kind: "message",
+      message: `No ClickUp tasks${label} were found to update.`,
+    };
+  }
+
+  if (matching.length > MAX_BULK_UPDATE) {
+    const label = describeTaskFilters(spec.filters);
+    return {
+      kind: "message",
+      message:
+        `${matching.length} ClickUp tasks${label} match — too many to update at once without naming them. ` +
+        `Narrow the request (a specific task, name, or tighter filter) and I'll apply the change.`,
+    };
+  }
+
+  return { kind: "targets", targets: matching };
+}
+
+/** Apply the spec's change to one task, skipping a status write that is already satisfied. */
+async function applyTaskUpdate(
+  task: ClickUpTaskSummary,
+  spec: ClickUpUpdateSpec,
+): Promise<UpdateOutcome> {
+  const needsStatus =
+    spec.target_status !== null &&
+    statusKey(task.status) !== statusKey(spec.target_status);
+  const needsPriority =
+    spec.target_priority !== null &&
+    (typeof task.priority !== "string" ||
+      task.priority.trim().toLocaleLowerCase() !== spec.target_priority);
+
+  if (!needsStatus && !needsPriority) {
+    return { kind: "unchanged", task };
+  }
+
+  const input: { task_id: string; status?: string; priority?: number } = {
+    task_id: task.id,
+  };
+  if (needsStatus && spec.target_status !== null) input.status = spec.target_status;
+  if (needsPriority && spec.target_priority !== null) {
+    input.priority = PRIORITY_TO_NUMBER[spec.target_priority];
+  }
+
+  const out = await callClickUp(input);
+  const updated = (out.tasks ?? [])[0] ?? task;
+  return { kind: "updated", task: updated };
+}
+
+/** Deterministic confirmation for an update pass — no model call. */
+function renderUpdateConfirmation(
+  outcomes: UpdateOutcome[],
+  spec: ClickUpUpdateSpec,
+): string {
+  const changes: string[] = [];
+  if (spec.target_status !== null) changes.push(`status to '${spec.target_status}'`);
+  if (spec.target_priority !== null) changes.push(`priority to '${spec.target_priority}'`);
+  const changeLabel = changes.join(" and ") || "the requested fields";
+
+  const line = (o: UpdateOutcome): string =>
+    o.kind === "updated"
+      ? `Updated task ${o.task.id} (${o.task.name}) — set ${changeLabel}.`
+      : `Task ${o.task.id} (${o.task.name}) already matched ${changeLabel}; no change needed.`;
+
+  if (outcomes.length === 1) return line(outcomes[0]!);
+
+  const updatedCount = outcomes.filter((o) => o.kind === "updated").length;
+  const header =
+    updatedCount === outcomes.length
+      ? `Updated ${outcomes.length} ClickUp task(s) — set ${changeLabel}:`
+      : `Processed ${outcomes.length} ClickUp task(s) (${updatedCount} changed):`;
+  return [header, "", ...outcomes.map((o) => `- ${line(o)}`)].join("\n");
+}
+
+/**
  * Reuse the deterministic traversal that the priority path already trusts.
  *
  * `scope_hint` is a name, never an ID, so `one_best_match` semantics (Jev disambiguation over the
@@ -1230,6 +1448,14 @@ export function taskFiltersFromIntent(
  */
 export const DECLARED_ROUTE_SCHEMA = "agent-route/v1";
 
+/** A typed write declared by the caller, executed deterministically with no re-classification. */
+export interface DeclaredRouteOperation {
+  name: "update_task";
+  task_id: string | null;
+  target_status: string | null;
+  target_priority: "urgent" | "high" | "normal" | "low" | null;
+}
+
 export interface DeclaredRoute {
   schema: string;
   goal: string;
@@ -1239,6 +1465,7 @@ export interface DeclaredRoute {
   filters: ClickUpTaskFilters;
   /** Which task set the caller says the user means, in their terms. */
   scope_note: string | null;
+  operation: DeclaredRouteOperation | null;
   unsupported: string[];
 }
 
@@ -1256,6 +1483,63 @@ const CAPABILITY_WRITE_ACTIONS: Record<string, ClickUpIntent["action"]> = {
 };
 
 const CAPABILITY_PRIORITIZE = "clickup:prioritize";
+const CAPABILITY_UPDATE_TASK = "clickup:update-task";
+
+/** ClickUp numeric priority codes. */
+const PRIORITY_TO_NUMBER: Record<"urgent" | "high" | "normal" | "low", number> = {
+  urgent: 1,
+  high: 2,
+  normal: 3,
+  low: 4,
+};
+
+/**
+ * A validated status/priority update the host can execute without a plan or a ReAct loop.
+ *
+ * Either `task_id` names the exact task, or `filters` select the tasks by their current status and
+ * name words. The destination value lives in `target_status` / `target_priority`, never in `filters`.
+ */
+export interface ClickUpUpdateSpec {
+  intent: string;
+  task_id: string | null;
+  target_status: string | null;
+  target_priority: "urgent" | "high" | "normal" | "low" | null;
+  filters: ClickUpTaskFilters;
+  scope_hint: string | null;
+}
+
+/**
+ * Build a deterministic update spec from a declared `clickup:update-task` route.
+ *
+ * Returns null when the capability is not an update, the caller reported an inexpressible
+ * constraint, or the operation carries no destination value — the caller then classifies, which is
+ * the slow but correct path.
+ */
+export function clickUpUpdateSpecFromDeclaredRoute(
+  route: DeclaredRoute,
+): ClickUpUpdateSpec | null {
+  if (route.capability !== CAPABILITY_UPDATE_TASK) return null;
+  if (route.unsupported.length > 0) return null;
+  const op = route.operation;
+  if (!op || op.name !== "update_task") return null;
+  if (!op.target_status && !op.target_priority) return null;
+
+  // The destination status must not also act as a selection filter: the classifier is told to keep
+  // them apart, but strip it defensively so "move from in progress to to do" never matches on "to do".
+  const targetKey = op.target_status ? statusKey(op.target_status) : null;
+  const selectionStatuses = targetKey
+    ? route.filters.statuses.filter((status) => statusKey(status) !== targetKey)
+    : route.filters.statuses;
+
+  return {
+    intent: route.goal,
+    task_id: op.task_id,
+    target_status: op.target_status,
+    target_priority: op.target_priority,
+    filters: { ...route.filters, statuses: selectionStatuses },
+    scope_hint: null,
+  };
+}
 
 /** Statuses declared by a caller, accepting `statuses[]` or the legacy `status`. */
 function declaredStatuses(filters: Record<string, unknown>): string[] {
@@ -1315,7 +1599,24 @@ function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
       text: optionalText(filters.text),
     },
     scope_note: optionalText(candidate.scope_note),
+    operation: declaredRouteOperation(candidate.operation),
     unsupported,
+  };
+}
+
+/** Parse a typed write operation from the declared route; anything unactionable becomes `null`. */
+function declaredRouteOperation(value: unknown): DeclaredRouteOperation | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.name !== "update_task") return null;
+  const target_status = optionalText(record.target_status);
+  const target_priority = normalizedChoice(record.target_priority, PRIORITY_FILTERS);
+  if (!target_status && !target_priority) return null;
+  return {
+    name: "update_task",
+    task_id: optionalText(record.task_id),
+    target_status,
+    target_priority,
   };
 }
 

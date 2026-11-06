@@ -19,11 +19,13 @@ import {
   hasTaskFilters,
   clickUpIntentFromDeclaredRoute,
   clickUpPriorityIntentFromDeclaredRoute,
+  clickUpUpdateSpecFromDeclaredRoute,
   declaredRouteFromMessage,
   describePriorityAbstain,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
+  runClickUpWriteWorkflow,
   taskFiltersFromIntent,
 } from "./clickupWorkflow";
 
@@ -35,16 +37,20 @@ export {
   hasTaskFilters,
   clickUpIntentFromDeclaredRoute,
   clickUpPriorityIntentFromDeclaredRoute,
+  clickUpUpdateSpecFromDeclaredRoute,
   declaredRouteFromMessage,
   describePriorityAbstain,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
+  runClickUpWriteWorkflow,
   taskFiltersFromIntent,
 };
 export type {
   ClickUpTaskFilters,
+  ClickUpUpdateSpec,
   DeclaredRoute,
+  DeclaredRouteOperation,
 } from "./clickupWorkflow";
 
 export function isJsonObject(v: unknown): v is JsonObject {

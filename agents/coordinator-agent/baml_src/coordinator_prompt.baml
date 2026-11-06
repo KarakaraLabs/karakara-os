@@ -20,11 +20,19 @@ class CoordinatorRouteFilters {
   text string? @description("Words the task name or description must contain, copied verbatim. Omit otherwise.")
 }
 
+class CoordinatorRouteOperation {
+  name "update_task" @description("Typed write the target capability can execute deterministically. Only 'update_task' is supported: a status and/or priority change on existing tasks. Omit the whole operation for reads, creates, and deletes.")
+  task_id string? @description("Exact task id when the user named one, or it appears verbatim in the transcript (for example a task just listed). Never invent, guess, or reformat an id. Omit when the user described the tasks by name/status instead of id.")
+  target_status string? @description("The NEW status to set, copied verbatim from the user (for example 'to do', 'in progress'). Never translate or correct the wording. This is the destination status, not the status used to select which tasks to change — that goes in filters.statuses.")
+  target_priority ("urgent" | "high" | "normal" | "low")? @description("The NEW priority to set, only when the user asked to change priority.")
+}
+
 class CoordinatorRoute {
   shape "single" | "sequence" | "foreach" | "aggregate" @description("single: one target capability answers the whole request. sequence: ordered independent calls. foreach: apply an action to each item from an upstream result. aggregate: combine several results into one answer.")
   targets CoordinatorRouteTarget[] @description("The specialists this request needs. Exactly one for shape single.")
   goal string @description("Goal-level instruction for the target agent. Keep the user's own terms; never add constraints they did not state.")
-  filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. Omit when the request is not a task filter and when the user only wants those fields displayed.")
+  filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. For an update_task operation, filters select WHICH existing tasks to change (their current status in filters.statuses, name words in filters.text). Omit when the request is not a task filter and when the user only wants those fields displayed.")
+  operation CoordinatorRouteOperation? @description("Typed write to execute directly. Set this ONLY for a status/priority change on existing tasks, and ONLY when the target capability is 'clickup:update-task'. Leave unset for reads and for anything that is not an update.")
   expected_output string? @description("What the answer must contain, in one short clause.")
   unsupported string[]? @description("Constraints no target capability can express. A non-empty value sends the request to the slower planning path, so keep it empty unless genuinely needed.")
 }
@@ -100,6 +108,18 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
       identity, ordering by an unlisted property). Keep it empty or omitted otherwise: a non-empty value sends
       the request to the slower planner.
     - When no capability fits, omit `route` entirely. The host will then plan from the goal.
+
+    Typed writes (status / priority changes on EXISTING tasks):
+    - When the user asks to change the status or priority of one or more existing tasks, and the target
+      advertises the `clickup:update-task` capability, route shape "single" to that capability and fill `operation`.
+      Copy that capability string verbatim; do not use a generic tracking capability for an update.
+    - Set `operation.target_status` to the NEW status the user wants, verbatim. Set `operation.target_priority`
+      only when they change priority. Put the destination value in `operation`, never in `filters`.
+    - Use `filters` to say WHICH tasks change: `filters.statuses` = their CURRENT status(es), `filters.text` =
+      name words the tasks must contain. Do not put the destination status in `filters.statuses`.
+    - Set `operation.task_id` only when the user named an exact id or one is visible verbatim in the transcript
+      (e.g. a task just listed). Otherwise omit it and let `filters` select the tasks.
+    - Creates and deletes are NOT update_task: omit `operation` and let the host plan them.
 
     Conversation continuity (infer the scope, do not copy it mechanically):
     - Infer which task set the user is talking about from the conversation: the statuses of tasks a

@@ -3,6 +3,7 @@ import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
   clickUpIntentFromDeclaredRoute,
   clickUpPriorityIntentFromDeclaredRoute,
+  clickUpUpdateSpecFromDeclaredRoute,
   declaredRouteFromMessage,
   isClickUpIntent,
   isClickUpPriorityIntent,
@@ -14,6 +15,7 @@ import {
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
+  runClickUpWriteWorkflow,
   textReply,
   validateClickUpPlanForExecution,
 } from "./clickupExecution";
@@ -69,6 +71,11 @@ __chat_register({
     // human messages, and older callers send text only and keep the classify path below.
     const declaredRoute = declaredRouteFromMessage(ctx.message);
     if (declaredRoute) {
+      // A typed update runs deterministically: no classify, no plan, no ReAct action-selection loop.
+      const declaredUpdate = clickUpUpdateSpecFromDeclaredRoute(declaredRoute);
+      if (declaredUpdate) {
+        return runClickUpWriteWorkflow(declaredUpdate);
+      }
       const declaredPriority = clickUpPriorityIntentFromDeclaredRoute(declaredRoute);
       if (declaredPriority) {
         return runClickUpPriorityWorkflow(declaredPriority, declaredRoute.scope_note);
