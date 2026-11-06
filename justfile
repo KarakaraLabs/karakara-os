@@ -23,18 +23,9 @@ slack_channel := "karakara-eng"
 # Safe defaults in code: if these are unset, OTLP export stays disabled.
 otel_endpoint := "http://localhost:4317"
 otel_protocol := "grpc"
-# Console (`fmt`) filter for the coordinator stacks. The provenance projection stage timings
-# (`storage_head`, `storage_window`, `storage_delegations`, `storage_hydrate`) log at DEBUG from
-# `baml_rt_a2a`, but the built-in defaults in `baml-rt-observability` pin every `baml_rt*` crate at
-# INFO and only raise `baml_rt_quickjs`. Setting `RUST_LOG_FMT` replaces those defaults wholesale,
-# so the QuickJS noise suppression is repeated here. Override it from the shell or `.env` to widen
-# or narrow this.
-console_log_filter := "baml_rt=info,baml_rt_a2a=debug,baml_rt_provenance=debug,baml_rt_quickjs=debug,baml_rt_interceptor=debug,baml_agent_runner=info,quickjs_runtime::quickjsrealmadapter=warn,quickjs_runtime::typescript=warn"
-
 # Binaries (build with `just build` / `just build-release`; paths default to release).
 # Respect CARGO_TARGET_DIR when present (.env sets it in some dev setups).
 karak_bin := "${CARGO_TARGET_DIR:-target}/release/karak"
-karak_debug_bin := "${CARGO_TARGET_DIR:-target}/debug/karak"
 
 # Regenerate `_baml_runtime.baml` + `src/baml-runtime.d.ts` for every fixture under `tests/fixtures/agents/` and agent under `agents/`. Requires all tool crates (same as build-release).
 regen-fixtures:
@@ -418,52 +409,13 @@ slack-agent-provenance: build-release
     ) &
     exec {{karak_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --provenance-db {{provenance_db}} --a2a-stdio
 
-# Rebuilds coordinator + notion + clickup and runs coordinator stack via a2a stdio.
-coordinator-agent: build-release
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "$(git rev-parse --show-toplevel)"
-    set -a
-    [ -f .env ] && . ./.env
-    set +a
-    export RUST_LOG_FMT="${RUST_LOG_FMT:-{{console_log_filter}}}"
-    (
-      ./scripts/wait-runner-http.sh "{{runner_base_url}}" {{runner_http_ready_secs}}
-      {{karak_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      {{karak_bin}} install agent --path agents/notion-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      {{karak_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      # Do not change the stored policy without a credential. With one, persist
-      # the local runner policy so priority requests can invoke Jev.
-      if [[ -n "${TYPESAFE_API_KEY:-}" ]]; then
-        curl --fail --silent --show-error -X PUT "{{runner_base_url}}/config/typesafe" \
-          -H 'Content-Type: application/json' \
-          --data '{"enabled":true}' >/dev/null
-      fi
-    ) &
-    exec {{karak_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
+# Builds the release coordinator stack with provenance and OTEL export, then opens chat.
+coordinator-agent:
+    ./scripts/run-coordinator-agent.sh
 
-coordinator-agent-debug: build-debug
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "$(git rev-parse --show-toplevel)"
-    set -a
-    [ -f .env ] && . ./.env
-    set +a
-    export RUST_LOG_FMT="${RUST_LOG_FMT:-{{console_log_filter}}}"
-    (
-      ./scripts/wait-runner-http.sh "{{runner_base_url}}" {{runner_http_ready_secs}}
-      {{karak_debug_bin}} install agent --path agents/coordinator-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      {{karak_debug_bin}} install agent --path agents/notion-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      {{karak_debug_bin}} install agent --path agents/clickup-agent --repository-url {{repository_url}} --url {{runner_base_url}}
-      # Match the release stack: change the stored Jev policy only with a credential.
-      if [[ -n "${TYPESAFE_API_KEY:-}" ]]; then
-        curl --fail --silent --show-error -X PUT "{{runner_base_url}}/config/typesafe" \
-          -H 'Content-Type: application/json' \
-          --data '{"enabled":true}' >/dev/null
-      fi
-    ) &
-    exec {{karak_debug_bin}} serve --serve-http {{runner_http_bind}} --repository-url {{repository_url}} --state-dir {{runner_state_dir}} --repository-dir {{runner_repository_dir}} --a2a-stdio
-
+# Runs the same coordinator stack with a debug build.
+coordinator-agent-debug:
+    ./scripts/run-coordinator-agent.sh debug
 
 # Same as coordinator-agent, but persists provenance to provenance.db.
 coordinator-agent-provenance: build-release
