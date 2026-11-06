@@ -201,6 +201,11 @@ impl TaskUpdateSession {
                         return Ok(Some(frame));
                     }
                     Err(broadcast::error::RecvError::Closed) => {
+                        tracing::debug!(
+                            scoped = ?self.scoped,
+                            last_cursor = ?self.last_cursor,
+                            "task update session live receiver closed"
+                        );
                         self.state = SessionState::Closed;
                         return Ok(None);
                     }

@@ -138,7 +138,15 @@ impl Inner {
         // `remove` drops the held `Sender`; outstanding receivers see
         // `RecvError::Closed` on their next `recv()`. Idempotent: a
         // second retire on the same key is a no-op.
-        let _ = self.shard_for(key).remove(key);
+        let removed = self.shard_for(key).remove(key);
+        match removed {
+            Some((_, sender)) => tracing::debug!(
+                key = ?key,
+                receiver_count = sender.receiver_count(),
+                "task update broadcaster retired live channel"
+            ),
+            None => tracing::debug!(key = ?key, "task update broadcaster retire was a no-op"),
+        }
     }
 }
 
@@ -262,7 +270,18 @@ impl TaskStreamWriter {
         &self,
         frame: TaskUpdateFrame,
     ) -> Result<usize, Box<broadcast::error::SendError<TaskUpdateFrame>>> {
-        self.sender.send(frame).map_err(Box::new)
+        let receiver_count = self.sender.receiver_count();
+        match self.sender.send(frame) {
+            Ok(delivered) => Ok(delivered),
+            Err(error) => {
+                tracing::debug!(
+                    key = ?self.key,
+                    receiver_count,
+                    "task update frame had no live receivers"
+                );
+                Err(Box::new(error))
+            }
+        }
     }
 
     /// Remove the channel for this key from the broadcaster. Idempotent
@@ -271,8 +290,15 @@ impl TaskStreamWriter {
     /// `recv()`; new subscribers after this call create a fresh channel.
     /// Consumes `self` to make "writer is no longer usable" structural.
     pub fn retire_task(self) {
+        tracing::debug!(
+            key = ?self.key,
+            receiver_count = self.sender.receiver_count(),
+            "task update writer retiring task channel"
+        );
         if let Some(inner) = self.inner.upgrade() {
             inner.retire(&self.key);
+        } else {
+            tracing::debug!(key = ?self.key, "task update writer broadcaster already dropped");
         }
     }
 }
