@@ -96,6 +96,45 @@ impl QuickJSBridge {
                         obj.remove("__session");
                     }
 
+                    let terminal_state = value
+                        .get("task")
+                        .and_then(|task| task.get("status"))
+                        .and_then(|status| status.get("state"))
+                        .and_then(Value::as_str)
+                        .or_else(|| {
+                            value
+                                .get("statusUpdate")
+                                .and_then(|update| update.get("status"))
+                                .and_then(|status| status.get("state"))
+                                .and_then(Value::as_str)
+                        });
+                    if matches!(
+                        terminal_state,
+                        Some(
+                            "TASK_STATE_COMPLETED"
+                                | "TASK_STATE_FAILED"
+                                | "TASK_STATE_CANCELED"
+                                | "TASK_STATE_REJECTED"
+                        )
+                    ) {
+                        let scope = resolve_scope_from_active_context(&invocation_context_registry).ok();
+                        tracing::debug!(
+                            session_id = ?context_session_id,
+                            context_id = ?scope.as_ref().map(|scope| scope.context_id()),
+                            task_id = ?scope
+                                .as_ref()
+                                .and_then(|scope| scope.task_id_opt()),
+                            target_state = terminal_state,
+                            has_message = value.get("message").is_some()
+                                || value
+                                    .get("task")
+                                    .and_then(|task| task.get("status"))
+                                    .and_then(|status| status.get("message"))
+                                    .is_some(),
+                            "chat yield host received terminal task frame"
+                        );
+                    }
+
                     tracing::trace!(chunk_json = %chunk_json, "yield raw");
 
                     if let Some(sid) = context_session_id {
@@ -135,6 +174,56 @@ impl QuickJSBridge {
             )
             .map_err(|e| BamlRtError::QuickJsWithSource {
                 context: "Failed to register __baml_chat_yield_host".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let handler_stream_sessions = self.stream_sessions.clone();
+        let handler_invocation_context_registry = self.invocation_context_registry.clone();
+        self.runtime
+            .set_function(
+                &[],
+                "__baml_chat_handler_result_host",
+                move |_realm: &QuickJsRealmAdapter,
+                      args: Vec<JsValueFacade>|
+                      -> std::result::Result<
+                    JsValueFacade,
+                    quickjs_runtime::jsutils::JsError,
+                > {
+                    let handler_result = args
+                        .first()
+                        .filter(|value| value.is_string())
+                        .map(|value| value.get_str().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let scope = resolve_scope_from_active_context(
+                        &handler_invocation_context_registry,
+                    )
+                    .ok();
+                    let session_id = scope.as_ref().and_then(|scope| {
+                        handler_stream_sessions.iter().find_map(|entry| {
+                            (!entry.value().is_terminated() && entry.value().scope == *scope)
+                                .then_some(*entry.key())
+                        })
+                    });
+                    let target_state = match handler_result.as_str() {
+                        "message" => "TASK_STATE_COMPLETED",
+                        "error" | "invalid" => "TASK_STATE_FAILED",
+                        _ => "unknown",
+                    };
+                    tracing::debug!(
+                        session_id = ?session_id,
+                        context_id = ?scope.as_ref().map(|scope| scope.context_id()),
+                        task_id = ?scope
+                            .as_ref()
+                            .and_then(|scope| scope.task_id_opt()),
+                        handler_result = %handler_result,
+                        target_state,
+                        "chat handler return translated to terminal task frame"
+                    );
+                    Ok(JsValueFacade::Undefined)
+                },
+            )
+            .map_err(|e| BamlRtError::QuickJsWithSource {
+                context: "Failed to register __baml_chat_handler_result_host".to_string(),
                 source: Box::new(e),
             })?;
 

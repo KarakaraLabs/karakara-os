@@ -100,6 +100,14 @@ pub fn render_a2a_shim() -> Result<String> {
     return content;
   }
 
+  function notifyHandlerResult(kind) {
+    if (typeof globalThis.__baml_chat_handler_result_host === 'function') {
+      try {
+        globalThis.__baml_chat_handler_result_host(kind);
+      } catch (e) {}
+    }
+  }
+
   function emitMessage(content) {
     var msg = newMessage(normalizeEmitPayload(content));
     globalThis.__chat_yield({ message: msg, task: { status: { state: "TASK_STATE_WORKING", message: msg } } });
@@ -203,6 +211,7 @@ pub fn render_a2a_shim() -> Result<String> {
         return Promise.resolve().then(work).then(function (out) {
           if (out != null && typeof out === 'object' && 'error' in out) {
             var errEarly = String(out.error);
+            notifyHandlerResult('error');
             if (typeof onFailedCb === 'function') {
               return Promise.resolve(onFailedCb(errEarly)).catch(function () {}).then(function () {
                 emitFailed(errEarly, false);
@@ -214,6 +223,7 @@ pub fn render_a2a_shim() -> Result<String> {
           if (out != null && typeof out === 'object' && 'message' in out) {
             var m = out.message;
             if (typeof m === 'string') {
+              notifyHandlerResult('message');
               if (typeof onCompletedCb === 'function') onCompletedCb(m);
               emitMessage(m);
               emitCompleted();
@@ -221,6 +231,7 @@ pub fn render_a2a_shim() -> Result<String> {
             }
             if (m != null && typeof m === 'object') {
               if (isStructuredReplyPayload(m)) {
+                notifyHandlerResult('message');
                 var wire = structuredReplyToWireMessage(m);
                 if (typeof onCompletedCb === 'function') {
                   var summary = messageText(wire);
@@ -231,6 +242,7 @@ pub fn render_a2a_shim() -> Result<String> {
                 return;
               }
               if (Array.isArray(m.parts)) {
+                notifyHandlerResult('message');
                 if (typeof onCompletedCb === 'function') onCompletedCb(messageText(m) || '');
                 emitMessage(m);
                 emitCompleted();
@@ -239,6 +251,7 @@ pub fn render_a2a_shim() -> Result<String> {
             }
           }
           var err = 'session.run() must return { message: string | StructuredReply | wire message } or { error: string }';
+          notifyHandlerResult('invalid');
           if (typeof onFailedCb === 'function') {
             return Promise.resolve(onFailedCb(err)).catch(function () {}).then(function () {
               emitFailed(err, false);
@@ -247,6 +260,7 @@ pub fn render_a2a_shim() -> Result<String> {
           emitFailed(err, false);
         }).catch(function (err) {
           var msg = (err && err != null && typeof err.message === 'string') ? err.message : String(err);
+          notifyHandlerResult('error');
           if (typeof onFailedCb === 'function') {
             return Promise.resolve(onFailedCb(msg)).catch(function () {}).then(function () {
               emitFailed(msg, false);

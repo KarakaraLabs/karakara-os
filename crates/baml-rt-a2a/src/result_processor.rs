@@ -46,6 +46,31 @@ impl TaskProcessor {
 
     /// I2: Single atomic apply per chunk; no interleaving of upsert/status/artifact/message.
     pub async fn process_validated_chunk(&self, mut chunk: ValidatedTaskChunk) -> Result<()> {
+        let target_state = chunk
+            .task()
+            .and_then(|task| task.status.as_ref())
+            .and_then(crate::a2a_store::status_to_string);
+        let task_id = chunk
+            .task()
+            .and_then(|task| task.id.as_ref())
+            .map(|task_id| task_id.as_str().to_string());
+        if matches!(
+            target_state.as_deref(),
+            Some(
+                "TASK_STATE_COMPLETED"
+                    | "TASK_STATE_FAILED"
+                    | "TASK_STATE_CANCELED"
+                    | "TASK_STATE_REJECTED"
+            )
+        ) {
+            tracing::debug!(
+                task_id = ?task_id,
+                target_state = ?target_state,
+                has_message = chunk.resolved_assistant_message().message().is_some(),
+                "task processor persisting terminal task frame"
+            );
+        }
+
         let mut msg_owned = chunk.message().cloned();
         if let Some(ref mut msg) = msg_owned
             && msg
@@ -65,6 +90,22 @@ impl TaskProcessor {
         chunk = ValidatedTaskChunk::try_from(sr)?;
 
         let events = self.task_store.apply_task_chunk(chunk).await?;
+        if target_state.as_deref().is_some_and(|state| {
+            matches!(
+                state,
+                "TASK_STATE_COMPLETED"
+                    | "TASK_STATE_FAILED"
+                    | "TASK_STATE_CANCELED"
+                    | "TASK_STATE_REJECTED"
+            )
+        }) {
+            tracing::debug!(
+                task_id = ?task_id,
+                target_state = ?target_state,
+                event_count = events.len(),
+                "task processor persisted terminal task frame"
+            );
+        }
         for event in events {
             self.emitter.emit(event).await;
         }

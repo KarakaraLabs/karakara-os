@@ -160,6 +160,38 @@ pub async fn run_chat_stream_collector(
                         }
                     }
                 }
+                let target_state = normalized
+                    .get("task")
+                    .and_then(|task| task.get("status"))
+                    .and_then(|status| status.get("state"))
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        normalized
+                            .get("statusUpdate")
+                            .and_then(|update| update.get("status"))
+                            .and_then(|status| status.get("state"))
+                            .and_then(Value::as_str)
+                    });
+                if completion.is_some()
+                    || matches!(
+                        target_state,
+                        Some(
+                            "TASK_STATE_COMPLETED"
+                                | "TASK_STATE_FAILED"
+                                | "TASK_STATE_CANCELED"
+                                | "TASK_STATE_REJECTED"
+                        )
+                    )
+                {
+                    tracing::debug!(
+                        context_id = %scope.context_id(),
+                        task_id = ?task_id_from_chunk(&normalized)
+                            .or_else(|| scope.task_id_opt().map(|id| id.as_str().to_string())),
+                        target_state,
+                        completion = ?completion,
+                        "stream collector received terminal task frame"
+                    );
+                }
                 if let Err(e) = pipeline.store_result(&normalized).await {
                     tracing::warn!(
                         error = %e,

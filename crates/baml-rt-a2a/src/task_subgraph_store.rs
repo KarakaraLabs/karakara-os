@@ -573,8 +573,31 @@ impl TaskEventRecorder for TaskSubgraphStore {
             ),
             cursor,
         };
-        let _ = writer.send(frame);
+        let receiver_count = writer.receiver_count();
+        match writer.send(frame) {
+            Ok(delivered) => tracing::debug!(
+                task_id = %task_id,
+                context_id = %context_id,
+                target_state = %new_state,
+                receiver_count,
+                delivered,
+                "task status frame sent to live subscribers"
+            ),
+            Err(_) => tracing::debug!(
+                task_id = %task_id,
+                context_id = %context_id,
+                target_state = %new_state,
+                receiver_count,
+                "task status frame had no live subscribers"
+            ),
+        }
         if is_terminal_state(&new_state) {
+            tracing::debug!(
+                task_id = %task_id,
+                context_id = %context_id,
+                target_state = %new_state,
+                "task status reached terminal state; retiring live channel"
+            );
             writer.retire_task();
         }
 
