@@ -1277,17 +1277,61 @@ async function resolveUpdateTargets(
     };
   }
 
-  if (matching.length > MAX_BULK_UPDATE) {
+  // Exact-name gate: a text filter matches by substring, so several tasks can share a word. When
+  // more than one does, only an exact (case-insensitive) name match counts as the task the user
+  // meant — apply to all exact matches (a true bulk of identically named tasks), and ask rather than
+  // guess when nothing matches exactly. A status-only selection (no text) is a deliberate bulk and
+  // is left as-is.
+  let targets = matching;
+  if (spec.filters.text !== null && matching.length > 1) {
+    const wanted = spec.filters.text.trim().toLocaleLowerCase();
+    const exact = matching.filter(
+      (task) => task.name.trim().toLocaleLowerCase() === wanted,
+    );
+    if (exact.length === 0) {
+      return { kind: "message", message: describeAmbiguousMatches(matching, spec.filters) };
+    }
+    targets = exact;
+  }
+
+  if (targets.length > MAX_BULK_UPDATE) {
     const label = describeTaskFilters(spec.filters);
     return {
       kind: "message",
       message:
-        `${matching.length} ClickUp tasks${label} match — too many to update at once without naming them. ` +
+        `${targets.length} ClickUp tasks${label} match — too many to update at once without naming them. ` +
         `Narrow the request (a specific task, name, or tighter filter) and I'll apply the change.`,
     };
   }
 
-  return { kind: "targets", targets: matching };
+  return { kind: "targets", targets };
+}
+
+/**
+ * Ask which task the user meant when a name matched several but none exactly.
+ *
+ * Lists the candidates with ids so the next turn can name the exact task or pass its id, which takes
+ * the no-traversal fast path. Deterministic — no model call.
+ */
+function describeAmbiguousMatches(
+  candidates: ClickUpTaskSummary[],
+  filters: ClickUpTaskFilters,
+): string {
+  const label = describeTaskFilters(filters);
+  const shown = candidates.slice(0, MAX_BULK_UPDATE);
+  const lines = shown.map(
+    (task) => `- ${task.name} [${task.status}] (id: ${task.id})`,
+  );
+  const more =
+    candidates.length > shown.length
+      ? `\n…and ${candidates.length - shown.length} more.`
+      : "";
+  return (
+    `${candidates.length} ClickUp tasks${label} match that name, so I did not change anything. ` +
+    `Tell me which one (its exact name or id) and I'll update it:\n\n` +
+    lines.join("\n") +
+    more
+  );
 }
 
 /** Apply the spec's change to one task, skipping a status write that is already satisfied. */
