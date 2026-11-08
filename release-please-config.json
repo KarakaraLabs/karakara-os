@@ -15,12 +15,12 @@
         },
         {
           "type": "yaml",
-          "path": "deploy/helm/karakara-os/Chart.yaml",
+          "path": "operations/deployment/helm/karakara-os/Chart.yaml",
           "jsonpath": "$.version"
         },
         {
           "type": "yaml",
-          "path": "deploy/helm/karakara-os/Chart.yaml",
+          "path": "operations/deployment/helm/karakara-os/Chart.yaml",
           "jsonpath": "$.appVersion"
         }
       ]

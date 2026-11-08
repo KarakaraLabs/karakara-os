@@ -14,13 +14,13 @@ just up               # k3d + registry push + Argo sync
 just sync             # rebuild image + re-sync after code changes
 ```
 
-Generated image tags live in [`deploy/values/generated/images.yaml`](../values/generated/images.yaml) (from `render-values.sh`).
+Generated image tags live in [`operations/deployment/values/generated/images.yaml`](../values/generated/images.yaml) (from `render-values.sh`).
 
 ## Render + apply
 
 ```bash
 bash scripts/e2e-k8s/render-argocd-apps.sh
-kubectl apply -f deploy/argocd/.rendered/
+kubectl apply -f operations/deployment/argocd/.rendered/
 ```
 
 Override Git source for forks: `KARAKARA_GIT_REPO`, `KARAKARA_GIT_REVISION`.
@@ -29,4 +29,4 @@ Override Git source for forks: `KARAKARA_GIT_REPO`, `KARAKARA_GIT_REVISION`.
 
 - Git tag: `vX.Y.Z` must match `Cargo.toml` workspace version (`just publish-release vX.Y.Z`)
 - Container tag for releases: `vX.Y.Z` (same as git tag)
-- Do not point deploy refs at a semver tag before images exist — see [`RELEASING.md`](../../RELEASING.md)
+- Do not point deploy refs at a semver tag before images exist — see [`RELEASING.md`](../../../RELEASING.md)

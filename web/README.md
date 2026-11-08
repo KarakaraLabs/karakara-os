@@ -62,7 +62,7 @@ Other scripts (from `package.json`):
 
 From the repo root, `just web-build` runs `npm ci && npm run build` so the runner can serve the produced `dist/`.
 
-To start a runner that the UI can talk to, see the project root `CLAUDE.md` and `deploy/helm/karakara-os/README.md`. Locally:
+To start a runner that the UI can talk to, see the project root `CLAUDE.md` and `operations/deployment/helm/karakara-os/README.md`. Locally:
 
 ```bash
 cargo run -p karakara-os -- serve   # serves HTTP on 127.0.0.1:18080 by default

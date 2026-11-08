@@ -1,5 +1,5 @@
 # Local k3d defaults for Argo-managed installs.
-# Image repository/tag/pullPolicy come from deploy/values/generated/images.yaml.
+# Image repository/tag/pullPolicy come from operations/deployment/values/generated/images.yaml.
 
 global:
   environment: development

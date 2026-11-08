@@ -3,7 +3,7 @@
 # Companion to k3d-values.yaml. Used by
 # scripts/verify-k8s-pilot-package.sh --image-strategy registry,
 # where the runner image is pushed to the cluster's local registry
-# (deploy/k3d/cluster.yaml -> registries.create) instead of being
+# (operations/deployment/k3d/cluster.yaml -> registries.create) instead of being
 # imported into the cluster via `k3d image import`.
 #
 # `runner.image.repository` uses the in-cluster registry hostname k3d
@@ -21,9 +21,9 @@
 # the literal `tag:` below.
 #
 # Install (normally driven by lib.sh, not by hand):
-#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#   helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
 #     --namespace karak --create-namespace \
-#     -f deploy/helm/karakara-os/examples/k3d-registry-values.yaml
+#     -f operations/deployment/helm/karakara-os/examples/k3d-registry-values.yaml
 
 global:
   environment: development

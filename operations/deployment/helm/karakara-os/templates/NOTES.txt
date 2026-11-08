@@ -32,7 +32,7 @@ Runner memory:
   Each runner pod requests {{ .Values.runner.resources.requests.memory }} and is capped at {{ .Values.runner.resources.limits.memory }}.
   If pods report `OOMKilled` or `POST /deploy` returns `connection closed
   before message completed`, raise `runner.resources.limits.memory`. See
-  deploy/helm/karakara-os/README.md for the empirical floor and the
+  operations/deployment/helm/karakara-os/README.md for the empirical floor and the
   binding-constraint rationale.
 
-See deploy/helm/karakara-os/README.md for known limitations and next steps.
+See operations/deployment/helm/karakara-os/README.md for known limitations and next steps.

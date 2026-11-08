@@ -60,8 +60,7 @@ path = [
   ".verify-stack/**",
   "video/**",
   "schemas/**",
-  "observability/**",
-  "deploy/**",
+  "operations/**",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = ["2026 Semiotic AI, Inc.", "2026 Karakara Labs"]

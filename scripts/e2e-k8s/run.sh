@@ -105,7 +105,7 @@ build_phase() {
 # The harness installs the supported Helm chart via the shared bringup
 # helpers in lib.sh (ensure_runner_image_available, create_pilot_objects,
 # install_pilot_via_argo, resolve_chart_names, wait_for_runner_readyz), not
-# raw manifests under deploy/k8s/. Scenarios exercise the Helm-installed
+# raw manifests under operations/deployment/k8s/. Scenarios exercise the Helm-installed
 # topology so a chart-level regression (wrong env name, wrong mount path,
 # wrong secret key) surfaces here rather than being masked by kubectl
 # patches.
@@ -119,7 +119,7 @@ setup_cluster() {
     log_info "Cluster '${CLUSTER_NAME}' already exists — deleting for clean run."
     k3d cluster delete "$CLUSTER_NAME"
   fi
-  k3d cluster create --config "${REPO_ROOT}/deploy/k3d/cluster.yaml"
+  k3d cluster create --config "${REPO_ROOT}/operations/deployment/k3d/cluster.yaml"
 
   ensure_runner_image_available
   create_pilot_objects

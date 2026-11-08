@@ -49,7 +49,7 @@ Release Please owns normal releases:
 5. Release Please creates `vX.Y.Z` and a GitHub Release.
 6. Same Release Please workflow builds binaries and uploads assets to that release.
 
-Manual tag pushes are fallback-only. If used, the tag must point at a commit where `Cargo.toml`, `Cargo.lock`, and `deploy/helm/karakara-os/Chart.yaml` all contain the same version.
+Manual tag pushes are fallback-only. If used, the tag must point at a commit where `Cargo.toml`, `Cargo.lock`, and `operations/deployment/helm/karakara-os/Chart.yaml` all contain the same version.
 
 The binary publish workflow automatically:
 1. Verifies tag matches `[workspace.package].version` and Helm `appVersion`

@@ -36,7 +36,7 @@ source "${SCRIPT_DIR}/lib.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILDER_BIN="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/release/karak"
 
-THROTTLE_OVERLAY="${REPO_ROOT}/deploy/helm/karakara-os/examples/cpu-throttle-test-values.yaml"
+THROTTLE_OVERLAY="${REPO_ROOT}/operations/deployment/helm/karakara-os/examples/cpu-throttle-test-values.yaml"
 FIXTURE_NAME="cpu-peg-agent"
 PROBE_DURATION_SECS=15
 HEAD_START_SECS=1
@@ -174,7 +174,7 @@ setup_cluster() {
     log_info "Cluster '${CLUSTER_NAME}' already exists — deleting for clean run."
     k3d cluster delete "$CLUSTER_NAME"
   fi
-  k3d cluster create --config "${REPO_ROOT}/deploy/k3d/cluster.yaml"
+  k3d cluster create --config "${REPO_ROOT}/operations/deployment/k3d/cluster.yaml"
 
   ensure_runner_image_available
   create_pilot_objects

@@ -22,7 +22,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CHART_DIR="${REPO_ROOT}/deploy/helm/karakara-os"
+CHART_DIR="${REPO_ROOT}/operations/deployment/helm/karakara-os"
 
 if ! command -v helm &>/dev/null; then
   echo "FAIL: helm is required" >&2

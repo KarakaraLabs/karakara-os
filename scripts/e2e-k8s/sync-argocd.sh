@@ -43,7 +43,7 @@ if [[ "${MODE}" == "auto" ]]; then
   fi
 fi
 
-if [[ ! -f "${ROOT}/deploy/values/generated/images.yaml" ]]; then
+if [[ ! -f "${ROOT}/operations/deployment/values/generated/images.yaml" ]]; then
   bash "${ROOT}/scripts/e2e-k8s/render-values.sh"
 fi
 
@@ -126,7 +126,7 @@ spec:
                 _argo_login_retry plaintext "${_ARGOCD_SERVER_PLAINTEXT}"
               fi
               argocd app sync karakara-os \
-                --local /workspace/deploy/helm/karakara-os \
+                --local /workspace/operations/deployment/helm/karakara-os \
                 --local-repo-root /workspace \
                 --app-namespace argocd \
                 --prune "${_argo_common[@]}"

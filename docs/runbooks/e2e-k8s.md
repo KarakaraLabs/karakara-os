@@ -17,7 +17,7 @@ All three paths use the shared bringup helpers in `scripts/e2e-k8s/lib.sh`
 
 **Local dev entry:** `just up` (k3d + nonce tag + Argo sync).
 
-The raw manifests under `deploy/k8s/` are legacy assets and are **not**
+The raw manifests under `operations/deployment/k8s/` are legacy assets and are **not**
 the supported install surface.
 
 ## Prerequisites
@@ -49,7 +49,7 @@ Or directly:
 
 Flags: `--no-build`, `--keep-cluster`, `--image-tag`, `--local-port`, `--values`. See `--help`.
 
-Image tags are nonces from `deploy/values/generated/.last-image-tag` (or `KARAKARA_IMAGE_TAG`). The runner image is pushed to `k3d-karakara-registry:5000` and installed via Argo CD.
+Image tags are nonces from `operations/deployment/values/generated/.last-image-tag` (or `KARAKARA_IMAGE_TAG`). The runner image is pushed to `k3d-karakara-registry:5000` and installed via Argo CD.
 
 ### Richer scenario suite
 

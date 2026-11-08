@@ -21,7 +21,7 @@ repos:
         # tokenizer/config blobs must not be rewritten by EOF normalization.
         exclude: ^models/fastembed/
       - id: check-yaml
-        exclude: ^deploy/helm/
+        exclude: ^operations/deployment/helm/
       - id: check-json
       - id: check-toml
       - id: check-added-large-files
@@ -87,8 +87,8 @@ repos:
         pass_filenames: false
         files: |
           (?x)^(
-            deploy/helm/karakara-os/templates/runner-statefulset\.yaml|
-            deploy/helm/karakara-os/values\.yaml|
+            operations/deployment/helm/karakara-os/templates/runner-statefulset\.yaml|
+            operations/deployment/helm/karakara-os/values\.yaml|
             scripts/test-helm-runner-probes\.sh
           )$
 

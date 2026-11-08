@@ -5,12 +5,12 @@ target/
 node_modules/
 *.tar.gz
 tmp/
-observability/
+operations/observability/
 tests/
 scripts/
-deploy/*
-!deploy/helm/
-!deploy/values/
+operations/deployment/*
+!operations/deployment/helm/
+!operations/deployment/values/
 docs/
 *.md
 !README.md

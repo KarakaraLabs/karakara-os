@@ -81,7 +81,7 @@ jobs:
           CARGO_DIFF=$(git diff HEAD^1..HEAD -- Cargo.toml '*/Cargo.toml' 2>/dev/null) || true
           [ -z "$CARGO_DIFF" ] && CARGO_DIFF="No changes"
 
-          INFRA_DIFF=$(git diff HEAD^1..HEAD -- justfile '.github/workflows/' 'deploy/' 'scripts/' 2>/dev/null) || true
+          INFRA_DIFF=$(git diff HEAD^1..HEAD -- justfile '.github/workflows/' 'operations/deployment/' 'scripts/' 2>/dev/null) || true
           [ -z "$INFRA_DIFF" ] && INFRA_DIFF="No changes"
 
           API_DIFF=$(git diff HEAD^1..HEAD -- \
@@ -100,7 +100,7 @@ jobs:
             2>/dev/null) || true
           [ -z "$METRICS_DIFF" ] && METRICS_DIFF="No changes"
 
-          HELM_DIFF=$(git diff HEAD^1..HEAD -- deploy/helm/karakara-os/ 2>/dev/null) || true
+          HELM_DIFF=$(git diff HEAD^1..HEAD -- operations/deployment/helm/karakara-os/ 2>/dev/null) || true
           [ -z "$HELM_DIFF" ] && HELM_DIFF="No changes"
 
           CLAUDE_DIFF=$(git diff HEAD^1..HEAD -- CLAUDE.md 2>/dev/null) || true
@@ -124,7 +124,7 @@ jobs:
           - crates/karakara/** → docs/reference/sdk-cli.md
           - crates/baml-rt-mcp/**, repository MCP routes → docs/reference/karakara-mcp-support.md
           - **/metrics.rs, effect_metrics.rs → docs/reference/metrics-inventory.md
-          - deploy/helm/karakara-os/** → docs/runbooks/k8s-pilot-operator-guide.md
+          - operations/deployment/helm/karakara-os/** → docs/runbooks/k8s-pilot-operator-guide.md
           - New top-level crate dir → CLAUDE.md crate table (+ docs/README.md if needed)
 
           Canonical facts to preserve:

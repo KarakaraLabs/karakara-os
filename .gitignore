@@ -61,17 +61,17 @@ models/fastembed/**/blobs/*.lock
 models/fastembed/**/blobs/*.part
 
 # K8s secrets (templates in *.example files; real secrets must not be committed)
-deploy/k8s/secret-fnox.yaml
-deploy/k8s/surrealdb-credentials.yaml
+operations/deployment/k8s/secret-fnox.yaml
+operations/deployment/k8s/surrealdb-credentials.yaml
 
 # task-daemon Slack source dump — local-only, carries workspace tokens
 source-slack.json
 
 # K8s GitOps generated values (local nonce tags)
-deploy/values/generated/.last-image-tag
-deploy/values/generated/images.yaml
-deploy/values/generated/scenario.yaml
-deploy/argocd/.rendered/
+operations/deployment/values/generated/.last-image-tag
+operations/deployment/values/generated/images.yaml
+operations/deployment/values/generated/scenario.yaml
+operations/deployment/argocd/.rendered/
 
 # K8s load-test artifacts (timestamped per run; generated outputs,
 # intentionally not committed).

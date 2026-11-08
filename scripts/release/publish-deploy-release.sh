@@ -36,8 +36,8 @@ _want_git_tag() {
 }
 
 DRY="${KARAKARA_RELEASE_DRY_RUN:-0}"
-TRACK="${ROOT}/deploy/argocd/track.json"
-IMAGES="${ROOT}/deploy/values/dev/images.yaml"
+TRACK="${ROOT}/operations/deployment/argocd/track.json"
+IMAGES="${ROOT}/operations/deployment/values/dev/images.yaml"
 
 if [[ "$DRY" == "1" ]]; then
   echo "publish-deploy-release: DRY-RUN ${GIT_REF} (image ${IMG_TAG})" >&2

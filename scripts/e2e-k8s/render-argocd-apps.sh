@@ -5,7 +5,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Renders Argo CD Application manifests from deploy/argocd/track.json.
+# Renders Argo CD Application manifests from operations/deployment/argocd/track.json.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
@@ -24,7 +24,7 @@ die() {
 
 require_cmd python3
 
-TRACK="${ROOT}/deploy/argocd/track.json"
+TRACK="${ROOT}/operations/deployment/argocd/track.json"
 [[ -f "${TRACK}" ]] || die "missing ${TRACK}"
 
 _track_repo() {
@@ -36,8 +36,8 @@ _track_rev() {
 
 REPO="${KARAKARA_GIT_REPO:-$(_track_repo)}"
 REV="${KARAKARA_GIT_REVISION:-$(_track_rev)}"
-OUT_DIR="${ROOT}/deploy/argocd/.rendered"
-APP_DIR="${ROOT}/deploy/argocd/apps"
+OUT_DIR="${ROOT}/operations/deployment/argocd/.rendered"
+APP_DIR="${ROOT}/operations/deployment/argocd/apps"
 mkdir -p "${OUT_DIR}"
 
 _render() {

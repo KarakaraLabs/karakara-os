@@ -8,7 +8,7 @@ set -euo pipefail
 
 ACTION="${1:-}"
 ROOT="$(git rev-parse --show-toplevel)"
-STACK_DIR="$ROOT/observability"
+STACK_DIR="$ROOT/operations/observability"
 
 if [[ -z "$ACTION" ]]; then
   echo "Usage: $0 <up|down|ps|logs>" >&2

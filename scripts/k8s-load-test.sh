@@ -43,11 +43,11 @@ VERIFY_EXTRA_ARGS=()
 
 LOAD_PF_PIDS=()
 LOAD_PF_LOGS=()
-OBSERVABILITY_COMPOSE_FILE="${REPO_ROOT}/observability/docker-compose.yml"
+OBSERVABILITY_COMPOSE_FILE="${REPO_ROOT}/operations/observability/docker-compose.yml"
 OTLP_HOST_PORT="4317"
 PROMETHEUS_URL="http://localhost:9090"
 OTLP_ENDPOINT="http://host.k3d.internal:4317"
-VALUES_OVERLAY="${REPO_ROOT}/deploy/helm/karakara-os/examples/k3d-load-test-values.yaml"
+VALUES_OVERLAY="${REPO_ROOT}/operations/deployment/helm/karakara-os/examples/k3d-load-test-values.yaml"
 SCENARIO_RESULTS_JSON=()
 
 usage() {
@@ -65,7 +65,7 @@ Options:
   --instance <id>           Default: default
   --skip-bringup            Assume cluster is already up (and port-bound).
                             Skips verify-k8s-pilot-package.sh.
-  --skip-observability      Do not start observability/docker-compose.yml.
+  --skip-observability      Do not start operations/observability/docker-compose.yml.
   --skip-builder-build      Do not cargo-build baml-agent-builder even if missing.
   --artifacts-dir <path>    Default: artifacts/load-test/<timestamp>
   --verify-arg <arg>        Repeatable: passthrough arg to verify-k8s-pilot-package.sh.
@@ -88,7 +88,7 @@ What this does:
   8. Emit summary.json + summary.md to --artifacts-dir.
 
 This orchestrator keeps the k3d cluster and observability stack running
-on success. `docker compose -f observability/docker-compose.yml down` and
+on success. `docker compose -f operations/observability/docker-compose.yml down` and
 `k3d cluster delete karakara` clean up.
 EOF
 }
@@ -313,7 +313,7 @@ probe_otlp_reachability() {
   if [[ "$current" != "$OTLP_ENDPOINT" ]]; then
     log_info "Updating runner OTEL_EXPORTER_OTLP_ENDPOINT (${current:-unset} -> ${OTLP_ENDPOINT}) via helm upgrade"
     helm upgrade "$RELEASE_NAME" \
-      "${REPO_ROOT}/deploy/helm/karakara-os/" \
+      "${REPO_ROOT}/operations/deployment/helm/karakara-os/" \
       --namespace "$NAMESPACE" \
       --reuse-values \
       --set-string "observability.otlpEndpoint=${OTLP_ENDPOINT}" >/dev/null

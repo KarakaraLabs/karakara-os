@@ -9,7 +9,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-GENERATED_DIR="${ROOT}/deploy/values/generated"
+GENERATED_DIR="${ROOT}/operations/deployment/values/generated"
 LAST_TAG_FILE="${GENERATED_DIR}/.last-image-tag"
 mkdir -p "${GENERATED_DIR}"
 

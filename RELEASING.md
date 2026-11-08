@@ -4,7 +4,7 @@ Releases are driven by Release Please. One SemVer must stay consistent across:
 
 - `Cargo.toml` `[workspace.package].version`
 - `Cargo.lock` workspace package entries
-- `deploy/helm/karakara-os/Chart.yaml` `version` and `appVersion`
+- `operations/deployment/helm/karakara-os/Chart.yaml` `version` and `appVersion`
 - `.release-please-manifest.json`
 
 ## Normal release flow
@@ -33,7 +33,7 @@ Use only if Release Please is unavailable.
 git checkout main
 git pull
 just bump-version patch   # or minor | major
-git add Cargo.toml Cargo.lock deploy/helm/karakara-os/Chart.yaml
+git add Cargo.toml Cargo.lock operations/deployment/helm/karakara-os/Chart.yaml
 git commit -m "release: v$(just workspace-version)"
 git push origin main
 
@@ -51,7 +51,7 @@ just up
 just verify-k8s-pilot-package
 ```
 
-Image tags are nonces (`local-dev-…`) written to `deploy/values/generated/.last-image-tag`.
+Image tags are nonces (`local-dev-…`) written to `operations/deployment/values/generated/.last-image-tag`.
 
 ## Dev deploy refs (remote GitOps)
 
