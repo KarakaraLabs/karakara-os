@@ -57,8 +57,6 @@ path = [
   "tests/**",
   "examples/**",
   ".cursor/**",
-  ".verify-stack/**",
-  "video/**",
   "schemas/**",
   "operations/**",
 ]

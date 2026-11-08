@@ -50,6 +50,7 @@ crates/baml-agent-runner/.runner-state/
 /provenance-e2e.db/
 /.repository-e2e/
 /.runner-state-e2e/
+/.verify-stack/
 /provenance_db
 /provenance_db-shm
 /provenance_db-wal

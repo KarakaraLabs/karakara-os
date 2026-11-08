@@ -29,7 +29,7 @@ The scaffold depends on `@karakara/tool@^0.2.0`. Until that package is
 published to npm, install it from this checkout:
 
 ```bash
-npm install --save /path/to/agentium-os/sdk/typescript
+npm install --save /path/to/karakara-os/sdk/typescript
 ```
 
 ## 2. Write the tool
