@@ -1,7 +1,7 @@
 {
   "name": "@karakara/tool",
   "version": "0.2.0",
-  "description": "TypeBox authoring SDK for Karakara tools.",
+  "description": "TypeBox authoring SDK for external Karakara tools.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",

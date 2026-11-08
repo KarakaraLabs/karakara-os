@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@karakara/tool": "file:../../../../../ts/packages/tool"
+    "@karakara/tool": "file:../../../../../sdk/typescript"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
