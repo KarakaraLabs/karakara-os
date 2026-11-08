@@ -29,7 +29,7 @@ Nice-to-have:
 - `search:read` (required for `SearchMessagesInput`)
 - `users:read.email` (only if email-based identity mapping is needed)
 
-Reference manifest: [slack-app-manifest.example.yaml](/Users/joseph/git/semiotic-agentium/agent-platform/docs/slack-app-manifest.example.yaml)
+Reference manifest: [slack-app-manifest.example.yaml](slack-app-manifest.example.yaml)
 
 ## Environment Variables
 
@@ -53,7 +53,7 @@ Optional metadata:
 
 ## OAuth Helper
 
-Script: [slack-oauth-helper.sh](/Users/joseph/git/semiotic-agentium/agent-platform/scripts/slack-oauth-helper.sh)
+Script: [slack-oauth-helper.sh](../../scripts/slack-oauth-helper.sh)
 
 Generate install URL:
 
