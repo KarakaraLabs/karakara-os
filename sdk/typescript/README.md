@@ -1,5 +1,7 @@
 # @karakara/tool
 
+Use this SDK to write external tools executed by Karakara. It is not an agent-authoring SDK.
+
 Write one typed function. TypeBox supplies both its TypeScript types and the JSON
 Schema returned by MCP `tools/list`. `karak tool build` uses that response to
 generate `tools.json`, descriptor digests, and `tool-manifest.json`.
