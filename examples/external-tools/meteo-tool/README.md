@@ -12,7 +12,7 @@ runner and does not manage the local Docker registry.
 Run these commands from the repository root:
 
 ```bash
-cd ~/Documents/Projects/agentium-os
+cd ~/Documents/Projects/karakara-os
 cd examples/external-tools/meteo-tool
 npm install
 cd ../../..
