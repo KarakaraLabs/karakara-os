@@ -8,7 +8,7 @@ Based on Karakara OS crates (`baml-rt-core`, `baml-rt-a2a`, `baml-rt-api`): orth
 
 ## Agent Platform Local OTEL Wiring (this repo)
 
-This repository includes a ready-to-run local telemetry stack in `observability/` (Collector + Prometheus + Tempo + Grafana).
+This repository includes a ready-to-run local telemetry stack in `operations/observability/` (Collector + Prometheus + Tempo + Grafana).
 
 ### Day-1 commands
 
@@ -38,7 +38,7 @@ High-signal families:
 - **task-daemon:** `baml_rt_task_daemon.run_once.*` ([`baml-rt-observability`](../crates/baml-rt-observability/src/metrics.rs)).
 
 A starter Grafana dashboard is provisioned at:
-`observability/grafana/dashboards/karakara-overview.json`.
+`operations/observability/grafana/dashboards/karakara-overview.json`.
 
 ## Design Goals
 

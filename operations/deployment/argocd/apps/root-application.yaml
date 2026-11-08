@@ -9,7 +9,7 @@ spec:
   source:
     repoURL: __KARAKARA_GIT_REPO__
     targetRevision: __KARAKARA_GIT_REVISION__
-    path: deploy/helm/karakara-os
+    path: operations/deployment/helm/karakara-os
     helm:
       releaseName: karakara
       valueFiles:

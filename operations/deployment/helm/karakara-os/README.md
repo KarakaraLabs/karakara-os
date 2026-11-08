@@ -32,9 +32,9 @@ kubectl create configmap fnox-config -n karakara \
 ## Install
 
 ```bash
-helm upgrade --install karakara deploy/helm/karakara-os/ \
+helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
   --namespace karak --create-namespace \
-  -f deploy/helm/karakara-os/examples/design-partner-values.yaml
+  -f operations/deployment/helm/karakara-os/examples/design-partner-values.yaml
 ```
 
 ### Local k3d (Argo CD + local registry)
@@ -46,9 +46,9 @@ just up
 # or: just verify-k8s-pilot-package
 ```
 
-Values: [`deploy/values/local/defaults.yaml`](../../values/local/defaults.yaml) plus generated [`deploy/values/generated/images.yaml`](../../values/generated/images.yaml). See [`deploy/argocd/README.md`](../../argocd/README.md) and [`RELEASING.md`](../../../RELEASING.md).
+Values: [`operations/deployment/values/local/defaults.yaml`](../../values/local/defaults.yaml) plus generated [`operations/deployment/values/generated/images.yaml`](../../values/generated/images.yaml). See [`operations/deployment/argocd/README.md`](../../argocd/README.md) and [`RELEASING.md`](../../../../RELEASING.md).
 
-The host pushes to `localhost:5400`; the cluster pulls from `k3d-karakara-registry:5000` (`deploy/k3d/cluster.yaml`).
+The host pushes to `localhost:5400`; the cluster pulls from `k3d-karakara-registry:5000` (`operations/deployment/k3d/cluster.yaml`).
 
 ## Verify
 
@@ -64,7 +64,7 @@ curl http://localhost:18080/readyz
 curl http://localhost:18080/agents
 ```
 
-For a scripted, end-to-end local validation of this same install path (cluster → three required objects → `helm upgrade --install` → smoke → cluster_runners verify), run `just verify-k8s-pilot-package` (see [`docs/runbooks/e2e-k8s.md`](../../../docs/runbooks/e2e-k8s.md)).
+For a scripted, end-to-end local validation of this same install path (cluster → three required objects → `helm upgrade --install` → smoke → cluster_runners verify), run `just verify-k8s-pilot-package` (see [`docs/runbooks/e2e-k8s.md`](../../../../docs/runbooks/e2e-k8s.md)).
 
 ## Runner image
 
@@ -85,7 +85,7 @@ If you pin to immutable tags (or content digests) and want to avoid the per-rest
 
 ## Next step
 
-For the full first-run operator flow (including building the runner image, creating the required objects, authenticated publish/deploy, and the packaged smoke script), see [`docs/runbooks/k8s-pilot-operator-guide.md`](../../../docs/runbooks/k8s-pilot-operator-guide.md).
+For the full first-run operator flow (including building the runner image, creating the required objects, authenticated publish/deploy, and the packaged smoke script), see [`docs/runbooks/k8s-pilot-operator-guide.md`](../../../../docs/runbooks/k8s-pilot-operator-guide.md).
 
 ## Runner probes
 

@@ -28,7 +28,7 @@ artifacts attached or linked.
 - Supported target: deterministic `dispatch-echo/default` over
   `POST /agents/{package}/a2a`
 - Supported bringup path:
-  `scripts/verify-k8s-pilot-package.sh --keep-cluster --values deploy/helm/karakara-os/examples/k3d-load-test-values.yaml`
+  `scripts/verify-k8s-pilot-package.sh --keep-cluster --values operations/deployment/helm/karakara-os/examples/k3d-load-test-values.yaml`
 - Output location: `artifacts/load-test/<timestamp>/`
 - Output contract: `topology.json`, `<scenario>.json`, `summary.json`,
   `summary.md`
@@ -49,9 +49,9 @@ separate Kubernetes topology:
 
 - Bringup is delegated to `scripts/verify-k8s-pilot-package.sh` with a
   Helm values overlay that enables OTLP export
-  (`deploy/helm/karakara-os/examples/k3d-load-test-values.yaml`).
+  (`operations/deployment/helm/karakara-os/examples/k3d-load-test-values.yaml`).
 - OTEL traces and metrics flow to the local observability stack in
-  [`observability/`](../observability/) via the k3d host alias
+  [`operations/observability/`](../../operations/observability/) via the k3d host alias
   `host.k3d.internal`. The harness verifies that alias is reachable from
   inside a runner pod before starting load.
 
@@ -64,10 +64,10 @@ just k8s-load-test
 This runs, in order:
 
 1. Preflights the host toolchain and builds `baml-agent-builder` if missing.
-2. Starts `observability/docker-compose.yml` (OTel Collector on `4317`,
+2. Starts `operations/observability/docker-compose.yml` (OTel Collector on `4317`,
    Prometheus on `9090`, Grafana on `3000`).
 3. Runs `scripts/verify-k8s-pilot-package.sh --keep-cluster --values
-   deploy/helm/karakara-os/examples/k3d-load-test-values.yaml`.
+   operations/deployment/helm/karakara-os/examples/k3d-load-test-values.yaml`.
 4. Reads the real `runner-token` from the cluster secret (the lib.sh
    random default doesn't match the installed secret across subshells).
 5. Probes OTLP reachability from inside the runner pod using
@@ -102,7 +102,7 @@ levels ≈ **~28 min**.
 | `--package <name>` | `dispatch-echo` | Agent to target. |
 | `--instance <id>` | `default` | Instance id. |
 | `--skip-bringup` | off | Use an already-running cluster. The port-forward pre-bind check still protects against collisions. |
-| `--skip-observability` | off | Do not run `docker compose up -d` on `observability/docker-compose.yml`. An observability stack exposing OTLP gRPC on host `:4317` and Prometheus on host `:9090` must already be reachable — see *Flag caveat: `--skip-observability`* below. |
+| `--skip-observability` | off | Do not run `docker compose up -d` on `operations/observability/docker-compose.yml`. An observability stack exposing OTLP gRPC on host `:4317` and Prometheus on host `:9090` must already be reachable — see *Flag caveat: `--skip-observability`* below. |
 | `--skip-builder-build` | off | Fail if `baml-agent-builder` is missing. |
 | `--artifacts-dir <path>` | `artifacts/load-test/<timestamp>` | Output directory. |
 | `--verify-arg <arg>` | — | Repeatable; passthrough to `verify-k8s-pilot-package.sh` (for example `--verify-arg --no-build`). |
@@ -111,7 +111,7 @@ levels ≈ **~28 min**.
 
 `--skip-observability` only short-circuits `start_observability`, which
 is the step that runs `docker compose up -d` on
-`observability/docker-compose.yml`. It does **not** skip:
+`operations/observability/docker-compose.yml`. It does **not** skip:
 
 - `probe_otlp_reachability` — the wrapper still `kubectl exec`s into
   `runner-0` and opens a TCP connection to each candidate host alias
@@ -361,13 +361,13 @@ node scripts/load-test/run.mjs \
   evidence.
 - **"In-pod OTLP TCP probe failed"** — the observability stack isn't
   reachable via `host.k3d.internal:4317` from inside the runner pod.
-  Check `docker compose -f observability/docker-compose.yml ps`. The
+  Check `docker compose -f operations/observability/docker-compose.yml ps`. The
   Prometheus deltas in the summary will still be usable if OTLP comes up
   after the probe (the collector scrapes runner metrics directly), but
   traces won't populate.
 - **`runner-token` secret missing** — bringup didn't finish cleanly; rerun
   `scripts/verify-k8s-pilot-package.sh --keep-cluster --values
-  deploy/helm/karakara-os/examples/k3d-load-test-values.yaml` manually
+  operations/deployment/helm/karakara-os/examples/k3d-load-test-values.yaml` manually
   and inspect the output.
 - **Error rate > 1% at some concurrency level** — `scripts/load-test/run.mjs`
   prints `[load] warn: error rate N.NN%` to stdout and continues the

@@ -138,7 +138,7 @@ create_or_reuse_cluster() {
     log_info "Cluster '${CLUSTER_NAME}' already exists — deleting for a clean run."
     k3d cluster delete "$CLUSTER_NAME"
   fi
-  k3d cluster create --config "${REPO_ROOT}/deploy/k3d/cluster.yaml"
+  k3d cluster create --config "${REPO_ROOT}/operations/deployment/k3d/cluster.yaml"
 }
 
 run_smoke() {

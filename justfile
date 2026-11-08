@@ -19,7 +19,7 @@ runner_http_ready_secs := "180"
 runner_state_dir := ".runner-state"
 runner_repository_dir := ".repository"
 slack_channel := "karakara-eng"
-# OTEL defaults for local dev visor (collector from ./observability/docker-compose.yml).
+# OTEL defaults for local dev visor (collector from ./operations/observability/docker-compose.yml).
 # Safe defaults in code: if these are unset, OTLP export stays disabled.
 otel_endpoint := "http://localhost:4317"
 otel_protocol := "grpc"

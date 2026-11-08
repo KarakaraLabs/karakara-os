@@ -55,7 +55,7 @@ The microVM tool tests (`--features sandbox-e2e-kvm`) have no CI workflow; they 
 
 ### Group C — Automated Release Pipeline (`ubuntu-latest` / `ubuntu-22.04` / `arm`, `$0`)
 6. **[`release-please.yml`](../../.github/workflows/release-please.yml) (`Release Please`):**
-   - Uses `googleapis/release-please-action@v4` with [`release-please-config.json`](../../release-please-config.json) and [`.release-please-manifest.json`](../../.release-please-manifest.json) to maintain a Release PR updating `Cargo.toml`, `deploy/helm/karakara-os/Chart.yaml`, and `CHANGELOG.md`. When merged, it tags `vX.Y.Z`, builds native `x86_64` and `aarch64` tarballs, and uploads them to the GitHub Release.
+   - Uses `googleapis/release-please-action@v4` with [`release-please-config.json`](../../release-please-config.json) and [`.release-please-manifest.json`](../../.release-please-manifest.json) to maintain a Release PR updating `Cargo.toml`, `operations/deployment/helm/karakara-os/Chart.yaml`, and `CHANGELOG.md`. When merged, it tags `vX.Y.Z`, builds native `x86_64` and `aarch64` tarballs, and uploads them to the GitHub Release.
 7. **[`release-pr-postprocess.yml`](../../.github/workflows/release-pr-postprocess.yml) (`Release PR postprocess`):**
    - Triggered on `release-please--*` PRs; runs `cargo update --workspace` on `ubuntu-latest` and commits the updated `Cargo.lock` to the Release PR branch.
 8. **[`release-publish.yml`](../../.github/workflows/release-publish.yml) (`Release publish`):**

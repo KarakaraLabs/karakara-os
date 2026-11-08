@@ -186,7 +186,7 @@ The runner emits these OpenTelemetry **resource attributes** on every signal (se
 | `deployment.environment` | Helm: `coalesce(observability.environment, global.environment, "pilot")`. Non-Helm: `OTEL_DEPLOYMENT_ENVIRONMENT` or default `pilot`. |
 | `k8s.namespace.name` | `$(POD_NAMESPACE)` when present. |
 
-**Resource attributes are not automatically Prometheus labels.** The local OTel Collector at [`observability/otel-collector-config.yaml`](../observability/otel-collector-config.yaml) runs a `transform/runner_identity` processor that promotes `service.instance.id` → datapoint attr `service_instance_id` and `k8s.namespace.name` → `k8s_namespace_name`. Operators running a different collector must replicate that transform or rely on the **explicit per-metric identity labels** below, which do not depend on any processor:
+**Resource attributes are not automatically Prometheus labels.** The local OTel Collector at [`operations/observability/otel-collector-config.yaml`](../../operations/observability/otel-collector-config.yaml) runs a `transform/runner_identity` processor that promotes `service.instance.id` → datapoint attr `service_instance_id` and `k8s.namespace.name` → `k8s_namespace_name`. Operators running a different collector must replicate that transform or rely on the **explicit per-metric identity labels** below, which do not depend on any processor:
 
 | Explicit identity label | Present on | Meaning |
 |---|---|---|
@@ -200,7 +200,7 @@ The `forwarded` label on `baml_rt_api_http_request_*` is **advisory** (derived f
 
 ## Grafana / local stack
 
-Starter dashboard: `observability/grafana/dashboards/karakara-overview.json`.
+Starter dashboard: `operations/observability/grafana/dashboards/karakara-overview.json`.
 Prometheus summary helper: `just otel-summary <window>`.
 
 ---

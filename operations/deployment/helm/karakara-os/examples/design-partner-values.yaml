@@ -1,11 +1,11 @@
 # Design partner / production-like values.
 #
-# Prerequisites: see deploy/helm/karakara-os/README.md
+# Prerequisites: see operations/deployment/helm/karakara-os/README.md
 #
 # Install:
-#   helm upgrade --install karakara deploy/helm/karakara-os/ \
+#   helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
 #     --namespace karak --create-namespace \
-#     -f deploy/helm/karakara-os/examples/design-partner-values.yaml
+#     -f operations/deployment/helm/karakara-os/examples/design-partner-values.yaml
 
 global:
   environment: production

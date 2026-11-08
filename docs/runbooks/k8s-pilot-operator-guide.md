@@ -14,7 +14,7 @@ The pilot packages one topology:
 - Operator access over `kubectl port-forward`. Ingress and TLS termination are out of scope for the pilot.
 - LLM credentials come from a file-mounted `fnox.toml` (`BAML_FNOX_CONFIG=/config/fnox.toml`). Runners do not read LLM API keys from environment variables.
 
-The supported install surface is the Helm chart at [`deploy/helm/karakara-os/`](../deploy/helm/karakara-os/). Local k3d uses Argo CD (`just up`). Raw manifests under `deploy/k8s/` are legacy only.
+The supported install surface is the Helm chart at [`operations/deployment/helm/karakara-os/`](../../operations/deployment/helm/karakara-os/). Local k3d uses Argo CD (`just up`). Raw manifests under `operations/deployment/k8s/` are legacy only.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ The supported install surface is the Helm chart at [`deploy/helm/karakara-os/`](
 
 The Karakara runner image is not published to a public registry. Operators build and push their own image.
 
-For local k3d development use `just up`. See [`RELEASING.md`](../../RELEASING.md) and [`deploy/argocd/README.md`](../../deploy/argocd/README.md).
+For local k3d development use `just up`. See [`RELEASING.md`](../../RELEASING.md) and [`operations/deployment/argocd/README.md`](../../operations/deployment/argocd/README.md).
 
 ## Step 1 — Build and push the runner image
 
@@ -101,20 +101,20 @@ RUNNER_TOKEN="$(kubectl -n karakara get secret runner-token -o jsonpath='{.data.
 
 ## Step 3 — Install the chart
 
-For the design-partner profile, edit [`deploy/helm/karakara-os/examples/design-partner-values.yaml`](../deploy/helm/karakara-os/examples/design-partner-values.yaml) so `runner.image.repository` and `runner.image.tag` point at your registry, then:
+For the design-partner profile, edit [`operations/deployment/helm/karakara-os/examples/design-partner-values.yaml`](../../operations/deployment/helm/karakara-os/examples/design-partner-values.yaml) so `runner.image.repository` and `runner.image.tag` point at your registry, then:
 
 ```bash
-helm upgrade --install karakara deploy/helm/karakara-os/ \
+helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
   --namespace karak --create-namespace \
-  -f deploy/helm/karakara-os/examples/design-partner-values.yaml
+  -f operations/deployment/helm/karakara-os/examples/design-partner-values.yaml
 ```
 
 For local k3d:
 
 ```bash
-helm upgrade --install karakara deploy/helm/karakara-os/ \
+helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
   --namespace karak --create-namespace \
-  -f deploy/helm/karakara-os/examples/k3d-values.yaml
+  -f operations/deployment/helm/karakara-os/examples/k3d-values.yaml
 ```
 
 Resource sizing: the chart defaults the runner to 2Gi memory request and 5Gi memory limit. This is the empirically observed floor for publishing a real multi-agent set (e.g. `argument-cleese` + `argument-chapman`) end-to-end — `POST /deploy` runs tar extract, BAML IL load, QuickJS init, and tool registration on top of the resident fastembed ONNX model, SurrealDB client, and provenance backend. Raise `runner.resources.limits.memory` further for heavier workloads; lowering it below 5Gi tends to OOM-kill the runner mid-deploy with a confusing `connection closed before message completed` symptom client-side.
@@ -277,7 +277,7 @@ Two important caveats:
 
 ## Step 12 — Observability sanity check (optional)
 
-If `observability.enabled` is `true` and `observability.otlpEndpoint` points at a reachable collector, OTLP traces and metrics are emitted with the pilot identity contract (`service.name=karakara-runner`, `service.instance.id=<pod-name>`, `k8s.namespace.name=<namespace>`). `deployment.environment` is the first non-empty of `observability.environment`, `global.environment`, or the literal `pilot`. See [`observability/README.md`](../observability/README.md) for the collector setup and dashboard walkthrough, and [`docs/reference/metrics-inventory.md`](../reference/metrics-inventory.md) for the canonical metric names.
+If `observability.enabled` is `true` and `observability.otlpEndpoint` points at a reachable collector, OTLP traces and metrics are emitted with the pilot identity contract (`service.name=karakara-runner`, `service.instance.id=<pod-name>`, `k8s.namespace.name=<namespace>`). `deployment.environment` is the first non-empty of `observability.environment`, `global.environment`, or the literal `pilot`. See [`operations/observability/README.md`](../../operations/observability/README.md) for the collector setup and dashboard walkthrough, and [`docs/reference/metrics-inventory.md`](../reference/metrics-inventory.md) for the canonical metric names.
 
 ## Troubleshooting
 
@@ -310,7 +310,7 @@ Supported in the pilot:
 - `runner-token` secret for operator auth on protected routes.
 - Per-agent manifest allowlist as the deny-by-default tool gate, with an optional cluster-wide access-class cap via the `BAML_TOOL_ACCESS_ALLOWLIST` env var. See [Tool Access in agent-runner.md](../reference/agent-runner.md#tool-access) for the full model.
 - `fnox-config` ConfigMap mounted at `/config/fnox.toml` for LLM credentials.
-- Helm values profiles: [`examples/k3d-values.yaml`](../deploy/helm/karakara-os/examples/k3d-values.yaml) (local) and [`examples/design-partner-values.yaml`](../deploy/helm/karakara-os/examples/design-partner-values.yaml) (production-like).
+- Helm values profiles: [`examples/k3d-values.yaml`](../../operations/deployment/helm/karakara-os/examples/k3d-values.yaml) (local) and [`examples/design-partner-values.yaml`](../../operations/deployment/helm/karakara-os/examples/design-partner-values.yaml) (production-like).
 - OpenTelemetry export to an operator-supplied OTLP gRPC endpoint.
 - Optional distributed conversation validation via [`scripts/k8s-pilot-cleese-chapman.sh`](../scripts/k8s-pilot-cleese-chapman.sh), using the mounted `fnox-config` ConfigMap rather than host env secrets.
 

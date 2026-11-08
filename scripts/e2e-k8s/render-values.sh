@@ -5,15 +5,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Writes deploy/values/generated/images.yaml for Argo Helm valueFiles.
+# Writes operations/deployment/values/generated/images.yaml for Argo Helm valueFiles.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-OUT="${ROOT}/deploy/values/generated/images.yaml"
-SCENARIO_OUT="${ROOT}/deploy/values/generated/scenario.yaml"
+OUT="${ROOT}/operations/deployment/values/generated/images.yaml"
+SCENARIO_OUT="${ROOT}/operations/deployment/values/generated/scenario.yaml"
 mkdir -p "$(dirname "${OUT}")"
 
-LAST_TAG_FILE="${ROOT}/deploy/values/generated/.last-image-tag"
+LAST_TAG_FILE="${ROOT}/operations/deployment/values/generated/.last-image-tag"
 TAG="${KARAKARA_IMAGE_TAG:-}"
 if [[ -f "${LAST_TAG_FILE}" ]]; then
   TAG="$(tr -d '[:space:]' <"${LAST_TAG_FILE}")"

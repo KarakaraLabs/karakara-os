@@ -5,7 +5,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Sync deploy/argocd/track.json + deploy/values/dev/images.yaml.
+# Sync operations/deployment/argocd/track.json + operations/deployment/values/dev/images.yaml.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
@@ -20,8 +20,8 @@ GIT_REF="${1:-}"
 IMG_TAG="${2:-${1:-}}"
 [[ -n "${GIT_REF}" ]] || die "usage: set-deploy-ref.sh <git-ref> [image-tag]"
 
-TRACK="${ROOT}/deploy/argocd/track.json"
-IMAGES="${ROOT}/deploy/values/dev/images.yaml"
+TRACK="${ROOT}/operations/deployment/argocd/track.json"
+IMAGES="${ROOT}/operations/deployment/values/dev/images.yaml"
 [[ -f "${TRACK}" ]] || die "missing ${TRACK}"
 
 export KARAKARA_SET_ROOT="${ROOT}"
@@ -37,8 +37,8 @@ root = Path(os.environ["KARAKARA_SET_ROOT"])
 git_ref = os.environ["KARAKARA_SET_GIT_REF"]
 img_tag = os.environ["KARAKARA_SET_IMG_TAG"]
 
-track_path = root / "deploy/argocd/track.json"
-images_path = root / "deploy/values/dev/images.yaml"
+track_path = root / "operations/deployment/argocd/track.json"
+images_path = root / "operations/deployment/values/dev/images.yaml"
 
 with open(track_path) as f:
     track = json.load(f)

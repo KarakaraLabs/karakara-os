@@ -23,7 +23,7 @@ require_cmd() {
 
 require_cmd helm kubectl
 
-ARGOCD_VALUES="${ROOT}/deploy/values/local/argocd.yaml"
+ARGOCD_VALUES="${ROOT}/operations/deployment/values/local/argocd.yaml"
 [[ -f "${ARGOCD_VALUES}" ]] || die "missing ${ARGOCD_VALUES}"
 
 helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true

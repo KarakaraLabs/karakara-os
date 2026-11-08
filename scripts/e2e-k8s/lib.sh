@@ -23,7 +23,7 @@ RELEASE_NAME="karakara"                 # helm releaseName in Argo Application
 IMAGE_NAME="karakara-runner"
 IMAGE_TAG=""                            # set by resolve_image_tag
 IMAGE_PULL_POLICY="Always"              # local k3d registry contract
-LAST_IMAGE_TAG_FILE="deploy/values/generated/.last-image-tag"
+LAST_IMAGE_TAG_FILE="operations/deployment/values/generated/.last-image-tag"
 SURREAL_USER="e2e"
 SURREAL_PASS="e2e-test-pass"
 E2E_TOKEN="e2e-token-${RANDOM}"         # also written into runner-token secret
@@ -31,7 +31,7 @@ RUNNER0_PORT=18081
 RUNNER1_PORT=18082
 REMOTE_PORT=18080
 RUNNER_CONTAINER_PORT=18080             # chart value runner.service.headless.port
-# k3d-managed local registry contract (see deploy/k3d/cluster.yaml).
+# k3d-managed local registry contract (see operations/deployment/k3d/cluster.yaml).
 # The cluster pulls images from k3d-karakara-registry:5000; the host
 # pushes to localhost:5400. ensure_runner_image_available wires both.
 REGISTRY_NAME="karakara-registry"
@@ -266,7 +266,7 @@ publish_and_deploy() {
 #   provenance — baml-rt-provenance src/surreal_store/schema.rs
 #   config     — baml-rt-config src/store.rs
 #   baml       — baml-rt-repository + baml-agent-runner deployment_state
-# See deploy/helm/karakara-os/README.md#surrealdb-namespaces for the full
+# See operations/deployment/helm/karakara-os/README.md#surrealdb-namespaces for the full
 # NS/DB table. Update both this list and the README when a crate adds a
 # new namespace.
 readonly SURREAL_KNOWN_NAMESPACES=(cluster provenance config baml)
@@ -309,7 +309,7 @@ surreal_query() {
   if (( ns_known == 0 )); then
     local known_list
     known_list="$(IFS=,; echo "${SURREAL_KNOWN_NAMESPACES[*]}")"
-    jq -nc --arg msg "unknown namespace: '${ns}'; known: ${known_list}. See deploy/helm/karakara-os/README.md#surrealdb-namespaces." \
+    jq -nc --arg msg "unknown namespace: '${ns}'; known: ${known_list}. See operations/deployment/helm/karakara-os/README.md#surrealdb-namespaces." \
       '[{result:[], _query_status:"failed", _error:$msg}]'
     return 1
   fi
@@ -681,10 +681,10 @@ ensure_image_tag_or_nonce() {
 }
 
 # write_scenario_values [path]
-# Copies a Helm values overlay to deploy/values/generated/scenario.yaml for Argo sync.
+# Copies a Helm values overlay to operations/deployment/values/generated/scenario.yaml for Argo sync.
 write_scenario_values() {
   local src="${1:-}"
-  local out="${REPO_ROOT}/deploy/values/generated/scenario.yaml"
+  local out="${REPO_ROOT}/operations/deployment/values/generated/scenario.yaml"
   mkdir -p "$(dirname "${out}")"
   if [[ -z "${src}" ]]; then
     printf '%s\n' '# no scenario overrides' >"${out}"
@@ -703,7 +703,7 @@ ensure_k3d_cluster() {
     log_info "Reusing k3d cluster '${CLUSTER_NAME}'"
   else
     log_step "Creating k3d cluster '${CLUSTER_NAME}'"
-    k3d cluster create --config "${REPO_ROOT}/deploy/k3d/cluster.yaml"
+    k3d cluster create --config "${REPO_ROOT}/operations/deployment/k3d/cluster.yaml"
   fi
   ensure_k3d_registry
   connect_registry_to_cluster
@@ -752,7 +752,7 @@ ensure_k3d_registry() {
 # connect_registry_to_cluster — attach ${REGISTRY_CONTAINER_HOST} to the
 # k3d cluster's docker network so containerd inside the k3s nodes can
 # resolve the registry hostname. The mirror config in
-# deploy/k3d/cluster.yaml points containerd at this in-cluster name.
+# operations/deployment/k3d/cluster.yaml points containerd at this in-cluster name.
 #
 # Idempotent: skipping when already connected.
 connect_registry_to_cluster() {
@@ -897,7 +897,7 @@ TOML
 # rustlog_override <RUST_LOG-value> — write scenario values for router debug logging.
 rustlog_override() {
   local value="$1"
-  local out="${REPO_ROOT}/deploy/values/generated/scenario.yaml"
+  local out="${REPO_ROOT}/operations/deployment/values/generated/scenario.yaml"
   mkdir -p "$(dirname "${out}")"
   cat >"${out}" <<EOF
 runner:

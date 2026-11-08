@@ -22,7 +22,7 @@ require_cmd kubectl
 
 bash "${ROOT}/scripts/e2e-k8s/render-argocd-apps.sh"
 
-kubectl apply -f "${ROOT}/deploy/argocd/.rendered/project.yaml"
-kubectl apply -f "${ROOT}/deploy/argocd/.rendered/root-application.yaml"
+kubectl apply -f "${ROOT}/operations/deployment/argocd/.rendered/project.yaml"
+kubectl apply -f "${ROOT}/operations/deployment/argocd/.rendered/root-application.yaml"
 
 echo "argocd-bootstrap-apps: applied AppProject + karakara-os Application"

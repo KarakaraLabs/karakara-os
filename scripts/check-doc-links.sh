@@ -42,7 +42,7 @@ while IFS= read -r -d '' file; do
   check_file "$file"
 done < <(
   find . \
-    \( -path './docs' -o -path './deploy' -o -path './observability' -o -path './crates' -o -maxdepth 1 -name '*.md' -o -path './web/README.md' -o -path './examples' \) \
+    \( -path './docs' -o -path './operations' -o -path './crates' -o -maxdepth 1 -name '*.md' -o -path './web/README.md' -o -path './examples' \) \
     -name '*.md' \
     -not -path './target/*' \
     -not -path '*/node_modules/*' \
