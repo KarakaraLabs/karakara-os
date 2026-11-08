@@ -456,12 +456,15 @@ pub fn setup_baml_runtime_manager(schema_path: &str) -> BamlRuntimeManager {
     manager
 }
 
+fn shared_baml_fixture_dir() -> PathBuf {
+    workspace_root().join("tests/fixtures/baml_src")
+}
+
 pub fn setup_baml_runtime_manager_default() -> BamlRuntimeManager {
     setup_baml_runtime_manager(
-        workspace_root()
-            .join("baml_src")
+        shared_baml_fixture_dir()
             .to_str()
-            .expect("Workspace baml_src path should be valid"),
+            .expect("Shared BAML fixture path should be valid"),
     )
 }
 
@@ -477,10 +480,9 @@ pub fn setup_baml_runtime_manager_no_llm() -> BamlRuntimeManager {
 
 pub fn setup_baml_runtime_default() -> Arc<RwLock<BamlRuntimeManager>> {
     setup_baml_runtime(
-        workspace_root()
-            .join("baml_src")
+        shared_baml_fixture_dir()
             .to_str()
-            .expect("Workspace baml_src path should be valid"),
+            .expect("Shared BAML fixture path should be valid"),
     )
 }
 
@@ -546,9 +548,9 @@ pub fn require_api_key() -> String {
 }
 
 pub fn ensure_baml_src_exists() -> bool {
-    let baml_src = workspace_root().join("baml_src");
+    let baml_src = shared_baml_fixture_dir();
     if !baml_src.exists() {
-        println!("Skipping test: baml_src directory not found");
+        println!("Skipping test: shared BAML fixture directory not found");
         return false;
     }
     true

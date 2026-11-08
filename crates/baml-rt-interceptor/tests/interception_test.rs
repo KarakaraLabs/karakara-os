@@ -370,7 +370,7 @@ async fn test_blocking_interception_integration() {
     // Block on the client name (not the model id) so this stays decoupled from
     // the env-controlled BAML_TEST_MODEL — the interceptor matches either
     // `context.model` or `context.client`, and SimpleGreeting always points at
-    // `client OpenRouterGPT` in `baml_src/simple_prompt.baml`.
+    // `client OpenRouterGPT` in `tests/fixtures/baml_src/simple_prompt.baml`.
     baml_manager
         .register_llm_interceptor(BlockingInterceptor::new(vec!["OpenRouterGPT".to_string()]))
         .await;
@@ -396,7 +396,7 @@ async fn test_blocking_interception_integration() {
 
     // If blocking worked, we should get an error containing "blocked"
     // The blocking interceptor matches the client name `OpenRouterGPT` declared
-    // by SimpleGreeting in `baml_src/simple_prompt.baml`.
+    // by SimpleGreeting in `tests/fixtures/baml_src/simple_prompt.baml`.
     match result {
         Ok(_) => {
             // If we get here, blocking didn't work - the model pattern might not have matched

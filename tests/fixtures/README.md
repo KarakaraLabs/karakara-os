@@ -25,8 +25,7 @@ This directory contains test fixtures used by the test suite.
 
   **Pre-commit:** With `pre-commit install`, the `regen-fixtures` hook runs `regen_fixtures` when staged files match builder/tools/agent paths (see `.pre-commit-config.yaml`) and fails if `agents/` or `tests/fixtures/agents/` would change—stage the regenerated files and commit again. Skip (emergency only): `SKIP=regen-fixtures git commit …`. CI does **not** run regen; keep generated outputs committed.
 
-- **`baml/`** — BAML schema fixtures (if present)
-  - Used for schema-level tests
+- **`baml_src/`** — Shared BAML runtime fixtures used by runtime and interceptor tests
 
 - **`incidents/`** — Seeded LGTM-style outage datasets used by the Grafana/LGTM
   investigation slice (#512). Each scenario directory carries metrics, logs,

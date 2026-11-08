@@ -52,8 +52,7 @@ impl LLMInterceptor for StubSimpleGreetingInterceptor {
 
 #[tokio::test]
 async fn test_load_and_execute_simple_greeting() {
-    // Load schema from baml_src (compiled directory)
-    // TODO: Migrate to use compiled fixtures once we have a better strategy
+    // Load the shared BAML schema fixture.
     if !ensure_baml_src_exists() {
         return;
     }
@@ -103,7 +102,7 @@ async fn test_load_and_execute_simple_greeting() {
 
 #[tokio::test]
 async fn test_invoke_nonexistent_function_fails() {
-    // Load schema from baml_src directory (not a specific file)
+    // Load the shared BAML schema fixture.
     if !ensure_baml_src_exists() {
         return;
     }
