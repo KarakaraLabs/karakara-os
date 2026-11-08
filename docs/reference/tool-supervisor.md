@@ -172,4 +172,4 @@ cargo +nightly fuzz run wire_state_machine
 ```
 
 The runtime image contract and build steps are in
-[`docker/tool-runtime/README.md`](../../docker/tool-runtime/README.md).
+[`operations/containers/tool-runtime/README.md`](../../operations/containers/tool-runtime/README.md).

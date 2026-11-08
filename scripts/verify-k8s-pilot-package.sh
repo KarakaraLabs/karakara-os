@@ -113,6 +113,7 @@ build_image() {
   log_step "Building runner image (${IMAGE_NAME}:${IMAGE_TAG})"
   docker build \
     --build-arg "VERSION=$(bash "${REPO_ROOT}/scripts/release/workspace-version.sh")" \
+    -f "${REPO_ROOT}/operations/containers/runner.Dockerfile" \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
 }
 

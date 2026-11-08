@@ -96,7 +96,8 @@ build_phase() {
 
   log_step "Building Docker image"
   ensure_image_tag_or_nonce
-  docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
+  docker build -f "${REPO_ROOT}/operations/containers/runner.Dockerfile" \
+    -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
 }
 
 # ============================================================================

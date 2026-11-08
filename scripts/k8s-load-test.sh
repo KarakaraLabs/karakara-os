@@ -268,7 +268,7 @@ resync_state_with_cluster() {
 probe_otlp_reachability() {
   log_step "Verifying OTLP gRPC reachability from inside ${RUNNER_POD_0}"
   # The runtime image is debian:bookworm-slim with only ca-certificates +
-  # libssl3 + curl + nodejs (Dockerfile:39-48). /dev/tcp would need bash
+  # libssl3 + curl + nodejs (operations/containers/runner.Dockerfile:39-48). /dev/tcp would need bash
   # (absent). Node 22 IS installed, so a plain net.createConnection is the
   # correct TCP probe. DNS-only probes like `getent` would not detect a
   # running-but-unlistening collector.

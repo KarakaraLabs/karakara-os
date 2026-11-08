@@ -71,7 +71,8 @@ For a scripted, end-to-end local validation of this same install path (cluster â
 There is no published Karakara runner image. `runner.image.repository` and `runner.image.tag` are required values with no defaults. You must build and push the runner image to your own registry:
 
 ```bash
-docker build -t your-registry.example.com/karakara-runner:0.1.0 .
+docker build -f operations/containers/runner.Dockerfile \
+  -t your-registry.example.com/karakara-runner:0.1.0 .
 docker push your-registry.example.com/karakara-runner:0.1.0
 ```
 

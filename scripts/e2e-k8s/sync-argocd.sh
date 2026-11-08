@@ -60,7 +60,7 @@ _sync_via_job() {
   local SYNC_TAG="${KARAKARA_ARGO_SYNC_IMAGE_TAG:-local-argocd-sync}"
   local HOST_REGISTRY="localhost:${REGISTRY_HOST_PORT}"
   local IN_CLUSTER_IMAGE="${REGISTRY_CONTAINER_HOST}:5000/karakara-argocd-sync:${SYNC_TAG}"
-  local DOCKERFILE="${ROOT}/docker/karakara-argocd-sync.Dockerfile"
+  local DOCKERFILE="${ROOT}/operations/containers/argocd-sync.Dockerfile"
 
   echo "sync-argocd: mode=job — building ${IN_CLUSTER_IMAGE}"
   docker build -f "${DOCKERFILE}" -t "${HOST_REGISTRY}/karakara-argocd-sync:${SYNC_TAG}" "${ROOT}"

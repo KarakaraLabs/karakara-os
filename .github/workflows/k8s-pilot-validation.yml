@@ -52,7 +52,7 @@ jobs:
             pilot:
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'Dockerfile'
+              - 'operations/containers/runner.Dockerfile'
               - 'rust-toolchain.toml'
               - 'crates/**'
               - 'models/fastembed/**'
@@ -61,7 +61,7 @@ jobs:
               - 'operations/deployment/k3d/**'
               - 'operations/deployment/argocd/**'
               - 'operations/deployment/values/**'
-              - 'docker/karakara-argocd-sync.Dockerfile'
+              - 'operations/containers/argocd-sync.Dockerfile'
               - 'scripts/verify-k8s-pilot-package.sh'
               - 'scripts/k8s-pilot-smoke.sh'
               - 'scripts/e2e-k8s/**'
@@ -92,7 +92,7 @@ jobs:
         # build-essential / pkg-config / libssl-dev / libclang-dev / lld
         # are needed by `cargo run -p karakara-os` during the
         # smoke step. zstd + git-lfs hydrate the embedded ONNX models the
-        # Dockerfile copies into the runtime image.
+        # operations/containers/runner.Dockerfile copies into the runtime image.
         run: |
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
@@ -157,7 +157,7 @@ jobs:
           k3d version
 
       - name: Materialize ONNX model artifacts (git-lfs)
-        # The Dockerfile copies models/fastembed and fails the build if
+        # The runner Dockerfile copies models/fastembed and fails the build if
         # ONNX files are still LFS pointer stubs.
         run: |
           git lfs install --local

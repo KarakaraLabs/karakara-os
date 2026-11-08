@@ -32,7 +32,8 @@ For local k3d development use `just up`. See [`RELEASING.md`](../../RELEASING.md
 
 ```bash
 # Build
-docker build -t your-registry.example.com/karakara-runner:0.1.0 .
+docker build -f operations/containers/runner.Dockerfile \
+  -t your-registry.example.com/karakara-runner:0.1.0 .
 
 # Push to your registry
 docker push your-registry.example.com/karakara-runner:0.1.0

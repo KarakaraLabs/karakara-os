@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a Rust workspace centered on `crates/`, which holds the runtime, runner, builder, tool, integration, and support crates. Product agents live in `agents/<agent-name>/`; reusable and test-only agents live in `tests/fixtures/agents/`. External-tool authoring SDKs live in `sdk/<language>/`. The Vue UI is isolated in `web/`. Operational assets live in `operations/observability/` and `operations/deployment/`. Documentation lives in `docs/` — see [`docs/README.md`](docs/README.md) for the assertion / reference / runbook map.
+This repository is a Rust workspace centered on `crates/`, which holds the runtime, runner, builder, tool, integration, and support crates. Product agents live in `agents/<agent-name>/`; reusable and test-only agents live in `tests/fixtures/agents/`. External-tool authoring SDKs live in `sdk/<language>/`. The Vue UI is isolated in `web/`. Container definitions, deployment configuration, and observability assets live in `operations/`. Documentation lives in `docs/` — see [`docs/README.md`](docs/README.md) for the assertion / reference / runbook map.
 
 Use `tests/fixtures/baml_src/` for shared test schemas, and `crates/test-support` for common test helpers instead of copying setup code. The root `baml_src/host/` directory contains production host-compaction assets.
 

@@ -165,7 +165,8 @@ build_phase() {
   (cd "$REPO_ROOT" && cargo build --release -p baml-rt-builder --bin baml-agent-builder --all-features)
   log_step "Building runner Docker image (${IMAGE_NAME}:${IMAGE_TAG})"
   ensure_image_tag_or_nonce
-  docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
+  docker build -f "${REPO_ROOT}/operations/containers/runner.Dockerfile" \
+    -t "${IMAGE_NAME}:${IMAGE_TAG}" "$REPO_ROOT"
 }
 
 setup_cluster() {

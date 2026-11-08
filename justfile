@@ -679,6 +679,7 @@ up:
     ensure_k3d_cluster
     ensure_image_tag_or_nonce
     docker build --build-arg "VERSION=$(bash "${root}/scripts/release/workspace-version.sh")" \
+      -f "${root}/operations/containers/runner.Dockerfile" \
       -t "${IMAGE_NAME}:${IMAGE_TAG}" "${root}"
     bringup_pilot_stack
     log_info "Pilot stack ready (tag=${IMAGE_TAG})"
@@ -694,6 +695,7 @@ sync:
     bash "${root}/scripts/e2e-k8s/image-tag-nonce.sh"
     resolve_image_tag
     docker build --build-arg "VERSION=$(bash "${root}/scripts/release/workspace-version.sh")" \
+      -f "${root}/operations/containers/runner.Dockerfile" \
       -t "${IMAGE_NAME}:${IMAGE_TAG}" "${root}"
     ensure_k3d_registry
     connect_registry_to_cluster
@@ -789,7 +791,7 @@ tool-runtime-image:
     set -euo pipefail
     cd "$(git rev-parse --show-toplevel)"
     cargo build --release -p baml-tool-supervisor
-    docker build --provenance=false -f docker/tool-runtime/node.Dockerfile -t karakara/tool-runtime:node-22 .
+    docker build --provenance=false -f operations/containers/tool-runtime/node.Dockerfile -t karakara/tool-runtime:node-22 .
     echo "Image built. Push digest-pinned, then register:"
     docker image inspect karakara/tool-runtime:node-22 \
         | awk -F'"' '/"Id":/ { print $4; exit }'
@@ -806,7 +808,7 @@ test-kvm:
     [[ -e /dev/kvm ]] || { echo "test-kvm: /dev/kvm is not available" >&2; exit 1; }
     if [[ -z "${KARAKARA_KVM_IMAGE:-}" ]]; then
         ref=localhost:5001/karakara/tool-runtime:node-22
-        docker build --provenance=false -f docker/tool-runtime/node.Dockerfile -t "$ref" .
+        docker build --provenance=false -f operations/containers/tool-runtime/node.Dockerfile -t "$ref" .
         docker push "$ref" >/dev/null
         KARAKARA_KVM_IMAGE="$(docker image inspect "$ref" \
             --format '{{{{range .RepoDigests}}{{{{println .}}{{{{end}}' \

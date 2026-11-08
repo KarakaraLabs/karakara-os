@@ -51,7 +51,7 @@ else
     if [[ "${REBUILD_RUNTIME_IMAGE:-1}" == "1" ]]; then
       log "Rebuilding the local runtime image (includes uncommitted supervisor changes)"
       docker build --provenance=false \
-        -f docker/tool-runtime/node.Dockerfile \
+        -f operations/containers/tool-runtime/node.Dockerfile \
         -t "$RUNTIME_IMAGE_REF" .
     fi
     log "Publishing the local runtime image"
