@@ -149,14 +149,14 @@ When consolidating tests, update the authority map row:
 
 Use `crates/test-support` for setup and fixtures rather than duplicating logic:
 
-- `setup_baml_runtime_default()` and `setup_baml_runtime_from_fixture()` for runtime setup
+- `setup_baml_runtime_default()` for the shared `tests/fixtures/baml_src/` schema and `setup_baml_runtime_from_fixture()` for agent fixtures
 - `setup_bridge()` for QuickJS bridge setup
 - `agent_fixture()` and `fixture_path()` for fixture files
 - **`ensure_fixture_runtime_types()`** — call at the start of any E2E test that loads from
   `tests/fixtures/agents/` (e.g. `agent_fixture("stream-baml-tool")` or `setup_baml_runtime_from_fixture(...)`).
   Ensures fixture runtime types are regenerated once per test process before use.
 - `require_api_key()` to gate tests that require `OPENROUTER_API_KEY`
-- `ensure_baml_src_exists()` to skip tests when `baml_src` is missing
+- `ensure_baml_src_exists()` to skip tests when the shared `tests/fixtures/baml_src/` schema is missing
 - **`test_support::testing::provenance_fixtures`** — `build_isolated_store`, `bootstrap_task`, `complete_task`, `wall_clock_tick`, fixed test agent/context helpers
 - **`test_support::json_snapshot_test!`** — async provenance-style snapshot tests (setup + query + insta)
 

@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 This repository is a Rust workspace centered on `crates/`, which holds the runtime, runner, builder, tool, integration, and support crates. Product agents live in `agents/<agent-name>/`; reusable and test-only agents live in `tests/fixtures/agents/`. The Vue UI is isolated in `web/`. Operational assets live in `observability/` and `deploy/`. Documentation lives in `docs/` — see [`docs/README.md`](docs/README.md) for the assertion / reference / runbook map.
 
-Use `baml_src/` for shared example schemas, and `crates/test-support` for common test helpers instead of copying setup code.
+Use `tests/fixtures/baml_src/` for shared test schemas, and `crates/test-support` for common test helpers instead of copying setup code. The root `baml_src/host/` directory contains production host-compaction assets.
 
 ## Build, Test, and Development Commands
 - `just build` or `just build-debug`: build `karak` in release or debug mode.
