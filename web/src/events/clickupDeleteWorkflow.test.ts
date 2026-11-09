@@ -15,6 +15,8 @@ import {
 import {
   delegatedPromptFromOutput,
   parseRouteOperation,
+  planStepMessage,
+  replyText,
 } from "../../../agents/coordinator-agent/src/routing.ts";
 
 const test1 = { id: "86afcwxrj", name: "Test1", status: "in progress" };
@@ -232,5 +234,38 @@ describe("delegated prompts", () => {
     expect(
       delegatedPromptFromOutput({ chunks: [{ statusUpdate: "not json" }] }),
     ).toBeNull();
+  });
+});
+
+describe("coordinator plan steps", () => {
+  const earlier = [
+    { agent_package: "notion-agent", goal: "Find the doc", answer: "Found page: Roadmap" },
+  ];
+
+  it("sends the first step exactly as planned", () => {
+    expect(planStepMessage("Find the doc", [], null)).toBe("Find the doc");
+  });
+
+  it.each(["sequence", "aggregate"] as const)("keeps %s steps independent", (shape) => {
+    expect(planStepMessage("Delete Test1", earlier, shape)).toBe("Delete Test1");
+  });
+
+  it.each(["foreach", null] as const)("carries earlier answers into a %s step", (shape) => {
+    const message = planStepMessage("Create a task for each page", earlier, shape);
+    expect(message.startsWith("Create a task for each page")).toBe(true);
+    expect(message).toContain("[notion-agent]");
+    expect(message).toContain("Found page: Roadmap");
+  });
+
+  it("flattens a reply's text and data parts in order", () => {
+    expect(
+      replyText({
+        parts: [
+          { type: "text", text: "Deleted." },
+          { type: "data", data: '{"id":"abc"}', media_type: "application/json" },
+        ],
+        citations: [],
+      }),
+    ).toBe('Deleted.\n{"id":"abc"}');
   });
 });

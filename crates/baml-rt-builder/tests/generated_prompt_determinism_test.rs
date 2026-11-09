@@ -40,7 +40,7 @@ fn generated_prompt_artifacts_match_committed_hashes() {
         Fixture {
             name: "coordinator-agent",
             source: root.join("agents/coordinator-agent"),
-            prelude_hash: "6dde33e9e60f56a1eb2ab54b70750502aa2c8ea65eeb49706b95e6077301e533",
+            prelude_hash: "ff1eb4b4cd13b11afb787a052293d285a6de63acf3dc7c9d66395dd938151b51",
             has_catalog: true,
         },
         Fixture {

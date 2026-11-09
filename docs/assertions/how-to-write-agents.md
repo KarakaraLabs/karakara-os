@@ -471,7 +471,7 @@ For coordinators that **delegate** or **multi-hop**, avoid “plan once, march f
 
 Cap loop iterations in TypeScript; keep branching **thin**.
 
-Canonical reference implementation: **[coordinator-agent](../agents/coordinator-agent/)** — **`ClassifyCoordinatorTurn`** (Ready vs task clarification vs meta-only) with **`awaitInput`** until a delegatable task exists or the turn is clearly non-task; then **`submitIntent`** before **`GetDiscoverAgentsPlan`**; a **first execution session** whose committed step runs **`MakeStructuredPlan`** (`StandardStructuredPlan`); a **second execution session** with per-step **`DecideDelegationAction`** and synthesis via **`CoordinatorSynthesizeReply`** producing the operator-visible **`StructuredReply`**.
+Canonical reference implementation: **[coordinator-agent](../agents/coordinator-agent/)** — **`ClassifyCoordinatorTurn`** (Ready vs task clarification vs meta-only) with **`awaitInput`** until a delegatable task exists or the turn is clearly non-task; then **`submitIntent`** before **`GetDiscoverAgentsPlan`**; a **first execution session** whose committed step runs **`MakeStructuredPlan`** (`StandardStructuredPlan`); a **second execution session** that forwards each plan step to its specialist (relaying any question to the user), with synthesis via **`CoordinatorSynthesizeReply`** producing the operator-visible **`StructuredReply`**.
 
 ### 4.4 Linear “reporting agent” variant
 

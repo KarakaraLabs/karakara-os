@@ -6,6 +6,7 @@
  * Pure functions, no globals: importing this module has no side effects, so it can be tested
  * directly.
  */
+import type { StructuredReply } from "./baml-runtime";
 
 export type CoordinatorRouteTarget = {
   agent_package: string;
@@ -115,6 +116,32 @@ export function delegatedPromptFromOutput(output: unknown): string | null {
     if (prompt) return prompt;
   }
   return null;
+}
+
+/** One specialist's final answer, as the coordinator keeps it for later steps and synthesis. */
+export type SpecialistAnswer = { agent_package: string; goal: string; answer: string };
+
+/** A delegated reply as plain text: text parts as written, data parts as their JSON string. */
+export function replyText(reply: StructuredReply): string {
+  return reply.parts
+    .map((part) => (part.type === "text" ? part.text : part.data))
+    .join("\n");
+}
+
+/**
+ * The message for one plan step. `sequence` and `aggregate` steps are independent by definition, so
+ * they get exactly the planned goal. Other steps may act on what came before (`foreach`, or a plan
+ * with no declared route), and a specialist cannot see other agents' conversations, so earlier
+ * answers travel in the message.
+ */
+export function planStepMessage(
+  goal: string,
+  earlier: SpecialistAnswer[],
+  shape: CoordinatorRoute["shape"] | null,
+): string {
+  if (earlier.length === 0 || shape === "sequence" || shape === "aggregate") return goal;
+  const answers = earlier.map((item) => `[${item.agent_package}]\n${item.answer}`).join("\n\n");
+  return `${goal}\n\nResults from earlier steps:\n\n${answers}`;
 }
 
 /** Tolerant parse of the classifier's routing decision; invalid input becomes `null`. */

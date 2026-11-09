@@ -262,24 +262,18 @@ Do not add text before or after the JSON object.
 "#
 }
 
-/// Coordinate with a specialist agent to achieve a goal.
-/// FSM phase instructions are injected by codegen — this prompt carries goal context only.
-function DecideDelegationAction(
-  goal: string,
-  agent_package: string,
-) -> SystemInternalA2aSessionPlan | string? {
-  client DefaultClient
-  prompt #"
-    Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
-    Return `null` when the goal is satisfied or after 2+ exchanges.
-  "#
+class CoordinatorSpecialistAnswer {
+  agent_package string
+  goal string @description("What this specialist was asked to do.")
+  answer string @description("The specialist's final answer, as the user would read it.")
 }
 
-// Synthesize the user-visible reply after delegation step(s).
-// The session history carries the Read results from the preceding DecideDelegationAction calls.
+// Synthesize the user-visible reply after a multi-agent plan. Each specialist's final answer is
+// passed in directly; its tool results stay with the specialist.
 function CoordinatorSynthesizeReply(
   user_message: string,
   plan_objective: string,
+  specialist_answers: CoordinatorSpecialistAnswer[],
 ) -> StructuredReply {
   client DefaultClient
   prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
@@ -304,8 +298,16 @@ You are the coordinator agent: professional, concise, and accurate. Use prior tu
     The user asked: {{ user_message }}
     Plan objective: {{ plan_objective }}
 
-    The transcript below contains the results from your specialist agent(s).
-    Match the output schema exactly (StructuredReply: parts + citations).
+    Final answers from your specialist agents, in plan order:
+    {% for item in specialist_answers %}
+    --- {{ item.agent_package }} (asked: {{ item.goal }}) ---
+    {{ item.answer }}
+    {% endfor %}
+    --- end of answers ---
+
+    Report only what these answers say. Never say an action happened unless its answer says so; if a
+    specialist cancelled or could not do something, say that plainly.
+    Match the output schema exactly (StructuredReply: parts + citations). Set citations to an empty list.
     Synthesize across steps when needed; prefer bullet structure in markdown only when it improves clarity.
 
 {{ ctx.output_format }}
