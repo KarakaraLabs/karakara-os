@@ -28,17 +28,6 @@ export interface AgentEventSubscriptionDto {
   [key: string]: JsonValue | undefined;
 }
 
-export interface ArchivePageReadInput { archive_ref: string;
-offset: number | null;
-limit: number | null;
- }
-
-export interface ArchiveSearchReadInput { archive_ref: string;
-grep: string;
-offset: number | null;
-limit: number | null;
- }
-
 export type BlockRenderMode = "raw" | "enriched";
 
 export interface ConversationChunk {
@@ -159,8 +148,10 @@ export interface NotionBlockSummary {
   [key: string]: JsonValue | undefined;
 }
 
-export interface NotionFoundPage { title: string;
+export interface NotionFoundPage { id: string;
+title: string;
 url: string;
+last_edited_time: string | null;
  }
 
 export interface NotionGetPageBlocksInput {
@@ -177,10 +168,6 @@ export interface NotionGetPageInput {
 
 export type NotionInput = NotionSearchPagesInput | NotionGetPageInput | NotionGetPageBlocksInput;
 
-export interface NotionIntent { kind: "intent";
-intent: string;
- }
-
 export interface NotionOutput {
   pages?: NotionPageSummary[];
   blocks?: NotionBlockSummary[];
@@ -191,7 +178,8 @@ export interface NotionOutput {
   [key: string]: JsonValue | undefined;
 }
 
-export interface NotionPageContent { title: string;
+export interface NotionPageContent { id: string;
+title: string;
 url: string;
 text: string;
  }
@@ -204,13 +192,18 @@ export interface NotionPageSummary {
   [key: string]: JsonValue | undefined;
 }
 
-export interface NotionPlan { goal: string;
-steps: NotionPlanStep[];
+export interface NotionReadFailure { title: string;
+url: string;
+reason: string;
  }
 
-export interface NotionPlanStep { id: string;
-description: string;
-kind: "discover" | "read" | "synthesize";
+export interface NotionRetrieval { kind: "retrieve";
+goal: string;
+search_queries: string[];
+page_urls: string[];
+read_mode: "search_results" | "metadata" | "content";
+selection: "best_matches" | "all_matches";
+max_pages: number;
  }
 
 export interface NotionSearchPagesInput {
@@ -224,34 +217,6 @@ export interface NotionSource {
   url: string;
   [key: string]: JsonValue | undefined;
 }
-
-export interface SupportNotionAbortStep { op: "Abort";
- }
-
-export interface SupportNotionFinishStep { op: "Finish";
- }
-
-export interface SupportNotionOpenStep { op: "Open";
-tool_name: "support/notion";
- }
-
-export interface SupportNotionPageReadStep { op: "PageRead";
-input: ArchivePageReadInput;
- }
-
-export interface SupportNotionSearchReadStep { op: "SearchRead";
-input: ArchiveSearchReadInput;
- }
-
-export interface SupportNotionSendStep { op: "Send";
-tool_name: "support/notion";
-input: NotionSearchPagesInput | NotionGetPageInput | NotionGetPageBlocksInput;
-citations: string[];
- }
-
-export interface SupportNotionSessionPlan { step: SupportNotionOpenStep | SupportNotionSendStep | SupportNotionSearchReadStep | SupportNotionPageReadStep | SupportNotionFinishStep | SupportNotionAbortStep;
-citations: string[];
- }
 
 export interface ToolDiscoveryRecordDto {
   name: string;
@@ -267,13 +232,9 @@ export interface ToolDiscoveryRecordDto {
 
 declare global {
 
-declare function AnswerFromNotion(args: { goal: string; user_message: string; found_pages: NotionFoundPage[]; page_contents: NotionPageContent[]; content_truncated: boolean } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
+declare function AnswerFromNotion(args: { goal: string; user_message: string; read_mode: string; matched_page_count: number; found_pages: NotionFoundPage[]; page_contents: NotionPageContent[]; read_failures: NotionReadFailure[]; content_truncated: boolean; result_list_truncated: boolean; search_truncated: boolean } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
 
-declare function ChooseNotionAction(args: { goal: string; step_description: string } & { __baml_invocation_token?: string }): Promise<SupportNotionSessionPlan>;
-
-declare function InferNotionIntent(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<NeedClarification | NotRelevant | NotionIntent>;
-
-declare function PlanNotionWork(args: { intent: string } & { __baml_invocation_token?: string }): Promise<NotionPlan>;
+declare function PlanNotionRetrieval(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<NeedClarification | NotRelevant | NotionRetrieval>;
 
 }
 
@@ -736,80 +697,4 @@ declare global {
     toolName: T,
     ...args: ToolOpenArgs<T>
   ): Promise<ToolSession<ToolInput<T>, ToolOutput<T>>>;
-}
-
-/** Generated Step Executor bindings (function -> typed step-executor args/result). */
-
-export type StepExecutorFunctionName = "ChooseNotionAction" | "ChooseNotionAction__active__support_notion" | "ChooseNotionAction__consume__support_notion" | "ChooseNotionAction__entry";
-
-export interface SessionContext {
-    contract_version: "session_context_v5";
-    session_open: boolean;
-    status: "awaiting_open" | "just_opened" | "result_ready" | "done";
-    last_step_op?: "open" | "send" | "duplicate_send" | "read" | "finish" | "abort";
-    last_step_status?: "open" | "done" | "duplicate" | "finished" | "aborted";
-    last_archive_ref?: string;
-    last_output_header?: string;
-    last_completion?: string;
-    last_receipt?: { archive_ref: string; tool_name: string; action_identity: string; line_count: number; byte_count: number; size_display: string; completion: string; search_hints?: string[] };
-    archives?: Array<{ archive_ref: string; header: string }>;
-}
-
-/** Last archive read op for this hop (`StepExecutorStateInput.history_context`); distinct from tool-session `SessionStepOp` in Rust provenance. */
-
-export type HistoryContextSessionOp = "SearchRead" | "PageRead";
-
-export type HistoryContextStatus = "done" | "streaming" | "suspended" | "error";
-
-export interface HistoryContext {
-    hop: number;
-    op: HistoryContextSessionOp;
-    status: HistoryContextStatus;
-    truncated: boolean;
-    cursor: string | null;
-    payload: Record<string, unknown> | null;
-}
-
-export interface StepExecutorStateInput {
-    session_context?: SessionContext | null;
-    history_context?: HistoryContext | null;
-}
-
-export interface StepExecutorRunOptions {
-    max_steps?: number;
-    onInputRequired?: (prompt: string) => Promise<ChatMessage>;
-}
-
-export interface StepPlanRecovery {
-    code: string;
-    disposition: ErrorDisposition;
-    mistake: string;
-    invariant: string;
-    fix_steps?: string[];
-}
-
-export type StepExecutorRunEnvelope<R = unknown> = { outcome: "completed", last: R, steps: R[], session_context: SessionContext, selected_tool: string | null } | { outcome: "agent_correctable", recovery: StepPlanRecovery } | { outcome: "fatal", message: string, code?: string | null };
-
-/**
- * Result of runGeneratedStepExecutor: discriminated envelope (`outcome`).
- * On `completed`, fields match the former flat telemetry shape.
- * `agent_correctable` carries structured recovery — not a thrown JS error.
- * User-facing replies are still SessionResult.message from the chat handler.
- */
-
-export type StepExecutorRunResult<R = unknown> = StepExecutorRunEnvelope<R>;
-
-export interface StepExecutorFunctionMap {
-  ChooseNotionAction: { args: Parameters<typeof ChooseNotionAction>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction>>; };
-  ChooseNotionAction__active__support_notion: { args: Parameters<typeof ChooseNotionAction__active__support_notion>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__active__support_notion>>; };
-  ChooseNotionAction__consume__support_notion: { args: Parameters<typeof ChooseNotionAction__consume__support_notion>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__consume__support_notion>>; };
-  ChooseNotionAction__entry: { args: Parameters<typeof ChooseNotionAction__entry>[0] & StepExecutorStateInput; result: Awaited<ReturnType<typeof ChooseNotionAction__entry>>; };
-}
-
-declare global {
-  function runGeneratedStepExecutor<F extends StepExecutorFunctionName>(
-    stepExecutor: F,
-    args: Omit<StepExecutorFunctionMap[F]["args"], keyof StepExecutorStateInput>,
-    options?: StepExecutorRunOptions
-  ): Promise<StepExecutorRunEnvelope<StepExecutorFunctionMap[F]["result"]>>;
 }
