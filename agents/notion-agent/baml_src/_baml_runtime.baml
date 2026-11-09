@@ -593,7 +593,9 @@ Deterministic overrides:
 - After Send completes with status done and the tool output satisfies this step, emit Finish.
   Do not re-Send the same block_id, page_id, or search query after a Done.
 - Re-Send only when the prior Send returned has_more=true and you must paginate with start_cursor.
-- When archive lines are needed for synthesis, PageRead last_archive_ref before Finish.
+- After a search, PageRead last_archive_ref when you need page ids for the next step.
+- After a Send that read a page's blocks completes, emit Finish. The host reads the fetched
+  page text itself, so do not page through that archive.
 - If status is done and last_step_op is read, emit Finish — never read the same @N twice.
 
 Output: one JSON object matching the narrowed phase return type. No markdown or prose.
@@ -657,7 +659,9 @@ Deterministic overrides:
 - After Send completes with status done and the tool output satisfies this step, emit Finish.
   Do not re-Send the same block_id, page_id, or search query after a Done.
 - Re-Send only when the prior Send returned has_more=true and you must paginate with start_cursor.
-- When archive lines are needed for synthesis, PageRead last_archive_ref before Finish.
+- After a search, PageRead last_archive_ref when you need page ids for the next step.
+- After a Send that read a page's blocks completes, emit Finish. The host reads the fetched
+  page text itself, so do not page through that archive.
 - If status is done and last_step_op is read, emit Finish — never read the same @N twice.
 
 Output: one JSON object matching the narrowed phase return type. No markdown or prose.
@@ -722,7 +726,9 @@ Deterministic overrides:
 - After Send completes with status done and the tool output satisfies this step, emit Finish.
   Do not re-Send the same block_id, page_id, or search query after a Done.
 - Re-Send only when the prior Send returned has_more=true and you must paginate with start_cursor.
-- When archive lines are needed for synthesis, PageRead last_archive_ref before Finish.
+- After a search, PageRead last_archive_ref when you need page ids for the next step.
+- After a Send that read a page's blocks completes, emit Finish. The host reads the fetched
+  page text itself, so do not page through that archive.
 - If status is done and last_step_op is read, emit Finish — never read the same @N twice.
 
 Output: one JSON object matching the narrowed phase return type. No markdown or prose.

@@ -159,6 +159,10 @@ export interface NotionBlockSummary {
   [key: string]: JsonValue | undefined;
 }
 
+export interface NotionFoundPage { title: string;
+url: string;
+ }
+
 export interface NotionGetPageBlocksInput {
   block_id: string;
   start_cursor?: string | null;
@@ -186,6 +190,11 @@ export interface NotionOutput {
   message: string;
   [key: string]: JsonValue | undefined;
 }
+
+export interface NotionPageContent { title: string;
+url: string;
+text: string;
+ }
 
 export interface NotionPageSummary {
   id: string;
@@ -215,12 +224,6 @@ export interface NotionSource {
   url: string;
   [key: string]: JsonValue | undefined;
 }
-
-export interface NotionSummary { commitments: string[];
-conflicts: string[];
-missing: string[];
-sources: string[];
- }
 
 export interface SupportNotionAbortStep { op: "Abort";
  }
@@ -264,15 +267,13 @@ export interface ToolDiscoveryRecordDto {
 
 declare global {
 
+declare function AnswerFromNotion(args: { goal: string; user_message: string; found_pages: NotionFoundPage[]; page_contents: NotionPageContent[]; content_truncated: boolean } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
+
 declare function ChooseNotionAction(args: { goal: string; step_description: string } & { __baml_invocation_token?: string }): Promise<SupportNotionSessionPlan>;
 
 declare function InferNotionIntent(args: { user_message: string } & { __baml_invocation_token?: string }): Promise<NeedClarification | NotRelevant | NotionIntent>;
 
 declare function PlanNotionWork(args: { intent: string } & { __baml_invocation_token?: string }): Promise<NotionPlan>;
-
-declare function ReactToNotionResults(args: { goal: string; user_message: string } & { __baml_invocation_token?: string }): Promise<StructuredReply>;
-
-declare function SummarizeNotionContent(args: { user_message: string; page_title: string | null; page_url: string | null; blocks_text: string } & { __baml_invocation_token?: string }): Promise<NotionSummary>;
 
 }
 

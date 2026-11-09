@@ -5,8 +5,16 @@ import type {
   SessionResult,
   StructuredReply,
 } from "./baml-runtime";
+import {
+  NO_PAGES_MESSAGE,
+  addStepResults,
+  addToolOutput,
+  answerInput,
+  emptyFindings,
+} from "./notionFindings";
 
 const MAX_REACT_STEPS = 8;
+const MAX_TOOL_READS = 8;
 
 function textReply(text: string): StructuredReply {
   const parts: ReplyPart[] = [{ type: "text", text }];
@@ -18,27 +26,6 @@ type NotRelevant = { reason: string };
 type NotionIntent = { intent: string };
 type NotionPlanStep = { id: string; description: string; kind: "discover" | "read" | "synthesize" };
 type NotionPlan = { goal: string; steps: NotionPlanStep[] };
-type NotionPageSummary = { id: string; title: string; url: string };
-type NotionBlockSummary = { block_type?: string; text?: string | null };
-type NotionSource = { page_id: string; url: string };
-type NotionSummary = {
-  commitments?: string[];
-  conflicts?: string[];
-  missing?: string[];
-  sources?: string[];
-};
-
-type NotionOutput = {
-  message?: string;
-  pages?: NotionPageSummary[];
-  blocks?: NotionBlockSummary[];
-  sources?: NotionSource[];
-};
-
-type ReadOnlyResponse = {
-  message: string;
-  next_step?: string;
-};
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object";
@@ -66,28 +53,6 @@ function isNotionIntent(v: unknown): v is NotionIntent {
     && !("question" in v) && !("reason" in v) && !("steps" in v);
 }
 
-function isReadOnlyResponse(action: unknown): action is ReadOnlyResponse {
-  if (!action || typeof action !== "object") return false;
-  const c = action as Record<string, unknown>;
-  if (typeof c.message !== "string") return false;
-  return !("pages" in c || "blocks" in c || "sources" in c || "steps" in c || "goal" in c);
-}
-
-function isNotionOutput(value: unknown): value is NotionOutput {
-  if (!isObject(value)) return false;
-  return (
-    Array.isArray((value as NotionOutput).pages) ||
-    Array.isArray((value as NotionOutput).blocks) ||
-    Array.isArray((value as NotionOutput).sources)
-  );
-}
-
-function extractNotionOutput(value: unknown): NotionOutput | null {
-  if (isNotionOutput(value)) return value;
-  if (isObject(value) && isNotionOutput(value.output)) return value.output;
-  return null;
-}
-
 function normalizeUserMessage(text: string): string {
   const trimmed = text.trim();
   const notionDirective = trimmed.match(/^use\s+notion\s*[:,-]?\s*/i);
@@ -100,89 +65,33 @@ function slugGoal(goal: string): string {
   return goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "goal";
 }
 
-/** Collect tool output snapshots from all executor steps for synthesis. */
-function collectToolResultsJson(steps: unknown[]): string {
-  const outputs: unknown[] = [];
-  for (const step of steps) {
-    const out = extractNotionOutput(step);
-    if (out) outputs.push(out);
-    if (isReadOnlyResponse(step)) outputs.push({ message: step.message });
-  }
+/** Read a page directly, for when the plan called for a read and the model did not make one. */
+async function fetchPageBlocks(pageId: string): Promise<unknown> {
+  const session = await openToolSession("support/notion");
+  let finished = false;
   try {
-    return JSON.stringify(outputs.length > 0 ? outputs : steps.slice(-3), null, 2).slice(0, 6000);
-  } catch (_) {
-    return "{}";
-  }
-}
-
-function formatPages(pages?: NotionPageSummary[]): string {
-  if (!pages || pages.length === 0) return "";
-  return "\n\nPages:\n" + pages.map((p) => `• ${p.title} — ${p.url}`).join("\n");
-}
-
-function formatSources(sources?: NotionSource[], pages?: NotionPageSummary[]): string {
-  if (!sources || sources.length === 0) return "";
-  const pageTitleById = new Map<string, string>();
-  (pages || []).forEach((p) => pageTitleById.set(p.id, p.title));
-  return "\n\nSources:\n" + sources.map((s) => {
-    const title = pageTitleById.get(s.page_id);
-    return title ? `• ${title} — ${s.url}` : `• ${s.url}`;
-  }).join("\n");
-}
-
-function formatSummaryLines(label: string, items?: string[]): string {
-  if (!items || items.length === 0) return `${label}:\n- None found`;
-  return `${label}:\n${items.map((i) => `- ${i}`).join("\n")}`;
-}
-
-function renderSummary(summary: NotionSummary): string {
-  return [
-    formatSummaryLines("Commitments", summary.commitments),
-    formatSummaryLines("Conflicts", summary.conflicts),
-    formatSummaryLines("Missing", summary.missing),
-    formatSummaryLines("Sources", summary.sources),
-  ].join("\n");
-}
-
-/** Render tool output from the executor as a user-visible response (fallback when synthesis fails). */
-async function renderToolOutput(steps: unknown[], goal: string): Promise<string> {
-  // Collect the most informative output from the executor run.
-  for (const step of [...steps].reverse()) {
-    const out = extractNotionOutput(step);
-    if (!out) continue;
-    let response = out.message || "";
-    response += formatPages(out.pages);
-
-    // If we have block content, try the structured summarizer.
-    const blocksText = (out.blocks || [])
-      .map((b) => b.text).filter((t): t is string => Boolean(t && t.trim())).join("\n");
-    if (blocksText.length > 0) {
-      try {
-        const result = await SummarizeNotionContent({
-          user_message: goal,
-          page_title: out.pages?.[0]?.title ?? null,
-          page_url: out.pages?.[0]?.url ?? null,
-          blocks_text: blocksText.slice(0, 8000),
-        });
-        if (result && typeof result === "object") {
-          const s = result as NotionSummary;
-          if (s.commitments || s.conflicts || s.missing || s.sources) {
-            if (out.sources && !s.sources) s.sources = out.sources.map((src) => src.url);
-            return renderSummary(s);
-          }
-        }
-      } catch (_) {
-        // fall through
+    await session.send({ block_id: pageId } as never);
+    for (let reads = 0; reads < MAX_TOOL_READS; reads++) {
+      const step = await session.continue();
+      if (step.status === "error") {
+        throw new Error(step.error.message || `Notion failed: ${step.error.code}`);
+      }
+      if (step.status === "done") {
+        await session.finish();
+        finished = true;
+        return step.output;
       }
     }
-    response += formatSources(out.sources, out.pages);
-    if (response.trim()) return response.trim();
+    throw new Error(`Notion did not return the page after ${MAX_TOOL_READS} reads.`);
+  } finally {
+    if (!finished) {
+      try {
+        await session.abort("page read did not complete");
+      } catch {
+        // Best effort. Preserve the original read failure.
+      }
+    }
   }
-  // Last resort: use any ReadOnlyResponse from the loop.
-  for (const step of [...steps].reverse()) {
-    if (isReadOnlyResponse(step)) return step.message;
-  }
-  return "Notion returned no usable content for this request.";
 }
 
 /** Phase 3+4: Execute the plan — open execution session, run per-step executors, synthesize. */
@@ -219,8 +128,9 @@ async function runNotionPlan(
     : null;
 
   // ── Execute each tool step independently (persona pattern) ──────────────
-  // Each step drives its own support/notion session: Open → Send → Read @N grep=... → Finish.
-  // Read results accumulate in intra-turn history for ReactToNotionResults.
+  // Each step drives its own support/notion session. What the tool returned is collected here, so
+  // the answer does not depend on the model having read the archive.
+  const findings = emptyFindings();
   const toolSteps = steps.filter((s) => s.kind !== "synthesize");
   const synthesizeStep = steps.find((s) => s.kind === "synthesize");
 
@@ -245,27 +155,26 @@ async function runNotionPlan(
             : `[${notionRun.recovery.code}] ${notionRun.recovery.mistake}`,
         );
       }
+      addStepResults(findings, notionRun.steps);
 
       if (executable) {
         await executable.completeStep?.(toolStep.id);
       }
     }
 
-    // ── Synthesize from conversation history ────────────────────────────
-    // History contains Read results from all ChooseNotionAction runs above.
+    // The model can end a read step without fetching anything. Notion ranks results, so read the top one.
+    const topPage = findings.pages[0];
+    if (steps.some((s) => s.kind === "read") && findings.contents.length === 0 && topPage) {
+      addToolOutput(findings, await fetchPageBlocks(topPage.id));
+    }
+
     if (synthesizeStep && executable) {
       await executable.startStep?.(synthesizeStep.id);
     }
 
-    let finalMessage: StructuredReply;
-    try {
-      finalMessage = await ReactToNotionResults({
-        goal,
-        user_message: userText,
-      });
-    } catch (_) {
-      finalMessage = textReply("Notion returned no usable content for this request.");
-    }
+    const finalMessage: StructuredReply = findings.pages.length === 0
+      ? textReply(NO_PAGES_MESSAGE)
+      : await AnswerFromNotion({ goal, user_message: userText, ...answerInput(findings) }) as StructuredReply;
 
     if (synthesizeStep && executable) {
       await executable.completeStep?.(synthesizeStep.id);
