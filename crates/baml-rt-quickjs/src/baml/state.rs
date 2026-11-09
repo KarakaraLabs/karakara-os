@@ -60,6 +60,9 @@ pub(in crate::baml) struct BamlRuntimeState {
     pub(in crate::baml) planning_resolver: Arc<dyn PlanningResolver>,
     pub(in crate::baml) execution_sessions:
         Arc<DashMap<String, crate::quickjs_bridge::ExecutionSession>>,
+    /// Step-executor runs waiting for the user, by context id.
+    pub(in crate::baml) suspended_step_runs:
+        Arc<DashMap<String, crate::step_executor_loop::SuspendedStepRun>>,
     /// Rendered tool / session-step JSON schema catalog (loaded from
     /// `baml_src/_baml_tool_schema_catalog.txt` at runtime startup) injected as
     /// `ctx.tags['tool_schema_prelude']` for every BAML invocation — both plain
@@ -89,6 +92,7 @@ impl Default for BamlRuntimeState {
             tool_session_states: Arc::new(DashMap::new()),
             tool_session_effect_tokens: Arc::new(DashMap::new()),
             read_completion_tool_anchors: Arc::new(DashMap::new()),
+            suspended_step_runs: Arc::new(DashMap::new()),
             archive_ref_tables: Arc::new(baml_rt_tools::archive_refs::ContextRefTables::new()),
             archive_ref_store: None,
             effect_emitter: None,

@@ -840,23 +840,46 @@ pub(super) async fn register_step_executor_runtime_helpers(bridge: &QuickJSBridg
                                 ))
                             })?;
 
-                        let max_steps = options_json
+                        let options = options_json
                             .as_deref()
-                            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                            .and_then(|s| serde_json::from_str::<Value>(s).ok());
+                        let max_steps = options
+                            .as_ref()
                             .and_then(|v| v.get("max_steps").and_then(Value::as_u64))
                             .map(|n| n as usize)
                             .unwrap_or(8);
+                        let resume = options.as_ref().and_then(|v| {
+                            let resume = v.get("resume")?;
+                            Some(crate::step_executor_loop::StepExecutorResume {
+                                token: resume.get("token")?.as_str()?.to_string(),
+                                text: resume.get("text")?.as_str()?.to_string(),
+                            })
+                        });
 
-                        let loop_result =
-                            crate::step_executor_loop::run_step_executor_loop(
-                                &manager,
-                                &scope,
-                                &function_name,
-                                base_args,
-                                max_steps,
-                                None,
-                            )
-                            .await;
+                        let loop_result = match resume {
+                            Some(resume) => {
+                                crate::step_executor_loop::resume_step_executor_loop(
+                                    &manager,
+                                    &scope,
+                                    &function_name,
+                                    base_args,
+                                    max_steps,
+                                    resume,
+                                )
+                                .await
+                            }
+                            None => {
+                                crate::step_executor_loop::run_step_executor_loop(
+                                    &manager,
+                                    &scope,
+                                    &function_name,
+                                    base_args,
+                                    max_steps,
+                                    None,
+                                )
+                                .await
+                            }
+                        };
 
                         let outcome =
                             crate::step_executor_outcome_bridge::step_executor_outcome_from_loop_result(

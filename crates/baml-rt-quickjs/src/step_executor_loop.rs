@@ -36,7 +36,7 @@ use std::{
 use baml_rt_core::{BamlFunctionId, BamlPromptName, BamlRtError, Result, VariantPhase, context};
 use baml_rt_observability::metrics;
 use baml_rt_tools::{
-    ToolName, ToolSlug, archive_refs::ArchiveReceipt,
+    ToolName, ToolSessionId, ToolSlug, archive_refs::ArchiveReceipt,
     phase_step_json::unwrap_session_plan_step_shape_for_phase_output,
     prompt_projection::ProjectedConversationRow,
 };
@@ -500,6 +500,83 @@ pub struct StepExecutorResult {
     pub steps: Vec<Value>,
     pub session_context: Value,
     pub selected_tool: Option<ToolName>,
+    /// Set when the run paused for the user instead of completing.
+    pub input_required: Option<StepInputRequired>,
+}
+
+/// Tool-result status for a Send whose session is waiting for the user.
+pub(crate) const STATUS_INPUT_REQUIRED: &str = "input_required";
+
+/// Why a run paused, and the token that resumes it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepInputRequired {
+    pub prompt: String,
+    pub resume_token: String,
+}
+
+/// The user's answer to a paused run.
+#[derive(Debug, Clone)]
+pub struct StepExecutorResume {
+    pub token: String,
+    pub text: String,
+}
+
+/// FSM state that survives a pause for user input.
+#[derive(Debug)]
+struct LoopProgress {
+    phase: Phase,
+    steps: Vec<Value>,
+    last: Value,
+    step_intra_supplement: Vec<Value>,
+    last_step_context: LastStepContext,
+    archive_ledger: Vec<ArchiveLedgerEntry>,
+    next_hop: usize,
+}
+
+impl LoopProgress {
+    fn fresh() -> Self {
+        Self {
+            phase: Phase::Entry,
+            steps: Vec::new(),
+            last: Value::Null,
+            step_intra_supplement: Vec::new(),
+            last_step_context: LastStepContext::default(),
+            archive_ledger: Vec::new(),
+            next_hop: 0,
+        }
+    }
+}
+
+/// A run paused on a suspended tool session.
+#[derive(Debug)]
+pub(crate) struct SuspendedStepRun {
+    progress: LoopProgress,
+    session_id: ToolSessionId,
+    tool_name: String,
+}
+
+impl SuspendedStepRun {
+    pub(crate) fn resume_token(&self) -> String {
+        self.session_id.to_string()
+    }
+}
+
+/// A hop result reporting that its session is waiting for the user.
+struct PausedHop {
+    prompt: String,
+    session_id: ToolSessionId,
+    tool_name: String,
+}
+
+fn paused_hop(result: &Value) -> Option<PausedHop> {
+    if result.get("status").and_then(Value::as_str) != Some(STATUS_INPUT_REQUIRED) {
+        return None;
+    }
+    Some(PausedHop {
+        prompt: result.get("prompt")?.as_str()?.to_string(),
+        session_id: ToolSessionId::parse(result.get("session_id")?.as_str()?).ok()?,
+        tool_name: result.get("tool_name")?.as_str()?.to_string(),
+    })
 }
 
 /// Select the per-phase BAML function identity for polymorphic narrowing.
@@ -655,23 +732,84 @@ pub async fn run_step_executor_loop(
     max_steps: usize,
     step_intra_supplement_mirror: Option<Arc<Mutex<Vec<Value>>>>,
 ) -> Result<StepExecutorResult> {
+    drive_step_executor_loop(
+        manager,
+        scope,
+        function_name,
+        base_args,
+        max_steps,
+        step_intra_supplement_mirror,
+        None,
+    )
+    .await
+}
+
+/// Continue a run that returned [`StepExecutorResult::input_required`], delivering the user's reply
+/// to the session it paused on.
+pub async fn resume_step_executor_loop(
+    manager: &Arc<RwLock<BamlRuntimeManager>>,
+    scope: &context::RuntimeScope,
+    function_name: &str,
+    base_args: Value,
+    max_steps: usize,
+    resume: StepExecutorResume,
+) -> Result<StepExecutorResult> {
+    let run = manager
+        .read()
+        .await
+        .take_suspended_step_run(scope.context_id().as_str(), &resume.token)
+        .ok_or_else(|| {
+            BamlRtError::InvalidArgument(format!(
+                "step executor resume: no paused run for token {}",
+                resume.token
+            ))
+        })?;
+    drive_step_executor_loop(
+        manager,
+        scope,
+        function_name,
+        base_args,
+        max_steps,
+        None,
+        Some((run, resume.text)),
+    )
+    .await
+}
+
+async fn drive_step_executor_loop(
+    manager: &Arc<RwLock<BamlRuntimeManager>>,
+    scope: &context::RuntimeScope,
+    function_name: &str,
+    base_args: Value,
+    max_steps: usize,
+    step_intra_supplement_mirror: Option<Arc<Mutex<Vec<Value>>>>,
+    resume: Option<(SuspendedStepRun, String)>,
+) -> Result<StepExecutorResult> {
     let agent_package = manager.read().await.agent_package();
     let agent_package = agent_package.as_deref().unwrap_or("unknown").to_string();
     let turn = baml_rt_observability::turn::current_turn(scope.context_id());
 
     let base = BamlPromptName::new(function_name);
-    let mut phase = Phase::Entry;
-    let mut steps: Vec<Value> = Vec::new();
-    let mut last = Value::Null;
-    let mut step_intra_supplement: Vec<Value> = Vec::new();
-    let mut last_step_context = LastStepContext::default();
-    let mut archive_ledger: Vec<ArchiveLedgerEntry> = Vec::new();
+    // A resumed run replays no model call: its first hop delivers the user's reply.
+    let (progress, mut pending_reply) = match resume {
+        Some((run, text)) => (run.progress, Some((run.session_id, run.tool_name, text))),
+        None => (LoopProgress::fresh(), None),
+    };
+    let LoopProgress {
+        mut phase,
+        mut steps,
+        mut last,
+        mut step_intra_supplement,
+        mut last_step_context,
+        mut archive_ledger,
+        next_hop,
+    } = progress;
     // Carries the prior hop's terminal projected rows so we do not re-read the graph
     // at the start of the next hop. A fresh read can race async provenance / projection
     // and disagree with the previous hop's snapshot.
     let mut prev_hop_graph_rows: Option<Vec<ProjectedConversationRow>> = None;
 
-    for hop_idx in 0..max_steps {
+    for hop_idx in next_hop..max_steps {
         if matches!(phase, Phase::Terminal(_)) {
             break;
         }
@@ -749,9 +887,23 @@ pub async fn run_step_executor_loop(
         let invoke_started = Instant::now();
         let result = {
             let guard = manager.read().await;
-            guard
-                .invoke_function_with_intra(scope, &current_function, args, &step_intra_supplement)
-                .await
+            match pending_reply.take() {
+                Some((session_id, tool_name, text)) => {
+                    guard
+                        .resume_suspended_send(scope, &tool_name, &session_id, &text)
+                        .await
+                }
+                None => {
+                    guard
+                        .invoke_function_with_intra(
+                            scope,
+                            &current_function,
+                            args,
+                            &step_intra_supplement,
+                        )
+                        .await
+                }
+            }
         };
         metrics::record_step_executor_stage(
             agent_package.as_str(),
@@ -773,6 +925,39 @@ pub async fn run_step_executor_loop(
                 return Err(err);
             }
         };
+
+        if let Some(paused) = paused_hop(&result) {
+            let session_context =
+                build_session_context(&phase, &last_step_context, &archive_ledger);
+            let selected_tool = phase.selected_tool().cloned();
+            let resume_token = paused.session_id.to_string();
+            manager.read().await.store_suspended_step_run(
+                scope.context_id().as_str(),
+                SuspendedStepRun {
+                    progress: LoopProgress {
+                        phase,
+                        steps,
+                        last,
+                        step_intra_supplement,
+                        last_step_context,
+                        archive_ledger,
+                        next_hop: hop_idx,
+                    },
+                    session_id: paused.session_id,
+                    tool_name: paused.tool_name,
+                },
+            );
+            return Ok(StepExecutorResult {
+                last: Value::Null,
+                steps: Vec::new(),
+                session_context,
+                selected_tool,
+                input_required: Some(StepInputRequired {
+                    prompt: paused.prompt,
+                    resume_token,
+                }),
+            });
+        }
 
         let read_only_finish = result_is_read_only_finish(&result);
         let status = match extract_status(&result) {
@@ -1087,6 +1272,7 @@ pub async fn run_step_executor_loop(
         steps,
         session_context,
         selected_tool,
+        input_required: None,
     })
 }
 

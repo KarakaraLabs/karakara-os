@@ -463,7 +463,7 @@ __chat_register({
         const delegateRun = await runGeneratedStepExecutor(
           "DecideDelegationAction",
           { goal, agent_package },
-          { max_steps: 10 },
+          { max_steps: 10, onInputRequired: (prompt) => ctx.emit.awaitInput(prompt) },
         );
         if (delegateRun.outcome !== "completed") {
           throw new Error(

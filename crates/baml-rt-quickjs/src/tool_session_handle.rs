@@ -1062,15 +1062,11 @@ impl ToolSessionExecutionHandle {
                     .await;
                 }
                 ToolStep::Suspended { output } => {
-                    // A2A task paused (input required or still running). Continue polling.
-                    emit_stream_chunk_static(
-                        self.ctx.effect_emitter.as_ref(),
-                        plan_scope.context_id(),
-                        &output,
-                        &mut streaming_outputs,
-                    )
-                    .await;
-                    continue;
+                    // The delegated task is waiting for the user. Polling again would read a
+                    // closed stream and report an empty `Done`, losing the question.
+                    return Ok(ToolSessionSendBlockingOutcome::InputRequired {
+                        prompt: suspended_prompt(&output),
+                    });
                 }
                 ToolStep::Done { output } => {
                     let output_value = output.unwrap_or(Value::Null);
@@ -1224,6 +1220,39 @@ impl ToolSessionExecutionHandle {
 pub enum ToolSessionSendBlockingOutcome {
     Completed(SendResult),
     ToolFailed(ToolFailure),
+    /// The session is suspended until the user answers `prompt`; it stays open for a later Send.
+    InputRequired {
+        prompt: String,
+    },
+}
+
+fn first_text_part(message: &Value) -> Option<String> {
+    message
+        .get("parts")?
+        .as_array()?
+        .iter()
+        .find_map(|part| part.get("text")?.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+}
+
+/// The newest question in a suspended output: a message, or the status an `awaitInput` attaches.
+fn suspended_prompt(output: &Value) -> String {
+    output
+        .get("chunks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find_map(|chunk| {
+            chunk.get("message").and_then(first_text_part).or_else(|| {
+                let update: Value =
+                    serde_json::from_str(chunk.get("statusUpdate")?.as_str()?).ok()?;
+                first_text_part(update.get("status")?.get("message")?)
+            })
+        })
+        .unwrap_or_else(|| "The delegated agent needs more information.".to_string())
 }
 
 /// Result of a blocking Send: archived output with header line and raw value.
@@ -1244,7 +1273,28 @@ pub struct SendResult {
 mod tests {
     use serde_json::json;
 
-    use super::send_signature;
+    use super::{send_signature, suspended_prompt};
+
+    #[test]
+    fn suspended_prompt_reads_the_input_required_status() {
+        let status = json!({
+            "status": {
+                "state": "TASK_STATE_INPUT_REQUIRED",
+                "message": { "parts": [{ "text": "Delete Test1?" }] }
+            }
+        });
+        let output = json!({ "chunks": [{ "statusUpdate": status.to_string() }] });
+        assert_eq!(suspended_prompt(&output), "Delete Test1?");
+    }
+
+    #[test]
+    fn suspended_prompt_has_a_fallback_when_no_chunk_asks() {
+        let output = json!({ "chunks": [{ "statusUpdate": "not json" }] });
+        assert_eq!(
+            suspended_prompt(&output),
+            "The delegated agent needs more information."
+        );
+    }
 
     #[test]
     fn send_signature_sorts_nested_object_keys() {

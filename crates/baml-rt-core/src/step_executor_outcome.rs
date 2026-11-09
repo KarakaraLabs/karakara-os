@@ -275,6 +275,11 @@ pub enum StepExecutorOutcome {
     AgentCorrectable {
         recovery: StepPlanRecovery,
     },
+    /// A delegated agent is waiting for the user. Resume with `resume_token` and the reply.
+    InputRequired {
+        prompt: String,
+        resume_token: String,
+    },
     Fatal {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]

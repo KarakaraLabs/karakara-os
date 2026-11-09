@@ -282,6 +282,8 @@ pub fn render_a2a_shim() -> Result<String> {
    * Return value is a discriminated envelope (`outcome`: completed | agent_correctable | fatal).
    * On `completed`, `last` / `steps` / `session_context` / `selected_tool` match the legacy flat shape.
    * On `agent_correctable`, use `recovery.code` and `recovery.mistake` — the promise still resolved.
+   * When a delegated agent waits for the user, `options.onInputRequired` collects the reply and the
+   * run resumes in place; without that callback the run ends as `fatal`, never as a false completion.
    * Do not use this payload as the provenance copy of the user-visible reply — return
    * StructuredReply (or equivalent) from the chat handler as SessionResult.message.
    */
@@ -290,11 +292,37 @@ pub fn render_a2a_shim() -> Result<String> {
       throw new Error("__run_step_executor host helper is not registered");
     }
     var argsJson = JSON.stringify((args != null && typeof args === "object") ? args : {});
-    var optionsJson = (options != null && typeof options === "object") ? JSON.stringify(options) : null;
-    var resultJson = await globalThis.__run_step_executor(String(stepExecutor), argsJson, optionsJson);
-    var envelope = JSON.parse(resultJson);
-    if (envelope == null || typeof envelope !== "object" || typeof envelope.outcome !== "string") {
-      throw new Error("runGeneratedStepExecutor: host returned invalid step executor envelope");
+    var baseOptions = (options != null && typeof options === "object") ? options : null;
+    var invoke = async function (opts) {
+      var optionsJson = opts != null ? JSON.stringify(opts) : null;
+      var resultJson = await globalThis.__run_step_executor(String(stepExecutor), argsJson, optionsJson);
+      var parsed = JSON.parse(resultJson);
+      if (parsed == null || typeof parsed !== "object" || typeof parsed.outcome !== "string") {
+        throw new Error("runGeneratedStepExecutor: host returned invalid step executor envelope");
+      }
+      return parsed;
+    };
+    var envelope = await invoke(baseOptions);
+    while (envelope.outcome === "input_required") {
+      var onInputRequired = baseOptions != null ? baseOptions.onInputRequired : null;
+      if (typeof onInputRequired !== "function") {
+        return {
+          outcome: "fatal",
+          message: "A delegated agent needs user input, but this step cannot collect it: " + envelope.prompt,
+          code: "step_executor_input_required"
+        };
+      }
+      var replyText = messageText(await onInputRequired(envelope.prompt)).trim();
+      if (replyText.length === 0) {
+        return {
+          outcome: "fatal",
+          message: "A delegated agent requested input but no reply was provided.",
+          code: "step_executor_input_required"
+        };
+      }
+      envelope = await invoke(Object.assign({}, baseOptions, {
+        resume: { token: envelope.resume_token, text: replyText }
+      }));
     }
     return envelope;
   }
