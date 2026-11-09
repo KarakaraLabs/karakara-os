@@ -100,7 +100,7 @@ due: "overdue" | "today" | "this_week" | "next_week" | null;
 text: string | null;
  }
 
-export interface CoordinatorRouteOperation { name: "update_task";
+export interface CoordinatorRouteOperation { name: "update_task" | "delete_task";
 task_id: string | null;
 target_status: string | null;
 target_priority: "urgent" | "high" | "normal" | "low" | null;

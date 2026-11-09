@@ -150,13 +150,10 @@ function accumulateEvidence(evidence: StepEvidence, step: unknown): void {
     /Send\(([a-z_]+)(?:\s[^\)]*)?\)/g,
   );
   const ops = new Set<string>();
-  for (const raw of actionMatches ?? []) {
+  for (const raw of [...(actionMatches ?? []), ...(identity !== null ? [identity] : [])]) {
     const op = /Send\(([a-z_]+)/.exec(raw)?.[1];
-    if (op) ops.add(op);
-  }
-  if (identity !== null) {
-    const op = /Send\(([a-z_]+)/.exec(identity)?.[1];
-    if (op) ops.add(op);
+    // `confirm_delete=false` only asks ClickUp to identify the task; nothing was deleted.
+    if (op && !(op === "delete_task" && /\bconfirm_delete=false\b/.test(raw))) ops.add(op);
   }
   if (ops.has("list_tasks")) evidence.listedTasks = true;
   if (ops.has("get_task")) evidence.taskDetail = true;
@@ -593,7 +590,7 @@ async function callClickUp(input: ClickUpInput): Promise<ClickUpOutput> {
       }
       if (step.status === "error") {
         await session.abort(step.error.code);
-        throw new Error(`ClickUp failed: ${step.error.code}`);
+        throw new Error(step.error.message || `ClickUp failed: ${step.error.code}`);
       }
     }
     await session.abort("ClickUp did not complete after eight reads.");
@@ -1192,7 +1189,7 @@ export async function runClickUpWriteWorkflow(
 
   try {
     await executable?.startStep?.("resolve-update-targets");
-    const resolution = await resolveUpdateTargets(spec);
+    const resolution = await resolveWriteTargets(spec, "update");
     await executable?.completeStep?.("resolve-update-targets");
 
     // Nothing matched, or the filter was too broad to apply without an id: answer deterministically
@@ -1233,9 +1230,10 @@ type UpdateResolution =
   | { kind: "targets"; targets: ClickUpTaskSummary[] }
   | { kind: "message"; message: string };
 
-/** Resolve the tasks an update applies to: exact id, or typed-filter selection over the scope. */
-async function resolveUpdateTargets(
-  spec: ClickUpUpdateSpec,
+/** Resolve the tasks a write applies to: exact id, or typed-filter selection over the scope. */
+async function resolveWriteTargets(
+  spec: Pick<ClickUpUpdateSpec, "intent" | "task_id" | "filters" | "scope_hint">,
+  verb: "update" | "delete",
 ): Promise<UpdateResolution> {
   if (spec.task_id) {
     const out = await callClickUp({ task_id: spec.task_id });
@@ -1267,13 +1265,13 @@ async function resolveUpdateTargets(
       return {
         kind: "message",
         message:
-          `No ClickUp tasks${label} were found to update. ` +
+          `No ClickUp tasks${label} were found to ${verb}. ` +
           `The ${scopeTasks.length} task(s) retrieved have these statuses: ${statuses.join(", ")}.`,
       };
     }
     return {
       kind: "message",
-      message: `No ClickUp tasks${label} were found to update.`,
+      message: `No ClickUp tasks${label} were found to ${verb}.`,
     };
   }
 
@@ -1289,7 +1287,7 @@ async function resolveUpdateTargets(
       (task) => task.name.trim().toLocaleLowerCase() === wanted,
     );
     if (exact.length === 0) {
-      return { kind: "message", message: describeAmbiguousMatches(matching, spec.filters) };
+      return { kind: "message", message: describeAmbiguousMatches(matching, spec.filters, verb) };
     }
     targets = exact;
   }
@@ -1299,7 +1297,7 @@ async function resolveUpdateTargets(
     return {
       kind: "message",
       message:
-        `${targets.length} ClickUp tasks${label} match — too many to update at once without naming them. ` +
+        `${targets.length} ClickUp tasks${label} match — too many to ${verb} at once without naming them. ` +
         `Narrow the request (a specific task, name, or tighter filter) and I'll apply the change.`,
     };
   }
@@ -1316,6 +1314,7 @@ async function resolveUpdateTargets(
 function describeAmbiguousMatches(
   candidates: ClickUpTaskSummary[],
   filters: ClickUpTaskFilters,
+  verb: "update" | "delete",
 ): string {
   const label = describeTaskFilters(filters);
   const shown = candidates.slice(0, MAX_BULK_UPDATE);
@@ -1328,10 +1327,161 @@ function describeAmbiguousMatches(
       : "";
   return (
     `${candidates.length} ClickUp tasks${label} match that name, so I did not change anything. ` +
-    `Tell me which one (its exact name or id) and I'll update it:\n\n` +
+    `Tell me which one (its exact name or id) and I'll ${verb} it:\n\n` +
     lines.join("\n") +
     more
   );
+}
+
+/** Replies that authorize a delete. Anything else cancels, so an unclear answer never deletes. */
+const DELETE_CONFIRMATIONS = new Set([
+  "y",
+  "yes",
+  "yes please",
+  "yes delete",
+  "yes delete it",
+  "delete",
+  "delete it",
+  "confirm",
+  "confirmed",
+  "go ahead",
+  "proceed",
+  "do it",
+]);
+
+/** True only when the user's whole reply is an explicit confirmation. */
+export function isDeleteConfirmation(reply: string): boolean {
+  const normalized = reply
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  return DELETE_CONFIRMATIONS.has(normalized);
+}
+
+type DeleteResolution =
+  | { kind: "target"; task: ClickUpTaskSummary }
+  | { kind: "message"; message: string };
+
+/** Resolve a delete to exactly one task. Unlike an update, a delete never applies to a bulk match. */
+async function resolveDeleteTarget(
+  spec: ClickUpDeleteSpec,
+): Promise<DeleteResolution> {
+  if (!spec.task_id && !spec.filters.text) {
+    return {
+      kind: "message",
+      message: "Tell me the name or id of the single ClickUp task to delete; I did not delete anything.",
+    };
+  }
+  const resolution = await resolveWriteTargets(spec, "delete");
+  if (resolution.kind === "message") return resolution;
+  if (resolution.targets.length > 1) {
+    return {
+      kind: "message",
+      message: describeAmbiguousMatches(resolution.targets, spec.filters, "delete"),
+    };
+  }
+  return { kind: "target", task: resolution.targets[0]! };
+}
+
+/**
+ * Deterministic delete path: find one task, ask the user, delete only on an explicit yes.
+ *
+ * The confirmation lives in this suspended turn, so the task the user approved is the task that gets
+ * deleted. No model call decides the target or interprets the answer. `awaitReply` suspends the turn
+ * until the user responds and returns their text.
+ */
+export async function runClickUpDeleteWorkflow(
+  spec: ClickUpDeleteSpec,
+  awaitReply: (prompt: string) => Promise<string>,
+): Promise<SessionResult> {
+  const slug = slugGoal(spec.intent);
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-delete-${slug}`)
+      : null;
+  const intentId = `intent-clickup-delete-${slug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({ intentId, description: spec.intent })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-delete-${slug}`,
+        steps: [
+          {
+            stepId: "resolve-delete-target",
+            description: "Find the single task to delete.",
+            order: 0,
+            dependsOn: [],
+          },
+          {
+            stepId: "confirm-delete",
+            description: "Ask the user to confirm the deletion.",
+            order: 1,
+            dependsOn: ["resolve-delete-target"],
+          },
+          {
+            stepId: "apply-delete",
+            description: "Delete the confirmed task.",
+            order: 2,
+            dependsOn: ["confirm-delete"],
+          },
+        ],
+      })
+    : null;
+
+  /** Cycle the steps that have nothing to do, then answer without touching ClickUp. */
+  const finishWithoutDeleting = async (
+    remainingSteps: string[],
+    message: string,
+  ): Promise<SessionResult> => {
+    for (const stepId of remainingSteps) {
+      await executable?.startStep?.(stepId);
+      await executable?.completeStep?.(stepId);
+    }
+    await executable?.finish?.();
+    return { message: textReply(message) };
+  };
+
+  try {
+    await executable?.startStep?.("resolve-delete-target");
+    const resolution = await resolveDeleteTarget(spec);
+    await executable?.completeStep?.("resolve-delete-target");
+    if (resolution.kind === "message") {
+      return await finishWithoutDeleting(
+        ["confirm-delete", "apply-delete"],
+        resolution.message,
+      );
+    }
+    const { task } = resolution;
+
+    await executable?.startStep?.("confirm-delete");
+    const reply = await awaitReply(
+      `Permanently delete ClickUp task "${task.name}" [${task.status}] (id: ${task.id})? ` +
+        `Reply "yes" to delete it; anything else cancels.`,
+    );
+    await executable?.completeStep?.("confirm-delete");
+    if (!isDeleteConfirmation(reply)) {
+      return await finishWithoutDeleting(
+        ["apply-delete"],
+        `Cancelled: task ${task.id} (${task.name}) was not deleted.`,
+      );
+    }
+
+    await executable?.startStep?.("apply-delete");
+    await callClickUp({ task_id: task.id, confirm_delete: true });
+    await executable?.completeStep?.("apply-delete");
+    await executable?.finish?.();
+    return { message: textReply(`Deleted task ${task.id} (${task.name}).`) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original workflow error is more useful than a best-effort abort failure.
+    }
+    return { error: `ClickUp agent error: ${reason}` };
+  }
 }
 
 /** Apply the spec's change to one task, skipping a status write that is already satisfied. */
@@ -1494,7 +1644,7 @@ export const DECLARED_ROUTE_SCHEMA = "agent-route/v1";
 
 /** A typed write declared by the caller, executed deterministically with no re-classification. */
 export interface DeclaredRouteOperation {
-  name: "update_task";
+  name: "update_task" | "delete_task";
   task_id: string | null;
   target_status: string | null;
   target_priority: "urgent" | "high" | "normal" | "low" | null;
@@ -1528,6 +1678,7 @@ const CAPABILITY_WRITE_ACTIONS: Record<string, ClickUpIntent["action"]> = {
 
 const CAPABILITY_PRIORITIZE = "clickup:prioritize";
 const CAPABILITY_UPDATE_TASK = "clickup:update-task";
+const CAPABILITY_DELETE_TASK = "clickup:delete-task";
 
 /** ClickUp numeric priority codes. */
 const PRIORITY_TO_NUMBER: Record<"urgent" | "high" | "normal" | "low", number> = {
@@ -1582,6 +1733,45 @@ export function clickUpUpdateSpecFromDeclaredRoute(
     target_priority: op.target_priority,
     filters: { ...route.filters, statuses: selectionStatuses },
     scope_hint: null,
+  };
+}
+
+/** A validated delete of one named task, executed deterministically after user confirmation. */
+export interface ClickUpDeleteSpec {
+  intent: string;
+  task_id: string | null;
+  filters: ClickUpTaskFilters;
+  scope_hint: string | null;
+}
+
+/**
+ * Build a delete spec from a declared `clickup:delete-task` route.
+ *
+ * Statuses are dropped because the caller fills them from whatever the conversation last listed; a
+ * delete names its task, and a stale status must not hide it.
+ */
+export function clickUpDeleteSpecFromDeclaredRoute(
+  route: DeclaredRoute,
+): ClickUpDeleteSpec | null {
+  if (route.capability !== CAPABILITY_DELETE_TASK) return null;
+  if (route.unsupported.length > 0) return null;
+  return {
+    intent: route.goal,
+    task_id: route.operation?.name === "delete_task" ? route.operation.task_id : null,
+    filters: { ...route.filters, statuses: [] },
+    scope_hint: null,
+  };
+}
+
+/** Build a delete spec from a classified intent, for callers that did not declare a route. */
+export function clickUpDeleteSpecFromIntent(
+  intent: ClickUpIntent,
+): ClickUpDeleteSpec {
+  return {
+    intent: intent.intent,
+    task_id: null,
+    filters: { ...taskFiltersFromIntent(intent), statuses: [] },
+    scope_hint: intent.scope_hint ?? null,
   };
 }
 
@@ -1652,6 +1842,14 @@ function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
 function declaredRouteOperation(value: unknown): DeclaredRouteOperation | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
+  if (record.name === "delete_task") {
+    return {
+      name: "delete_task",
+      task_id: optionalText(record.task_id),
+      target_status: null,
+      target_priority: null,
+    };
+  }
   if (record.name !== "update_task") return null;
   const target_status = optionalText(record.target_status);
   const target_priority = normalizedChoice(record.target_priority, PRIORITY_FILTERS);

@@ -16,7 +16,7 @@ export type RoutePriority = "urgent" | "high" | "normal" | "low";
 
 /** A typed write the specialist can execute deterministically, with no re-classification. */
 export type CoordinatorRouteOperation = {
-  name: "update_task";
+  name: "update_task" | "delete_task";
   task_id: string | null;
   target_status: string | null;
   target_priority: RoutePriority | null;
@@ -54,7 +54,16 @@ function optionalRouteText(value: unknown): string | null {
  * with at least one actionable field, so an empty or malformed operation falls back to the goal.
  */
 export function parseRouteOperation(v: unknown): CoordinatorRouteOperation | null {
-  if (!isObject(v) || v.name !== "update_task") return null;
+  if (!isObject(v)) return null;
+  if (v.name === "delete_task") {
+    return {
+      name: "delete_task",
+      task_id: optionalRouteText(v.task_id),
+      target_status: null,
+      target_priority: null,
+    };
+  }
+  if (v.name !== "update_task") return null;
   const target_status = optionalRouteText(v.target_status);
   const target_priority =
     typeof v.target_priority === "string" &&
@@ -72,6 +81,40 @@ export function parseRouteOperation(v: unknown): CoordinatorRouteOperation | nul
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
+}
+
+function firstTextPart(message: unknown): string | null {
+  if (!isObject(message) || !Array.isArray(message.parts)) return null;
+  for (const part of message.parts) {
+    if (isObject(part) && typeof part.text === "string" && part.text.trim()) {
+      return part.text.trim();
+    }
+  }
+  return null;
+}
+
+/** The status-update prompt `awaitInput` attaches, carried as a JSON string on the chunk. */
+function statusUpdatePrompt(statusUpdate: unknown): string | null {
+  if (typeof statusUpdate !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(statusUpdate);
+    return isObject(parsed) && isObject(parsed.status)
+      ? firstTextPart(parsed.status.message)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The newest question a suspended specialist asked, from a message or its input-required status. */
+export function delegatedPromptFromOutput(output: unknown): string | null {
+  if (!isObject(output) || !Array.isArray(output.chunks)) return null;
+  for (const chunk of [...output.chunks].reverse()) {
+    if (!isObject(chunk)) continue;
+    const prompt = firstTextPart(chunk.message) ?? statusUpdatePrompt(chunk.statusUpdate);
+    if (prompt) return prompt;
+  }
+  return null;
 }
 
 /** Tolerant parse of the classifier's routing decision; invalid input becomes `null`. */

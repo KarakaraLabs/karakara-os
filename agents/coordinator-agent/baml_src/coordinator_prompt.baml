@@ -21,7 +21,7 @@ class CoordinatorRouteFilters {
 }
 
 class CoordinatorRouteOperation {
-  name "update_task" @description("Typed write the target capability can execute deterministically. Only 'update_task' is supported: a status and/or priority change on existing tasks. Omit the whole operation for reads, creates, and deletes.")
+  name "update_task" | "delete_task" @description("Typed write the target capability can execute deterministically. 'update_task': a status and/or priority change on existing tasks. 'delete_task': permanently delete one named task. Omit the whole operation for reads and creates.")
   task_id string? @description("Exact task id when the user named one, or it appears verbatim in the transcript (for example a task just listed). Never invent, guess, or reformat an id. Omit when the user described the tasks by name/status instead of id.")
   target_status string? @description("The NEW status to set, copied verbatim from the user (for example 'to do', 'in progress'). Never translate or correct the wording. This is the destination status, not the status used to select which tasks to change — that goes in filters.statuses.")
   target_priority ("urgent" | "high" | "normal" | "low")? @description("The NEW priority to set, only when the user asked to change priority.")
@@ -32,7 +32,7 @@ class CoordinatorRoute {
   targets CoordinatorRouteTarget[] @description("The specialists this request needs. Exactly one for shape single.")
   goal string @description("Goal-level instruction for the target agent. Keep the user's own terms; never add constraints they did not state.")
   filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. For an update_task operation, filters select WHICH existing tasks to change (their current status in filters.statuses, name words in filters.text). Omit when the request is not a task filter and when the user only wants those fields displayed.")
-  operation CoordinatorRouteOperation? @description("Typed write to execute directly. Set this ONLY for a status/priority change on existing tasks, and ONLY when the target capability is 'clickup:update-task'. Leave unset for reads and for anything that is not an update.")
+  operation CoordinatorRouteOperation? @description("Typed write to execute directly. Set this ONLY for a status/priority change with target capability 'clickup:update-task', or a task delete with target capability 'clickup:delete-task'. Leave unset for reads and creates.")
   expected_output string? @description("What the answer must contain, in one short clause.")
   unsupported string[]? @description("Constraints no target capability can express. A non-empty value sends the request to the slower planning path, so keep it empty unless genuinely needed.")
 }
@@ -119,7 +119,15 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
       name words the tasks must contain. Do not put the destination status in `filters.statuses`.
     - Set `operation.task_id` only when the user named an exact id or one is visible verbatim in the transcript
       (e.g. a task just listed). Otherwise omit it and let `filters` select the tasks.
-    - Creates and deletes are NOT update_task: omit `operation` and let the host plan them.
+    - Creates are not typed writes: omit `operation` and let the host plan them.
+
+    Typed deletes (one EXISTING task):
+    - When the user asks to delete a task and the target advertises the `clickup:delete-task` capability,
+      route shape "single" to that capability with `operation.name` = "delete_task".
+    - Put the task's name, verbatim, in `filters.text`. Set `operation.task_id` only when the user named an
+      exact id or the task's id is visible verbatim in the transcript. Leave `target_status` and
+      `target_priority` unset.
+    - Do not ask the user to confirm: the specialist asks before anything is deleted.
 
     Conversation continuity (infer the scope, do not copy it mechanically):
     - Infer which task set the user is talking about from the conversation: the statuses of tasks a

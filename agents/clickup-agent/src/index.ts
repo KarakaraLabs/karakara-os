@@ -1,6 +1,8 @@
 /// <reference path="./baml-runtime.d.ts" />
 import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
+  clickUpDeleteSpecFromDeclaredRoute,
+  clickUpDeleteSpecFromIntent,
   clickUpIntentFromDeclaredRoute,
   clickUpPriorityIntentFromDeclaredRoute,
   clickUpUpdateSpecFromDeclaredRoute,
@@ -12,6 +14,7 @@ import {
   isNotRelevant,
   onClickupSourceDispatch,
   parseClickUpStructuredPlanFromPlanning,
+  runClickUpDeleteWorkflow,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
@@ -65,6 +68,8 @@ __chat_register({
         ? ctx.text
         : "unknown";
     let text = originalText;
+    const awaitReply = async (prompt: string): Promise<string> =>
+      messageText(await ctx.emit.awaitInput(prompt));
 
     // A calling coordinator can declare the route as a data part. When it validates, the declared
     // goal and filters are authoritative: no classifier call and no second paraphrase. Ingress,
@@ -75,6 +80,10 @@ __chat_register({
       const declaredUpdate = clickUpUpdateSpecFromDeclaredRoute(declaredRoute);
       if (declaredUpdate) {
         return runClickUpWriteWorkflow(declaredUpdate);
+      }
+      const declaredDelete = clickUpDeleteSpecFromDeclaredRoute(declaredRoute);
+      if (declaredDelete) {
+        return runClickUpDeleteWorkflow(declaredDelete, awaitReply);
       }
       const declaredPriority = clickUpPriorityIntentFromDeclaredRoute(declaredRoute);
       if (declaredPriority) {
@@ -126,6 +135,12 @@ __chat_register({
     // traversal is complete is left to a step-scoped executor decision.
     if (isDeterministicTaskRead(resolvedIntent)) {
       return runClickUpTaskQueryWorkflow(resolvedIntent);
+    }
+
+    // A delete needs the user's answer between finding the task and removing it, which a single
+    // planned step cannot express.
+    if (resolvedIntent.operation_kind === "delete") {
+      return runClickUpDeleteWorkflow(clickUpDeleteSpecFromIntent(resolvedIntent), awaitReply);
     }
 
     return runPlannedIntent(resolvedIntent);

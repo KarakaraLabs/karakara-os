@@ -164,7 +164,7 @@ baml_rt_tools::impl_describe_action_identity! {
         GetTask(p) => "get_task" { task_id: p.task_id },
         CreateTask(p) => "create_task" { list_id: p.list_id, name: p.name },
         UpdateTask(p) => "update_task" { task_id: p.task_id },
-        DeleteTask(p) => "delete_task" { task_id: p.task_id },
+        DeleteTask(p) => "delete_task" { task_id: p.task_id, confirm_delete: p.confirm_delete },
     }
 }
 
@@ -801,5 +801,34 @@ impl BamlTool for ClickUpTool {
             }
         }
         c
+    }
+}
+
+#[cfg(test)]
+mod action_identity_tests {
+    use baml_rt_tools::{DescribeActionIdentity, project_archive_action_identity_from_parts};
+
+    use super::{ClickUpInput, DeleteTaskInput};
+
+    fn rendered_delete(confirm_delete: bool) -> String {
+        let input = ClickUpInput::DeleteTask(DeleteTaskInput {
+            task_id: "abc".to_string(),
+            confirm_delete,
+        });
+        let identity = input.action_identity();
+        project_archive_action_identity_from_parts("Send", identity.name, identity.fields)
+    }
+
+    /// The clickup-agent evidence gate reads this text to tell a dry run from a real delete.
+    #[test]
+    fn delete_identity_distinguishes_a_dry_run() {
+        assert_eq!(
+            rendered_delete(false),
+            r#"Send(delete_task task_id="abc" confirm_delete=false)"#
+        );
+        assert_eq!(
+            rendered_delete(true),
+            r#"Send(delete_task task_id="abc" confirm_delete=true)"#
+        );
     }
 }

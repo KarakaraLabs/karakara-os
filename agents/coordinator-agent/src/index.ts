@@ -17,6 +17,7 @@ import {
   type CoordinatorRoute,
   type CoordinatorRouteTarget,
   declaredRoutePayload,
+  delegatedPromptFromOutput,
   directRouteTarget,
   parseCoordinatorRoute,
 } from "./routing";
@@ -166,21 +167,6 @@ function delegatedReplyFromOutput(output: unknown): StructuredReply | null {
   // response. This direct session has a parent-side provenance edge, but it does not expose an
   // archive ref that can safely be cited yet.
   return { parts, citations: [] };
-}
-
-function delegatedPromptFromOutput(output: unknown): string | null {
-  if (!isObject(output) || !Array.isArray(output.chunks)) return null;
-  for (const rawChunk of [...output.chunks].reverse()) {
-    if (!isObject(rawChunk) || !isObject(rawChunk.message) || !Array.isArray(rawChunk.message.parts)) {
-      continue;
-    }
-    for (const rawPart of rawChunk.message.parts) {
-      if (isObject(rawPart) && typeof rawPart.text === "string" && rawPart.text.trim()) {
-        return rawPart.text.trim();
-      }
-    }
-  }
-  return null;
 }
 
 async function forwardSingleDelegation(
