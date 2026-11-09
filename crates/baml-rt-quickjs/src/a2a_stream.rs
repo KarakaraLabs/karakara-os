@@ -856,6 +856,9 @@ impl StreamCollectorContext {
                     return Ok(CollectIteration::Done);
                 }
             };
+            // The idle timeout measures agent silence. Time spent waiting for the user is not
+            // silence, and counting it would fail the turn the moment the reply arrives.
+            self.last_yield_at = Instant::now();
             // Dispatch the !Send runtime.eval() call to the LocalSet thread via the handover lane
             // so this collect loop (running on tokio::spawn) remains fully Send.
             let deliver_result = deliver_resume_via_handover(
