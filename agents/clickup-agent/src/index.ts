@@ -1,6 +1,7 @@
 /// <reference path="./baml-runtime.d.ts" />
 import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
+  clickUpCreateSpecFromIntent,
   clickUpDeleteSpecFromDeclaredRoute,
   clickUpDeleteSpecFromIntent,
   clickUpIntentFromDeclaredRoute,
@@ -14,6 +15,7 @@ import {
   isNotRelevant,
   onClickupSourceDispatch,
   parseClickUpStructuredPlanFromPlanning,
+  runClickUpCreateWorkflow,
   runClickUpDeleteWorkflow,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
@@ -141,6 +143,12 @@ __chat_register({
     // planned step cannot express.
     if (resolvedIntent.operation_kind === "delete") {
       return runClickUpDeleteWorkflow(clickUpDeleteSpecFromIntent(resolvedIntent), awaitReply);
+    }
+
+    // Creating a task needs only the list id, so code walks teams → spaces → lists directly.
+    const createSpec = clickUpCreateSpecFromIntent(resolvedIntent);
+    if (createSpec) {
+      return runClickUpCreateWorkflow(createSpec, awaitReply);
     }
 
     return runPlannedIntent(resolvedIntent);

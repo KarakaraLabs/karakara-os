@@ -709,9 +709,8 @@ async function mapWithConcurrency<T, R>(
 
 const CLICKUP_FANOUT_CONCURRENCY = 4;
 
-async function collectAllTasks(
-  limits: TraversalLimits = PRIORITY_TRAVERSAL,
-): Promise<ClickUpTaskSummary[]> {
+/** Every list reachable through teams and spaces. */
+async function collectAllLists(): Promise<ClickUpItem[]> {
   const teams = (await callClickUp({})).items ?? [];
   if (teams.length > MAX_ALL_TEAMS) {
     throw new Error(
@@ -740,7 +739,13 @@ async function collectAllTasks(
       "There are too many lists to search safely. Name a workspace, space, or list.",
     );
   }
+  return lists;
+}
 
+async function collectAllTasks(
+  limits: TraversalLimits = PRIORITY_TRAVERSAL,
+): Promise<ClickUpTaskSummary[]> {
+  const lists = await collectAllLists();
   const taskPages = await mapWithConcurrency(
     lists,
     CLICKUP_FANOUT_CONCURRENCY,
@@ -1484,6 +1489,140 @@ export async function runClickUpDeleteWorkflow(
   }
 }
 
+/** A single new task the host can create without a plan or a ReAct loop. */
+export interface ClickUpCreateSpec {
+  intent: string;
+  name: string;
+  description: string | null;
+  priority: "urgent" | "high" | "normal" | "low" | null;
+  scope_hint: string | null;
+}
+
+/**
+ * Build a create spec from a classified intent.
+ *
+ * Returns null when the intent is not a single create, names no task, or asks for something a new
+ * task cannot carry. The caller then plans, which is the slow but correct path.
+ */
+export function clickUpCreateSpecFromIntent(
+  intent: ClickUpIntent,
+): ClickUpCreateSpec | null {
+  if (intent.operation_kind !== "write" || intent.action !== "create_task") return null;
+  if ((intent.unsupported ?? []).length > 0) return null;
+  const name = optionalText(intent.task_name);
+  if (name === null) return null;
+  return {
+    intent: intent.intent,
+    name,
+    description: optionalText(intent.task_description),
+    priority: normalizedChoice(intent.task_priority, PRIORITY_FILTERS),
+    scope_hint: optionalText(intent.scope_hint),
+  };
+}
+
+/** Lists a person's words refer to: an exact id or name when there is one, otherwise a name match. */
+export function matchingLists(lists: ClickUpItem[], text: string): ClickUpItem[] {
+  const wanted = text.trim().toLocaleLowerCase();
+  if (wanted.length === 0) return [];
+  const exact = lists.filter(
+    (list) => list.id === text.trim() || list.name.toLocaleLowerCase() === wanted,
+  );
+  if (exact.length > 0) return exact;
+  return lists.filter((list) => list.name.toLocaleLowerCase().includes(wanted));
+}
+
+/**
+ * Deterministic create path: find the list, then create the task. No model call picks the list.
+ *
+ * With one list and no hint the list is obvious. Otherwise a hint that names exactly one list
+ * decides it, and anything still unclear is asked once, because a task created in the wrong list
+ * is worse than a question.
+ */
+export async function runClickUpCreateWorkflow(
+  spec: ClickUpCreateSpec,
+  awaitReply: (prompt: string) => Promise<string>,
+): Promise<SessionResult> {
+  const slug = slugGoal(spec.intent);
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-create-${slug}`)
+      : null;
+  const intentId = `intent-clickup-create-${slug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({ intentId, description: spec.intent })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-create-${slug}`,
+        steps: [
+          { stepId: "resolve-list", description: "Find the list for the new task.", order: 0, dependsOn: [] },
+          { stepId: "create-task", description: "Create the task.", order: 1, dependsOn: ["resolve-list"] },
+        ],
+      })
+    : null;
+
+  /** Close the unused create step and answer without touching ClickUp. */
+  const finishWithoutCreating = async (message: string): Promise<SessionResult> => {
+    await executable?.completeStep?.("resolve-list");
+    await executable?.startStep?.("create-task");
+    await executable?.completeStep?.("create-task");
+    await executable?.finish?.();
+    return { message: textReply(message) };
+  };
+
+  try {
+    await executable?.startStep?.("resolve-list");
+    const lists = await collectAllLists();
+    if (lists.length === 0) {
+      return await finishWithoutCreating(
+        `I found no ClickUp lists to put "${spec.name}" in, so I did not create it.`,
+      );
+    }
+
+    let matches = spec.scope_hint ? matchingLists(lists, spec.scope_hint) : lists;
+    if (matches.length !== 1) {
+      const options = matches.length > 1 ? matches : lists;
+      const lead = spec.scope_hint && matches.length === 0
+        ? `I could not find a ClickUp list matching "${spec.scope_hint}". `
+        : "";
+      const reply = await awaitReply(
+        `${lead}Which ClickUp list should "${spec.name}" go in? ` +
+          `Options: ${options.map((list) => list.name).join(", ")}. ` +
+          `Reply with a list name; anything else cancels.`,
+      );
+      matches = matchingLists(options, reply);
+      if (matches.length !== 1) {
+        return await finishWithoutCreating(`Cancelled: "${spec.name}" was not created.`);
+      }
+    }
+    const list = matches[0]!;
+    await executable?.completeStep?.("resolve-list");
+
+    await executable?.startStep?.("create-task");
+    const out = await callClickUp({
+      list_id: list.id,
+      name: spec.name,
+      ...(spec.description !== null ? { description: spec.description } : {}),
+      ...(spec.priority !== null ? { priority: PRIORITY_TO_NUMBER[spec.priority] } : {}),
+    });
+    await executable?.completeStep?.("create-task");
+    await executable?.finish?.();
+
+    const task = (out.tasks ?? [])[0];
+    const reference = task ? ` (id: ${task.id})${task.url ? ` ${task.url}` : ""}` : "";
+    return { message: textReply(`Created task "${spec.name}"${reference} in list ${list.name}.`) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original workflow error is more useful than a best-effort abort failure.
+    }
+    return { error: `ClickUp agent error: ${reason}` };
+  }
+}
+
 /** Apply the spec's change to one task, skipping a status write that is already satisfied. */
 async function applyTaskUpdate(
   task: ClickUpTaskSummary,
@@ -1669,11 +1808,6 @@ const CAPABILITY_READ_ACTIONS: Record<string, ClickUpIntent["action"]> = {
   "clickup:count-tasks": "count_tasks",
   "clickup:get-task": "get_task",
   "clickup:list-spaces": "navigate",
-};
-
-const CAPABILITY_WRITE_ACTIONS: Record<string, ClickUpIntent["action"]> = {
-  "clickup:create-task": "other",
-  "project-management:create-task": "other",
 };
 
 const CAPABILITY_PRIORITIZE = "clickup:prioritize";
@@ -1887,15 +2021,15 @@ export function clickUpIntentFromDeclaredRoute(
   if (route.unsupported.length > 0) return null;
   const capability = route.capability ?? "";
   const readAction = CAPABILITY_READ_ACTIONS[capability];
-  const writeAction = CAPABILITY_WRITE_ACTIONS[capability];
-  if (!readAction && !writeAction) return null;
+  // A declared create carries no task name, so it returns null and the classifier extracts one.
+  if (!readAction) return null;
 
   return {
     kind: "intent",
     // Keep the declared goal verbatim: no second paraphrase in the child.
     intent: route.goal,
-    operation_kind: writeAction ? "write" : "read",
-    action: readAction ?? writeAction!,
+    operation_kind: "read",
+    action: readAction,
     status_filter: route.filters.statuses[0] ?? null,
     statuses: route.filters.statuses.length > 0 ? route.filters.statuses : null,
     assignee_filter: route.filters.assignee,
@@ -1904,6 +2038,9 @@ export function clickUpIntentFromDeclaredRoute(
     text_filter: route.filters.text,
     unsupported: null,
     scope_hint: null,
+    task_name: null,
+    task_description: null,
+    task_priority: null,
   };
 }
 

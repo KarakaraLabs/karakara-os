@@ -49,7 +49,7 @@ export type ClickUpInput = ListTeamsInput | ListSpacesInput | ListListsInput | L
 export interface ClickUpIntent { kind: "intent";
 intent: string;
 operation_kind: "read" | "write" | "delete";
-action: "list_tasks" | "count_tasks" | "get_task" | "navigate" | "other";
+action: "list_tasks" | "count_tasks" | "get_task" | "navigate" | "create_task" | "other";
 status_filter: string | null;
 statuses: string[] | null;
 assignee_filter: string | null;
@@ -58,6 +58,9 @@ due_filter: "overdue" | "today" | "this_week" | "next_week" | null;
 text_filter: string | null;
 unsupported: string[] | null;
 scope_hint: string | null;
+task_name: string | null;
+task_description: string | null;
+task_priority: "urgent" | "high" | "normal" | "low" | null;
  }
 
 export interface ClickUpItem {
