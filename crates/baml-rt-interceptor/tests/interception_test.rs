@@ -15,7 +15,7 @@ use baml_rt_core::{
     ids::{AgentId, UuidId},
 };
 use serde_json::Value;
-use test_support::common::{require_api_key, setup_baml_runtime_manager_default};
+use test_support::common::{opt_api_key, require_api_key, setup_baml_runtime_manager_default};
 use tokio::sync::Mutex;
 
 /// Stub interceptor: substitutes "Hello, Test!" for SimpleGreeting so integration tests avoid real LLM calls.
@@ -640,7 +640,10 @@ impl LLMInterceptor for E2ELLMLoggingInterceptor {
 
 #[tokio::test]
 async fn test_e2e_llm_interceptor_with_baml_execution() {
-    let _ = require_api_key();
+    let Some(_api_key) = opt_api_key() else {
+        tracing::info!("Skipping E2E test: OPENROUTER_API_KEY is not configured");
+        return;
+    };
 
     tracing::info!("E2E Test: LLM interceptor with actual BAML function execution");
 
