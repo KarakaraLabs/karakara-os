@@ -5,11 +5,15 @@ name: Rust CI (Standard Runner)
 #
 # Key Architectural Properties:
 # 1. Standard Compute: Runs on standard GitHub-hosted ubuntu-latest runners (4 vCPU, 16 GB RAM).
-# 2. Standalone Secrets: Uses CI_FEATURES_UNTRUSTED to compile all workspace crates, tools,
+# 2. Parallel Quality Gates: Splits verification into concurrent jobs (Formatting & Clippy linter
+#    and Union Nextest suite) to provide sub-2min linter feedback and reduce pipeline wall-clock time.
+# 3. High-Speed Linking (mold): Uses mold high-performance linker with unpacked split debuginfo
+#    (-C split-debuginfo=unpacked) to accelerate linking across 213 test binaries.
+# 4. Standalone Secrets: Uses CI_FEATURES_UNTRUSTED to compile all workspace crates, tools,
 #    and runtime components without requiring third-party LLM API keys (OPENROUTER_API_KEY).
-# 3. Fast Caching: Swatinem/rust-cache@v2 restores build artifacts across runs, saving
-#    new cache entries only on merges to main to avoid PR upload overhead.
-# 4. Strict Linter (-D warnings): Enforces nightly rustfmt and stable clippy across all
+# 5. Segregated Build Caching: Swatinem/rust-cache@v2 maintains dedicated caches for clippy
+#    (ci-clippy-standard) and nextest (ci-nextest-standard), saving new entries only on main.
+# 6. Strict Linter (-D warnings): Enforces nightly rustfmt and stable clippy across all
 #    workspace targets while ignoring compiler-version stylistic lints via explicit -A flags.
 
 on:
@@ -56,8 +60,8 @@ env:
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
 
 jobs:
-  nextest:
-    name: Workspace Check & Test (ubuntu-latest)
+  clippy:
+    name: Code Formatting & Clippy Linter (ubuntu-latest)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
@@ -68,7 +72,7 @@ jobs:
         run: bash scripts/ci/apt-update-retry.sh
 
       - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
-        # Required for bindgen (clang/llvm), QuickJS compilation, DBus, and fast lld linking
+        # Required for bindgen (clang/llvm), QuickJS compilation, DBus, and fast linking
         run: |
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
@@ -93,8 +97,122 @@ jobs:
         id: fmt
         run: cargo +nightly fmt --check
 
-      - name: Restore and manage Rust build cache
-        # Shares target/ and ~/.cargo/ across workflow runs. Only main pushes and manual
+      - name: Install mold high-performance linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mold
+
+      - name: Restore and manage Rust build cache (clippy)
+        # Shares clippy target/ and ~/.cargo/ across runs. Only main pushes and manual
+        # dispatches repopulate the shared cache to keep PR runs fast.
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-clippy-standard"
+          cache-on-failure: true
+          cache-targets: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+      - name: Log runner hardware and OS diagnostics
+        run: |
+          echo "=== lscpu ==="
+          lscpu
+          echo "=== nproc ==="
+          nproc
+          echo "=== system memory ==="
+          free -h
+          echo "=== uname -a ==="
+          uname -a
+
+      - name: Run workspace Clippy linter (-D warnings)
+        id: clippy
+        # Enforces zero warnings on correctness and safety while ignoring stylistic
+        # and minor compiler-version lints across all workspace targets:
+        # - double_must_use: async_trait macro generates #[must_use] on futures in newer compilers.
+        # - large_enum_variant: TimelineKind in baml-rt-conversation contains unboxed context item.
+        # - result_large_err: HttpApiProblem (152B) exceeds the default 128B threshold in baml-rt-api.
+        # - await_holding_lock: lock held across await in tests/fixtures.
+        # - clippy::style, clippy::complexity, clippy::perf: prevent stylistic suggestions in newer
+        #   stable compilers from failing PR verification.
+        run: |
+          cargo clippy --workspace --all-targets --locked \
+            --features "${{ env.CI_FEATURES_UNTRUSTED }}" \
+            -- -D warnings \
+               -A clippy::double_must_use \
+               -A clippy::large_enum_variant \
+               -A clippy::result_large_err \
+               -A clippy::await_holding_lock \
+               -A clippy::style \
+               -A clippy::complexity \
+               -A clippy::perf
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold -C split-debuginfo=unpacked"
+
+      - name: Generate Linter Execution Summary
+        if: always()
+        run: |
+          FMT_STATUS="${{ steps.fmt.outcome }}"
+          CLIPPY_STATUS="${{ steps.clippy.outcome }}"
+
+          format_status() {
+            case "$1" in
+              success) echo "PASSED" ;;
+              skipped) echo "SKIPPED" ;;
+              *) echo "FAILED" ;;
+            esac
+          }
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Code Formatting & Clippy Linter - Execution Summary
+
+          ### Quality Gates Status
+          | Gate | Target / Tool | Status |
+          |---|---|---|
+          | **Code Formatting** | \`cargo +nightly fmt --check\` | $(format_status "$FMT_STATUS") |
+          | **Workspace Linter** | \`cargo clippy --workspace --all-targets --locked -D warnings\` | $(format_status "$CLIPPY_STATUS") |
+
+          ### Runner & Infrastructure
+          | Property | Specification | Details |
+          |---|---|---|
+          | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0 / unlimited minutes) |
+          | **Hardware Allocation** | 4 vCPU, 16 GB RAM | Bounded Cargo concurrency (\`-j 4\`) |
+          | **Linker** | \`mold\` | High-performance linker with unpacked split debuginfo |
+          | **Dependency Cache** | \`Swatinem/rust-cache@v2\` | Key: \`ci-clippy-standard\` (restores on PR, saves on main) |
+          | **Feature Scope** | \`CI_FEATURES_UNTRUSTED\` | Full workspace union non-LLM pass |
+          EOF
+
+  nextest:
+    name: Union Nextest Suite (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Update APT package repositories (with retries)
+        # Mitigates transient mirror synchronization races on archive.ubuntu.com
+        run: bash scripts/ci/apt-update-retry.sh
+
+      - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
+        # Required for bindgen (clang/llvm), QuickJS compilation, DBus, and fast linking
+        run: |
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
+            libclang-dev clang llvm-dev util-linux lld \
+            zstd git-lfs
+
+      - name: Configure LIBCLANG_PATH for bindgen (QuickJS)
+        run: bash scripts/ci/set-libclang-path.sh
+
+      - name: Setup stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest and mold high-performance linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,mold
+
+      - name: Restore and manage Rust build cache (nextest)
+        # Shares nextest target/ and ~/.cargo/ across workflow runs. Only main pushes and manual
         # dispatches repopulate the shared cache to keep PR runs fast.
         uses: Swatinem/rust-cache@v2
         with:
@@ -130,36 +248,6 @@ jobs:
           echo "=== uname -a ==="
           uname -a
 
-      - name: Install cargo-nextest binary test runner
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Run workspace Clippy linter (-D warnings)
-        id: clippy
-        # Enforces zero warnings on correctness and safety while ignoring stylistic
-        # and minor compiler-version lints across all workspace targets:
-        # - double_must_use: async_trait macro generates #[must_use] on futures in newer compilers.
-        # - large_enum_variant: TimelineKind in baml-rt-conversation contains unboxed context item.
-        # - result_large_err: HttpApiProblem (152B) exceeds the default 128B threshold in baml-rt-api.
-        # - await_holding_lock: lock held across await in tests/fixtures.
-        # - clippy::style, clippy::complexity, clippy::perf: prevent stylistic suggestions in newer
-        #   stable compilers from failing PR verification.
-        run: |
-          cargo clippy --workspace --all-targets --locked \
-            --features "${{ env.CI_FEATURES_UNTRUSTED }}" \
-            -- -D warnings \
-               -A clippy::double_must_use \
-               -A clippy::large_enum_variant \
-               -A clippy::result_large_err \
-               -A clippy::await_holding_lock \
-               -A clippy::style \
-               -A clippy::complexity \
-               -A clippy::perf
-        env:
-          RUSTUP_TOOLCHAIN: stable
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
-
       - name: Run workspace Nextest test suite (standard non-LLM pass)
         id: nextest
         # Executes all non-LLM unit, integration, and contract tests across the workspace.
@@ -169,7 +257,7 @@ jobs:
             --features "${{ env.CI_FEATURES_UNTRUSTED }}"
         env:
           RUSTUP_TOOLCHAIN: stable
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold -C split-debuginfo=unpacked"
           OTEL_SDK_DISABLED: "true"
           OTEL_TRACES_EXPORTER: "none"
           OTEL_METRICS_EXPORTER: "none"
@@ -186,11 +274,9 @@ jobs:
           check_name: Nextest results
           detailed_summary: true
 
-      - name: Generate Pipeline Execution Summary
+      - name: Generate Test Suite Execution Summary
         if: always()
         run: |
-          FMT_STATUS="${{ steps.fmt.outcome }}"
-          CLIPPY_STATUS="${{ steps.clippy.outcome }}"
           NEXTEST_STATUS="${{ steps.nextest.outcome }}"
           JUNIT_STATUS="${{ steps.junit.outcome }}"
 
@@ -203,13 +289,11 @@ jobs:
           }
 
           cat << EOF >> "$GITHUB_STEP_SUMMARY"
-          ## Rust CI (Standard Runner) - Execution Summary
+          ## Union Nextest Suite - Execution Summary
 
           ### Quality Gates Status
           | Gate | Target / Tool | Status |
           |---|---|---|
-          | **Code Formatting** | \`cargo +nightly fmt --check\` | $(format_status "$FMT_STATUS") |
-          | **Workspace Linter** | \`cargo clippy --workspace --all-targets --locked -D warnings\` | $(format_status "$CLIPPY_STATUS") |
           | **Union Test Suite** | \`cargo nextest run --profile ci-merged\` | $(format_status "$NEXTEST_STATUS") |
           | **JUnit Test Report** | \`target/nextest/ci-merged/junit.xml\` | $(format_status "$JUNIT_STATUS") |
 
@@ -218,10 +302,9 @@ jobs:
           |---|---|---|
           | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0 / unlimited minutes) |
           | **Hardware Allocation** | 4 vCPU, 16 GB RAM | Bounded Cargo concurrency (\`-j 4\`) |
-          | **External Secrets** | None (\$0) | Standalone non-LLM execution (no OPENROUTER_API_KEY required) |
+          | **Linker** | \`mold\` | High-performance linker with unpacked split debuginfo |
           | **Dependency Cache** | \`Swatinem/rust-cache@v2\` | Key: \`ci-nextest-standard\` (restores on PR, saves on main) |
           | **Feature Scope** | \`CI_FEATURES_UNTRUSTED\` | Full workspace union non-LLM pass |
-
           EOF
 
           if [ -f "target/nextest/ci-merged/junit.xml" ]; then
@@ -259,4 +342,3 @@ jobs:
               print(f"Failed to parse JUnit report metrics: {e}")
           PYEOF
           fi
-

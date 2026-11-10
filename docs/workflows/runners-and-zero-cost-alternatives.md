@@ -23,17 +23,17 @@ When Karakara OS was forked from `Agentium OS`, several workflows referenced cus
 - **Standalone:** Requires no third-party API keys and no self-hosted runner infrastructure.
 - **Observed Execution Durations across Runs (`ubuntu-latest` 4 vCPU):**
 
-  | Pipeline Phase / Step | Run `42762805390` (Cold) | Run `42766895532` (Linter Gate) | Run `42767973623` (Test Isolation) | Run `42814971004` (100% Green) | Run `42819658094` (Step Summary) | Run `42842255686` (`main` Merge & Cache Seed) | Estimated Warm Cache (`main`) | Operation Details |
-  |---|---|---|---|---|---|---|---|---|
-  | **OS & Package Setup** | 3m 31s | 26s | 14s | 14s | 2m 35s | 14s | ~15s | `apt-get` OS build deps, DBus, LLVM 21, `lld` linker |
-  | **Toolchains & TS 6.x** | ~20s | 15s | 16s | 16s | 16s | 14s | ~15s | Stable Rust toolchain, nightly rustfmt, Node 22, global `typescript@6` |
-  | **Formatting Check** | 3s | 2s | 2s | 2s | 3s | 1s | 2s | `cargo +nightly fmt --check` |
-  | **Cache Restore (`rust-cache@v2`)** | 1s | 2s | 2s | 1s | 1s | 2s | ~30s | Restores `target/` and `~/.cargo/` from GitHub storage |
-  | **Workspace Clippy (`--all-targets`)** | 9m 44s (lint drift) | 5m 03s (caught unused import) | 8m 14s (PASSED) | **6m 58s (PASSED 100%)** | **9m 14s (PASSED 100%)** | **6m 29s (PASSED 100%)** | ~2 to 3m | Lints 48 workspace crates, 920+ files with compiler-drift overrides |
-  | **Nextest Build & Execution** | *(skipped)* | *(skipped)* | 22m 03s (2,115 passed) | **17m 26s (2,116 / 2,116 passed)** | **20m 41s (2,116 / 2,116 passed)** | **18m 16s (2,116 / 2,116 passed)** | ~3 to 5m | Compiles integration binaries + runs union non-LLM test suite |
-  | **JUnit & Step Summary** | 3s | 3s | 4s | 1s | 1s | 1s | 3s | Publishes JUnit check + renders dynamic `$GITHUB_STEP_SUMMARY` |
-  | **Post Cache Save (`main`)** | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | **46s (CACHE SAVED)** | N/A (PR skips) | `Swatinem/rust-cache@v2` seeds `ci-nextest-standard` cache |
-  | **Total Pipeline Duration** | **34m 13s** | **6m 03s** | **30m 54s** | **24m 57s (ALL PASS)** | **32m 58s (ALL PASS)** | **26m 03s (MERGED & SEEDED)** | **~6 to 8m** | Standard GitHub-hosted `ubuntu-latest` VM ($0) |
+  | Pipeline Phase / Step | Run `42762805390` (Cold) | Run `42766895532` (Linter Gate) | Run `42767973623` (Test Isolation) | Run `42814971004` (100% Green) | Run `42819658094` (Step Summary) | Run `42842255686` (`main` Merge & Seed) | Run `42884574487` (Warm Baseline) | Estimated Parallel + `mold` | Operation Details |
+  |---|---|---|---|---|---|---|---|---|---|
+  | **OS & Package Setup** | 3m 31s | 26s | 14s | 14s | 2m 35s | 14s | 14s | ~15s | `apt-get` OS build deps, DBus, LLVM 21, `lld`/`mold` linker |
+  | **Toolchains & TS 6.x** | ~20s | 15s | 16s | 16s | 16s | 14s | 15s | ~15s | Stable Rust toolchain, nightly rustfmt, Node 22, global `typescript@6` |
+  | **Formatting Check** | 3s | 2s | 2s | 2s | 3s | 1s | 1s | 1s | `cargo +nightly fmt --check` |
+  | **Cache Restore (`rust-cache@v2`)** | 1s | 2s | 2s | 1s | 1s | 2s | 51s | ~30s | Restores `target/` and `~/.cargo/` from GitHub storage |
+  | **Workspace Clippy (`--all-targets`)** | 9m 44s (lint drift) | 5m 03s (caught unused import) | 8m 14s (PASSED) | **6m 58s (PASSED 100%)** | **9m 14s (PASSED 100%)** | **6m 29s (PASSED 100%)** | **1m 32s (WARM HIT)** | **~1.5m (Parallel)** | Lints 48 workspace crates, 920+ files with compiler-drift overrides |
+  | **Nextest Build & Execution** | *(skipped)* | *(skipped)* | 22m 03s (2,115 passed) | **17m 26s (2,116 / 2,116 passed)** | **20m 41s (2,116 / 2,116 passed)** | **18m 16s (2,116 / 2,116 passed)** | **10m 28s (WARM HIT)** | **~5 to 6m (`mold`)** | Compiles integration binaries + runs union non-LLM test suite |
+  | **JUnit & Step Summary** | 3s | 3s | 4s | 1s | 1s | 1s | 1s | 2s | Publishes JUnit check + renders dynamic `$GITHUB_STEP_SUMMARY` |
+  | **Post Cache Save (`main`)** | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | **46s (CACHE SAVED)** | *(cached)* | N/A (PR skips) | `Swatinem/rust-cache@v2` seeds dedicated caches on `main` |
+  | **Total Pipeline Duration** | **34m 13s** | **6m 03s** | **30m 54s** | **24m 57s (ALL PASS)** | **32m 58s (ALL PASS)** | **26m 03s (MERGED & SEEDED)** | **13m 33s (WARM HIT)** | **~6 to 7m (Parallel)** | Standard GitHub-hosted `ubuntu-latest` VM ($0) |
 
 - **Recent Benchmark Run History:**
   - **Run `42762805390`:** Initial cold run on standard runner. Identified floating compiler version drift under `-D warnings` on newer stable Rust.
