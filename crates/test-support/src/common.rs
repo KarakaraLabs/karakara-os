@@ -527,12 +527,9 @@ pub async fn setup_bridge(baml_manager: Arc<RwLock<BamlRuntimeManager>>) -> Quic
     bridge
 }
 
-/// Require that `OPENROUTER_API_KEY` resolves either via workspace `fnox.toml` or directly from
+/// Resolve `OPENROUTER_API_KEY` if present either via workspace `fnox.toml` or directly from
 /// the process environment after loading workspace `.env` once (see [`workspace_fnox_path`]).
-///
-/// Local dev: set secrets in `fnox.toml` (often with `env.OPENROUTER_API_KEY` pointing at vars from
-/// `.env`). CI: workflow writes fnox secrets.
-pub fn require_api_key() -> String {
+pub fn opt_api_key() -> Option<String> {
     use baml_rt_llm_config::{FnoxFileSecretResolver, SecretResolver};
     let fnox_path = workspace_fnox_path();
     let resolver = FnoxFileSecretResolver::from_path(Some(fnox_path.as_path()));
@@ -541,10 +538,18 @@ pub fn require_api_key() -> String {
         .map(|v| v.into_string())
         .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
         .filter(|s| !s.is_empty())
-        .expect(
-            "OPENROUTER_API_KEY must be set via fnox.toml or environment \
-             (local: configure fnox and/or `.env`; CI: Write fnox secrets step)",
-        )
+}
+
+/// Require that `OPENROUTER_API_KEY` resolves either via workspace `fnox.toml` or directly from
+/// the process environment after loading workspace `.env` once (see [`workspace_fnox_path`]).
+///
+/// Local dev: set secrets in `fnox.toml` (often with `env.OPENROUTER_API_KEY` pointing at vars from
+/// `.env`). CI: workflow writes fnox secrets.
+pub fn require_api_key() -> String {
+    opt_api_key().expect(
+        "OPENROUTER_API_KEY must be set via fnox.toml or environment \
+         (local: configure fnox and/or `.env`; CI: Write fnox secrets step)",
+    )
 }
 
 pub fn ensure_baml_src_exists() -> bool {
