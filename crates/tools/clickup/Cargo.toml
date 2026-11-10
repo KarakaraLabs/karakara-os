@@ -21,3 +21,6 @@ thiserror = { workspace = true }
 inventory = { workspace = true }
 schemars = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

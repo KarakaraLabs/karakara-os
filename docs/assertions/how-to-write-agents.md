@@ -473,6 +473,20 @@ Cap loop iterations in TypeScript; keep branching **thin**.
 
 Canonical reference implementation: **[coordinator-agent](../agents/coordinator-agent/)** — **`ClassifyCoordinatorTurn`** (Ready vs task clarification vs meta-only) with **`awaitInput`** until a delegatable task exists or the turn is clearly non-task; then **`submitIntent`** before **`GetDiscoverAgentsPlan`**; a **first execution session** whose committed step runs **`MakeStructuredPlan`** (`StandardStructuredPlan`); a **second execution session** that forwards each plan step to its specialist (relaying any question to the user), with synthesis via **`CoordinatorSynthesizeReply`** producing the operator-visible **`StructuredReply`**.
 
+### 4.3.1 Capability boundary and deterministic writes
+
+A coordinator selects an advertised capability and forwards a complete goal. It treats capability names as opaque registry values. Do not add provider operations such as `delete_task`, issue labels, Slack timestamps, or ClickUp priorities to the coordinator's route schema. The specialist owns its resource model and classifies the goal into its internal types. Adding or removing a specialist must not require a new coordinator operation union.
+
+For provider writes, use **resolve → apply → confirm** inside the specialist:
+
+1. **Resolve** the selector without changing data. An exact id can resolve directly. A name-based write requires an exact name after candidate retrieval; a partial match asks the user to choose even when it found only one candidate. Explicit bulk filters may select several records, but enforce a fixed limit before the first write.
+2. **Apply** the validated mutation to the resolved ids. Record each result independently so one rejection does not hide writes that already succeeded.
+3. **Confirm** the actual outcome. Name successful, unchanged, and failed records. Destructive writes call `ctx.emit.awaitInput` after resolution and proceed only on an explicit confirmation.
+
+The capability seam is also the fallback seam. If the specialist cannot express the selector or mutation in its typed workflow, it can use its own planner or ask a question. The coordinator must not guess provider fields to make the fast path fit.
+
+The ClickUp agent is the reference for exact-name gating, bounded bulk updates, per-task outcomes, and delete confirmation. The coordinator only sends `agent-route/v1` metadata plus the goal; ClickUp still runs `InferClickUpIntent` and validates the resulting ClickUp-specific contract.
+
 ### 4.4 Linear “reporting agent” variant
 
 The worked example in §3.6 is intentionally **linear**: `**PlanReportingWork`** → one `**submitIntent` / `submitPlan**` epoch → `**ExecuteStep**` per row → `**PresentReportingToUser**`. That is still ReAct-shaped when each `**ExecuteStep**` is a **narrowed** session-plan hop; add §4.3-style observe/revise only when product behavior requires replanning mid-turn.
@@ -496,7 +510,7 @@ Some agents **classify first** with a BAML union such as `SlackIntent | NeedClar
 - **Tools** return **structured data** (validated JSON shapes).
 - The **agent** owns **UX**: formatting, headings, and what the operator sees.
 
-Internal step execution (`runGeneratedStepExecutor`) resolves with a **discriminated envelope** (`outcome`: `completed` | `agent_correctable` | `fatal`). On `completed`, `last`, `steps`, and `session_context` are the same FSM telemetry as before. On `agent_correctable`, the host returns structured `recovery` (`code`, `mistake`, `invariant`, `fix_steps`) — the JS promise **still fulfilled**; branch on `recovery.code` instead of parsing `Error.message`. Malformed session-plan steps from the model (e.g. missing `archive_ref` on `PageRead`) surface here as `agent_correctable`, not as a bridge throw. When a delegated agent suspends for the user mid-run, pass **`onInputRequired: (prompt) => ctx.emit.awaitInput(prompt)`** in the options: the run pauses, the reply goes to that same child task, and the loop continues from the same hop. Without the callback the run resolves as `fatal` with the child's question in `message`.
+Internal step execution (`runGeneratedStepExecutor`) resolves with a **discriminated envelope** (`outcome`: `completed` | `agent_correctable` | `fatal`). On `completed`, `last`, `steps`, and `session_context` are the same FSM telemetry as before. On `agent_correctable`, the host returns structured `recovery` (`code`, `mistake`, `invariant`, `fix_steps`) — the JS promise **still fulfilled**; branch on `recovery.code` instead of parsing `Error.message`. Malformed session-plan steps from the model (e.g. missing `archive_ref` on `PageRead`) surface here as `agent_correctable`, not as a bridge throw. For delegated user questions, keep the child A2A session open, relay its suspended prompt through `ctx.emit.awaitInput`, and send the reply back to that same child session. See `forwardDelegation` in the coordinator agent.
 
 The **single** user-facing artifact the platform surfaces for a turn is the chat handler's return: `**SessionResult.message`**, a `**StructuredReply**` with `**parts**` and `**citations**`. Synthesize that **once** at session completion (the reporting agent does this with `PresentReportingToUser`). Do not treat step telemetry as the user reply or duplicate prose onto step records.
 

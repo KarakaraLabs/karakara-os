@@ -256,7 +256,13 @@ describe("validateClickUpPlanForExecution", () => {
       { id: "2", name: "B", status: "In Progress (Dev)", url: "", priority: "high" },
       { id: "3", name: "C", status: "to do", url: "", priority: "low" },
     ];
-    const empty = { statuses: [] as string[], assignee: null, priority: null, due: null, text: null };
+    const empty = {
+      statuses: [] as string[],
+      assignee: null,
+      priority: null,
+      due: null,
+      text: null,
+    };
     expect(
       applyTaskFilters(tasks, { ...empty, statuses: ["in progress"] }).matching.map((t) => t.id),
     ).toEqual(["1"]);
@@ -264,7 +270,9 @@ describe("validateClickUpPlanForExecution", () => {
       applyTaskFilters(tasks, { ...empty, statuses: ["progress"] }).matching.map((t) => t.id),
     ).toEqual(["1", "2"]);
     expect(
-      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "scoping"] }).matching.map((t) => t.id),
+      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "scoping"] }).matching.map(
+        (t) => t.id,
+      ),
     ).toEqual(["1"]);
     // Statuses are workspace-defined: case, spaces, and punctuation are insignificant.
     expect(
@@ -277,6 +285,22 @@ describe("validateClickUpPlanForExecution", () => {
     expect(
       applyTaskFilters(tasks, { ...empty, priority: "low" }).matching.map((t) => t.id),
     ).toEqual(["3"]);
+  });
+
+  it("matches read text against task names and descriptions", () => {
+    const tasks = [
+      { id: "1", name: "Fix login", description: "Auth cleanup", status: "to do", url: "" },
+      { id: "2", name: "Auth migration", description: null, status: "to do", url: "" },
+    ];
+    const filters = {
+      statuses: [] as string[],
+      assignee: null,
+      priority: null,
+      due: null,
+      text: "auth",
+    };
+
+    expect(applyTaskFilters(tasks, filters).matching.map((task) => task.id)).toEqual(["1", "2"]);
   });
 
   it("explains an abstain instead of returning silence", () => {

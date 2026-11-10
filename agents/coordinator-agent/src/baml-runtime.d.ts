@@ -75,24 +75,8 @@ route: CoordinatorRoute | null;
 export interface CoordinatorRoute { shape: "single" | "sequence" | "foreach" | "aggregate";
 targets: CoordinatorRouteTarget[];
 goal: string;
-filters: CoordinatorRouteFilters | null;
-operation: CoordinatorRouteOperation | null;
 expected_output: string | null;
 unsupported: string[] | null;
- }
-
-export interface CoordinatorRouteFilters { statuses: string[] | null;
-scope_note: string | null;
-assignee: string | null;
-priority: "urgent" | "high" | "normal" | "low" | null;
-due: "overdue" | "today" | "this_week" | "next_week" | null;
-text: string | null;
- }
-
-export interface CoordinatorRouteOperation { name: "update_task" | "delete_task";
-task_id: string | null;
-target_status: string | null;
-target_priority: "urgent" | "high" | "normal" | "low" | null;
  }
 
 export interface CoordinatorRouteTarget { agent_package: string;
