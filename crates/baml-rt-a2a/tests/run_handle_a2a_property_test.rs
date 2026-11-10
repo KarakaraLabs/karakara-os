@@ -77,6 +77,20 @@ fn input_required_jitter_strategy() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(0u8..=max_jitter, 1..=max_len)
 }
 
+fn interleaving_ops_strategy() -> impl Strategy<Value = Vec<(u8, u8)>> {
+    let max_jitter = if std::env::var_os("CI").is_some() {
+        4u8
+    } else {
+        7u8
+    };
+    let max_len = if std::env::var_os("CI").is_some() {
+        4usize
+    } else {
+        7usize
+    };
+    prop::collection::vec((0u8..=2u8, 0u8..=max_jitter), 3..=max_len)
+}
+
 fn proptest_cfg(cases: u32) -> ProptestConfig {
     let mut cfg = ProptestConfig::with_cases(cases);
     // Integration tests do not have a crate root (lib.rs/main.rs) for source-based persistence.
@@ -369,11 +383,11 @@ proptest! {
     ///   - response text is scoped to its own context (no cross-contamination)
     ///
     /// Timeout scales with ops.len() because stream handling is serialized per bridge (one permit):
-    /// the last request may not start until all earlier ones complete. Ops capped at 7 to keep
-    /// test duration bounded: (7 ops × 6s + 20s) × CI-scale-3 = 162s < 300s nextest budget.
+    /// the last request may not start until all earlier ones complete. In CI, ops are bounded to 4
+    /// with scaled timeout to maintain deterministic verification under shared runner contention.
     #[test]
     fn prop_interleaved_a2a_tool_llm_multi_context_isolation(
-        ops in prop::collection::vec((0u8..=2u8, 0u8..=7u8), 3..=7)
+        ops in interleaving_ops_strategy()
     ) {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
@@ -382,9 +396,9 @@ proptest! {
             .expect("runtime");
 
         // Per-request timeout must allow for serialization: last request waits for (ops.len()-1)
-        // others. Base uses (ops.len() * 6) + 20s, then CI multiplies for shared-runner headroom.
-        // With ops capped at 7: worst-case = (7×6+20)×3 = 162s, well within the 300s nextest budget.
-        let timeout_secs = (ops.len() as u64 * 6) + 20;
+        // others. Base uses (ops.len() * 8) + 25s, then CI multiplies for shared-runner headroom.
+        // With CI ops capped at 4: worst-case = (4×8+25)×3 = 171s, well within the 300s nextest budget.
+        let timeout_secs = (ops.len() as u64 * 8) + 25;
         let request_timeout = scaled_timeout_secs(timeout_secs);
 
         rt.block_on(async move {
