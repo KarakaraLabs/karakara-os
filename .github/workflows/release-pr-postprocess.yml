@@ -1,4 +1,15 @@
-name: Release PR postprocess
+name: Release PR Post-Process (Cargo.lock)
+
+# Synchronizes workspace lockfile versions (Cargo.lock) when Release Please opens
+# or updates a release pull request (release-please--*).
+#
+# Key Architectural Properties:
+# 1. Standard Compute: Runs on standard GitHub-hosted ubuntu-latest runners (4 vCPU, 16 GB RAM).
+# 2. Workspace Lockfile Sync: Runs cargo update --workspace to ensure all workspace members
+#    and dependency graphs reflect the updated workspace package versions.
+# 3. Force-Push Resilience: Employs fetch-and-rebase retry loops with exponential backoff
+#    to handle race conditions when Release Please updates the PR branch concurrently.
+# 4. PR Branch Isolation: Strictly targets same-repo release PR branches prefixed with release-please--.
 
 on:
   pull_request:
@@ -6,8 +17,8 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: read
+  contents: write       # required to push updated Cargo.lock commit to the release PR branch
+  pull-requests: read  # required to inspect pull request branch and metadata
 
 concurrency:
   group: release-pr-postprocess-${{ github.event.pull_request.number }}
@@ -15,13 +26,14 @@ concurrency:
 
 jobs:
   cargo-lock:
-    name: Update Cargo.lock on Release Please PRs
+    name: Synchronize Cargo.lock on Release Please PRs
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && startsWith(github.event.pull_request.head.ref, 'release-please--')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout release PR branch with full history
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           token: ${{ github.token }}
@@ -29,18 +41,21 @@ jobs:
           # Shallow checkout can lack the merge-base after a force-push.
           fetch-depth: 0
 
-      - name: Install Rust (stable)
+      - name: Setup stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Update workspace lockfile versions
+      - name: Update workspace lockfile versions (cargo update --workspace)
+        id: update_lock
         run: cargo update --workspace
 
-      - name: Commit Cargo.lock if changed
+      - name: Commit and push updated Cargo.lock with rebase retry
+        id: commit_push
         env:
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           if git diff --quiet -- Cargo.lock; then
             echo "Cargo.lock already up to date"
+            echo "status=unchanged" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -62,9 +77,42 @@ jobs:
               continue
             fi
             if git push origin "HEAD:${BRANCH}"; then
+              echo "status=pushed" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             sleep $((attempt * 5))
           done
           echo "failed to push Cargo.lock update after rebasing onto ${BRANCH}" >&2
           exit 1
+
+      - name: Generate Lockfile Post-Processing Summary
+        if: always()
+        run: |
+          UPDATE_STATUS="${{ steps.update_lock.outcome }}"
+          PUSH_STATUS="${{ steps.commit_push.outcome }}"
+          LOCK_ACTION="${{ steps.commit_push.outputs.status || 'unknown' }}"
+
+          format_status() {
+            case "$1" in
+              success) echo "PASSED" ;;
+              skipped) echo "SKIPPED" ;;
+              *) echo "FAILED" ;;
+            esac
+          }
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Release PR Post-Process (Cargo.lock) - Execution Summary
+
+          ### Lockfile Synchronization Status
+          | Gate | Operation | Result | Status |
+          |---|---|---|---|
+          | **Workspace Lock Update** | \`cargo update --workspace\` | Lockfile resolved | $(format_status "$UPDATE_STATUS") |
+          | **Commit & Push** | Branch rebase + push | \`${LOCK_ACTION}\` | $(format_status "$PUSH_STATUS") |
+
+          ### PR Branch Context
+          | Property | Specification | Details |
+          |---|---|---|
+          | **Branch** | \`${{ github.event.pull_request.head.ref }}\` | Target release candidate branch |
+          | **PR Number** | \`#${{ github.event.pull_request.number }}\` | Active Release Please pull request |
+          | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0) |
+          EOF

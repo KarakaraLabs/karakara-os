@@ -1,14 +1,28 @@
-name: Release Please
+name: Release Please (Automation & Assets)
+
+# Automated release PR generation, SemVer versioning, changelog maintenance, tag creation,
+# and native multi-architecture binary asset packaging.
+#
+# Key Architectural Properties:
+# 1. Standard Compute: Runs on standard GitHub-hosted runners (ubuntu-latest, ubuntu-22.04, ubuntu-22.04-arm).
+# 2. Release Automation: Driven by googleapis/release-please-action@v4, release-please-config.json,
+#    and .release-please-manifest.json to maintain release pull requests and tags.
+# 3. Native Multi-Arch Builds: Compiles x86_64 natively on ubuntu-22.04 and aarch64 natively on
+#    ubuntu-22.04-arm (both with glibc 2.35 floor) without cross-compilation emulation.
+# 4. Strict Tag Verification: Enforces that release tags match [workspace.package].version in Cargo.toml.
+# 5. Idempotent Asset Publishing: Packages release tarballs and aggregated SHA256SUMS, uploading
+#    to GitHub Releases via gh release with --clobber resilience.
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: write       # required to create release commits, tags, and publish release assets
+  pull-requests: write  # required for release-please to open and update release PRs
+  issues: write         # required for release-please to comment on issues closed by releases
 
 concurrency:
   group: release-please-${{ github.ref }}
@@ -18,31 +32,57 @@ concurrency:
 
 jobs:
   release-please:
-    name: Open/update release PR or create release
+    name: Open or update release PR and create release
     runs-on: ubuntu-latest
     if: github.repository == 'KarakaraLabs/karakara-os'
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - id: release
+      - name: Execute Release Please action
+        id: release
         uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - name: Generate Release Please Execution Summary
+        if: always()
+        run: |
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Release Please (Automation & Assets) - Execution Summary
+
+          ### Release Status
+          | Property | Value | Details |
+          |---|---|---|
+          | **Release Created** | \`${{ steps.release.outputs.release_created || 'false' }}\` | True when a release PR is merged |
+          | **Release Tag** | \`${{ steps.release.outputs.tag_name || 'none' }}\` | Created git release tag |
+          | **PR Created** | \`${{ steps.release.outputs.pr && 'true' || 'false' }}\` | True when release PR is opened or updated |
+          | **PR Number** | \`${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).number || 'none' }}\` | Active release candidate PR |
+
+          ### Runner & Infrastructure
+          | Property | Specification | Details |
+          |---|---|---|
+          | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0) |
+          | **Action** | \`googleapis/release-please-action@v4\` | Google Release Please engine |
+          | **Configuration** | \`release-please-config.json\` | Workspace SemVer and changelog rules |
+          EOF
+
   manifest:
-    name: Read release manifest
+    name: Read release manifest targets
     needs: [release-please]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.read.outputs.targets }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository at release tag (${{ needs.release-please.outputs.tag_name }})
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - id: read
+
+      - name: Extract build targets from release manifest
+        id: read
         run: |
           targets=$(bash scripts/release/release-manifest.sh --json \
             | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["targets"]))')
@@ -50,21 +90,23 @@ jobs:
           echo "release targets: ${targets}"
 
   verify:
-    name: Verify release tag
+    name: Verify release tag matches workspace version
     needs: [release-please]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository at release tag (${{ needs.release-please.outputs.tag_name }})
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - name: Verify release tag matches workspace version
+
+      - name: Verify release tag matches Cargo.toml version
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: bash scripts/release/verify-release-tag-matches-workspace-version.sh
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build release binaries (${{ matrix.target }})
     needs: [release-please, manifest, verify]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
@@ -73,13 +115,16 @@ jobs:
       matrix:
         target: ${{ fromJson(needs.manifest.outputs.targets) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository at release tag (${{ needs.release-please.outputs.tag_name }})
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Install OS build deps
+      - name: Update APT package repositories (with retries)
+        run: bash scripts/ci/apt-update-retry.sh
+
+      - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
         run: |
-          sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
             clang libclang-dev llvm-dev lld
@@ -87,16 +132,16 @@ jobs:
       - name: Configure LIBCLANG_PATH for bindgen (hirofa-quickjs-sys)
         run: bash scripts/ci/set-libclang-path.sh
 
-      - name: Install Rust (stable)
+      - name: Setup stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release binaries
+      - name: Build release binaries for ${{ matrix.target }}
         run: bash scripts/release/build-release-binaries.sh --target "${{ matrix.target }}"
 
-      - name: Pack tarball
+      - name: Package target distribution tarball
         run: bash scripts/release/pack-target-tarball.sh --target "${{ matrix.target }}"
 
-      - name: Upload tarball artifact
+      - name: Upload target tarball artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-tarball-${{ matrix.target }}
@@ -104,27 +149,27 @@ jobs:
           if-no-files-found: error
 
   upload-assets:
-    name: Upload binary release assets
+    name: Upload binary release assets to GitHub Release
     needs: [release-please, build]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # required to create or update release assets
     steps:
-      - name: Download tarball artifacts
+      - name: Download target tarball artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: release-tarball-*
           path: artifacts
           merge-multiple: true
 
-      - name: Stage assets + aggregate SHA256SUMS
+      - name: Stage distribution assets and calculate SHA256SUMS
         run: |
           mkdir -p out
           find artifacts -name '*.tar.gz' -exec cp {} out/ \;
           ( cd out && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS )
 
-      - name: Create or update GitHub Release assets
+      - name: Publish or update GitHub Release assets (gh release)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -140,4 +185,23 @@ jobs:
               --title "${TAG_NAME}" \
               --generate-notes \
               out/*.tar.gz out/SHA256SUMS
+          fi
+
+      - name: Generate Release Assets Execution Summary
+        if: always()
+        run: |
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Release Asset Publishing - Execution Summary
+
+          ### Published Assets (${{ needs.release-please.outputs.tag_name }})
+          | Asset File | Size | Verification |
+          |---|---|---|
+          EOF
+          if [ -d "out" ]; then
+            ( cd out && for f in *.tar.gz SHA256SUMS; do
+                if [ -f "$f" ]; then
+                  SIZE=$(ls -lh "$f" | awk '{print $5}')
+                  echo "| \`$f\` | $SIZE | Checksum generated |" >> "$GITHUB_STEP_SUMMARY"
+                fi
+              done )
           fi

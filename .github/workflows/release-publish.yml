@@ -1,30 +1,25 @@
-name: Release publish
+name: Release Publish (Multi-Arch Binaries)
 
-# Builds the prebuilt Linux release tarballs (see scripts/release/ and
-# tmp_plans/binary_release_plan.md §F). Three triggers:
-#   - push tag v*.*.*    : full build + GitHub Release upload
-#   - workflow_dispatch  : full build dry-run, or backfill/upload when `tag` is set
-#   - pull_request (release-tooling paths): aarch64 native-build smoke only
+# Multi-architecture native binary builds and GitHub Release asset publishing.
 #
-# Each target builds NATIVELY on a runner of its own arch (no cross): the
-# onnxruntime prebuilt that ort-sys downloads (fastembed's ort-download-binaries)
-# is built against a jammy+ toolchain — glibc >=2.32 / GCC >=11 — which the
-# cross-rs images (focal at newest) are too old to link. amd64 -> ubuntu-22.04,
-# aarch64 -> ubuntu-22.04-arm, giving both a consistent glibc 2.35 floor.
-#
-# The target matrix is read from scripts/release/release-manifest.sh (the SSOT),
-# and binaries are built via the release-dist Cargo profile through
-# build-release-binaries.sh. tsc/Node are deliberately NOT installed: compiling
-# the Rust binaries does not run the TypeScript pipeline (that is a runtime
-# concern for builder/publish, see INSTALL.md).
+# Key Architectural Properties:
+# 1. Native Multi-Arch Architecture: Builds natively on runner of target architecture (no cross):
+#    amd64 on ubuntu-22.04 and aarch64 on ubuntu-22.04-arm, providing a consistent glibc 2.35 floor
+#    required by statically linked ONNX runtime libraries (fastembed/ort-sys).
+# 2. Dynamic Target Matrix: Reads compilation targets dynamically from scripts/release/release-manifest.sh
+#    as the single source of truth (SSOT).
+# 3. Tag & Workspace Verification: Enforces that release tags strictly match [workspace.package].version
+#    in Cargo.toml before initiating heavy matrix builds.
+# 4. Tooling PR Smoke Tests: Runs native aarch64 smoke builds on PRs modifying scripts/release/**
+#    or the workflow definition itself to catch compilation regressions early.
+# 5. Idempotent Asset Publishing: Uses gh release upload with --clobber resilience and aggregates SHA256SUMS.
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags:
+      - 'v*.*.*'
   pull_request:
     # Only the release tooling — keep the heavy aarch64 build off normal PRs.
-    # Profile-only edits in Cargo.toml are rare; validate those via
-    # workflow_dispatch rather than triggering on every Cargo.toml change.
     paths:
       - 'scripts/release/**'
       - '.github/workflows/release-publish.yml'
@@ -36,7 +31,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: read  # required to check out repository code for manifest and verify jobs
 
 concurrency:
   group: release-${{ github.ref }}
@@ -44,55 +39,55 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Read the target list from the release manifest so the build matrix and the
-  # rest of the pipeline share one source of truth.
   manifest:
-    name: Read release manifest
+    name: Read release manifest targets
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.read.outputs.targets }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
         with:
           ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref }}
-      - id: read
+
+      - name: Extract build targets from release manifest
+        id: read
         run: |
           targets=$(bash scripts/release/release-manifest.sh --json \
             | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["targets"]))')
           echo "targets=${targets}" >> "$GITHUB_OUTPUT"
           echo "release targets: ${targets}"
 
-  # Tag only: the vX.Y.Z tag must equal [workspace.package].version.
-  # (Consolidated here from the former standalone release-tag-verify.yml so the
-  # build job can gate on it — GH Actions has no cross-workflow `needs`.)
   verify:
-    name: Verify tag matches workspace version
+    name: Verify release tag matches workspace version
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code at release reference
+        uses: actions/checkout@v4
         with:
           ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref }}
-      - name: Verify release tag
+
+      - name: Verify release tag matches Cargo.toml version
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: bash scripts/release/verify-release-tag-matches-workspace-version.sh
 
-  # PR (release-tooling paths) only, same-repo: prove the aarch64 native build
-  # (pkg-config, ONNX download + static link, quickjs bindgen) on the arm64
-  # runner before a real tag cut. Uses the same scripts the tag build uses.
   aarch64-dry-run:
-    name: aarch64 native build dry-run
+    name: Native aarch64 release build smoke test (ubuntu-22.04-arm)
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-22.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - name: Install OS build deps
+      - name: Update APT package repositories (with retries)
+        run: bash scripts/ci/apt-update-retry.sh
+
+      - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
         run: |
-          sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
             clang libclang-dev llvm-dev lld
@@ -100,13 +95,13 @@ jobs:
       - name: Configure LIBCLANG_PATH for bindgen (hirofa-quickjs-sys)
         run: bash scripts/ci/set-libclang-path.sh
 
-      - name: Install Rust (stable)
+      - name: Setup stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build aarch64 release binaries (native)
         run: bash scripts/release/build-release-binaries.sh --target aarch64-unknown-linux-gnu
 
-      - name: Inspect runner binary (arch + static ONNX)
+      - name: Inspect runner binary (architecture and static ONNX linkage)
         run: |
           bin=target/aarch64-unknown-linux-gnu/release-dist/karakara
           file "$bin"
@@ -119,32 +114,29 @@ jobs:
           fi
           echo "aarch64 native build OK: arch correct, ONNX statically linked"
 
-  # Tag or manual dispatch: build + pack every target in the manifest.
   build:
-    name: Build ${{ matrix.target }}
+    name: Build release binaries (${{ matrix.target }})
     needs: [manifest, verify]
-    # Run on tag push/manual dispatch (after verify succeeds when a tag is set).
-    # Never on pull_request — the aarch64-dry-run job covers PRs.
     if: >-
       !cancelled()
       && github.event_name != 'pull_request'
       && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
-    # Each target builds natively on its own arch (no cross — see file header).
-    # aarch64 on the arm64 runner; everything else on amd64. Both pinned to
-    # 22.04 for a consistent glibc 2.35 floor.
     runs-on: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
     strategy:
       fail-fast: false
       matrix:
         target: ${{ fromJson(needs.manifest.outputs.targets) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code at release reference
+        uses: actions/checkout@v4
         with:
           ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref }}
 
-      - name: Install OS build deps
+      - name: Update APT package repositories (with retries)
+        run: bash scripts/ci/apt-update-retry.sh
+
+      - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
         run: |
-          sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
             clang libclang-dev llvm-dev lld
@@ -152,45 +144,44 @@ jobs:
       - name: Configure LIBCLANG_PATH for bindgen (hirofa-quickjs-sys)
         run: bash scripts/ci/set-libclang-path.sh
 
-      - name: Install Rust (stable)
+      - name: Setup stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release binaries
+      - name: Build release binaries for ${{ matrix.target }}
         run: bash scripts/release/build-release-binaries.sh --target "${{ matrix.target }}"
 
-      - name: Pack tarball
+      - name: Package target distribution tarball
         run: bash scripts/release/pack-target-tarball.sh --target "${{ matrix.target }}"
 
-      - name: Upload tarball artifact
+      - name: Upload target tarball artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-tarball-${{ matrix.target }}
           path: dist/release/*.tar.gz
           if-no-files-found: error
 
-  # Tag or manual backfill: assemble the GitHub Release with the tarballs + aggregate SHA256SUMS.
   release:
-    name: Publish GitHub Release
+    name: Publish release assets to GitHub Releases
     needs: [build]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # required to upload release tarballs and SHA256SUMS
     steps:
-      - name: Download tarball artifacts
+      - name: Download target tarball artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: release-tarball-*
           path: artifacts
           merge-multiple: true
 
-      - name: Stage assets + aggregate SHA256SUMS
+      - name: Stage distribution assets and calculate SHA256SUMS
         run: |
           mkdir -p out
           find artifacts -name '*.tar.gz' -exec cp {} out/ \;
           ( cd out && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS )
 
-      - name: Create or update GitHub Release
+      - name: Publish or update GitHub Release assets (gh release)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -207,3 +198,30 @@ jobs:
               --generate-notes \
               out/*.tar.gz out/SHA256SUMS
           fi
+
+      - name: Generate Release Publication Summary
+        if: always()
+        run: |
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Release Publish (Multi-Arch Binaries) - Execution Summary
+
+          ### Published Release Assets
+          | Asset File | Size | Verification |
+          |---|---|---|
+          EOF
+          if [ -d "out" ]; then
+            ( cd out && for f in *.tar.gz SHA256SUMS; do
+                if [ -f "$f" ]; then
+                  SIZE=$(ls -lh "$f" | awk '{print $5}')
+                  echo "| \`$f\` | $SIZE | Checksum generated |" >> "$GITHUB_STEP_SUMMARY"
+                fi
+              done )
+          fi
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+
+          ### Runner & Matrix Specifications
+          | Target Architecture | Build Runner | Linking Floor |
+          |---|---|---|
+          | \`x86_64-unknown-linux-gnu\` | \`ubuntu-22.04\` (x86_64) | glibc 2.35 (native) |
+          | \`aarch64-unknown-linux-gnu\` | \`ubuntu-22.04-arm\` (aarch64) | glibc 2.35 (native) |
+          EOF
