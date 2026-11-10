@@ -38,8 +38,10 @@ All active workflows share a unified architectural pattern: structured header do
 
 ### Group A — Always-On Standard CI & Security Guardrails (`ubuntu-latest`, `$0`)
 1. **[`rust-ci-standard.yml`](../../.github/workflows/rust-ci-standard.yml) (`Rust CI (Standard Runner)`):**
-   - The authoritative routine PR and `main` test suite. Runs `cargo +nightly fmt --check`, `cargo clippy --workspace --all-targets --locked -D warnings`, and `cargo nextest run --profile ci-merged` across all 48 workspace crates.
-   - Restores and saves warm `ci-nextest-standard` build caches via `Swatinem/rust-cache@v2`. Publishes JUnit test annotations and dynamic execution summaries with pass/fail counts to `$GITHUB_STEP_SUMMARY`.
+   - The authoritative routine PR and `main` test suite, split into two concurrent parallel jobs for sub-2min linter feedback and fast warm execution:
+     - **Code Formatting & Clippy Linter (`clippy`):** Runs `cargo +nightly fmt --check` and `cargo clippy --workspace --all-targets --locked -D warnings` on `ubuntu-latest` with dedicated `ci-clippy-standard` cache.
+     - **Union Nextest Suite (`nextest`):** Runs all 2,116 workspace unit, integration, and property tests via `cargo nextest run --profile ci-merged` using the high-performance `mold` linker and unpacked split debuginfo (`-C link-arg=-fuse-ld=mold -C split-debuginfo=unpacked`) with `ci-nextest-standard` cache.
+   - Publishes JUnit test annotations and real-time Markdown summaries with test execution metrics to `$GITHUB_STEP_SUMMARY`.
 2. **[`secret-scan.yml`](../../.github/workflows/secret-scan.yml) (`Secret Scan (Gitleaks)`):**
    - Runs `gitleaks` (`v8.30.1`) against the full commit history (`gitleaks git`) and working tree (`gitleaks dir`) using [`.gitleaks.toml`](../../.gitleaks.toml).
    - Completes in ~17s with `contents: read` permissions and zero external dependencies, appending scan results to `$GITHUB_STEP_SUMMARY`.
