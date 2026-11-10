@@ -19,24 +19,28 @@ class ClickUpIntent {
   kind "intent"
   intent string @description("Clean, distilled goal statement — what the user wants to do in ClickUp.")
   operation_kind "read" | "write" | "delete" @description("Broad category: read (list/get), write (create/update), delete.")
-  action "list_tasks" | "count_tasks" | "get_task" | "navigate" | "create_task" | "other" @description("Typed read action the host can execute deterministically. list_tasks: show/list tasks. count_tasks: how many tasks. get_task: one named task. navigate: workspace hierarchy only. create_task: create one new task. other: anything else, including updates and deletes.")
+  action "list_tasks" | "count_tasks" | "get_task" | "navigate" | "create_task" | "create_tasks" | "update_task" | "delete_tasks" | "other" @description("Typed action the host can execute deterministically. list_tasks: show/list tasks. count_tasks: how many tasks. get_task: one named task. navigate: workspace hierarchy only. create_task: create exactly one new task. create_tasks: create several new tasks named in task_names. update_task: change existing task status or priority. delete_tasks: delete one or more tasks named in task_names (or a single task_id). other: anything else.")
   status_filter string? @description("Exact task status the user named, copied verbatim (e.g. in progress, Blocked / External). Omit when the user did not ask for a status filter. Never invent one.")
   statuses string[]? @description("Every task status the conversation is currently about, copied verbatim from the user or from records already shown (for example the statuses of tasks just listed). Use this instead of status_filter when more than one status applies. Omit when no status is established.")
   assignee_filter string? @description("Use only when the request must be filtered to tasks assigned to one named person: copy their name or email text verbatim. Omit when the user merely wants assignees shown. Leave null for 'assigned to me' and name that in unsupported instead.")
   priority_filter ("urgent" | "high" | "normal" | "low")? @description("Use only when the request must be filtered by priority. ClickUp priorities are fixed across workspaces. Omit when the user merely wants priority shown.")
   due_filter ("overdue" | "today" | "this_week" | "next_week")? @description("Use only when the request must be filtered by due date window, relative to today. Omit when the user merely wants due dates shown.")
-  text_filter string? @description("Use only when the request must be filtered to tasks whose name or description contains specific words: copy those words verbatim. Omit for unfiltered reads.")
+  text_filter string? @description("Words used to select tasks. For reads, match task names or descriptions. For updates and deletes, copy the task name words verbatim; writes use names only. Omit when no text filter applies.")
   unsupported string[]? @description("Constraints no typed field above can express (custom fields, grouping, ordering by an unlisted property, current-user identity, cross-workspace aggregation). Two or three words each. Empty or omitted when the request is a plain filtered list or count.")
-  scope_hint string? @description("Optional human-readable team, space, or list name the user named. A hint, never an ID.")
+  scope_hint string? @description("The team, space, or list the user named: usually a human-readable name, but copy an exact id verbatim when they gave one (e.g. 'list 901306839068'). Never invent an ID.")
+  task_id string? @description("For get, update, or delete: the exact task id when the user supplied one. Never infer an id from a task name.")
   task_name string? @description("For create_task only: the new task's name, copied verbatim without surrounding quotes.")
+  task_names string[]? @description("For create_tasks: the name of every new task to create, each copied verbatim without surrounding quotes, in the order given. For delete_tasks: the exact name of every task to delete. Omit for a single create_task/delete.")
   task_description string? @description("For create_task only: a description the user gave for the new task. Omit when they gave none; never invent one.")
   task_priority ("urgent" | "high" | "normal" | "low")? @description("For create_task only: the new task's priority when the user stated one. Omit otherwise.")
+  target_status string? @description("For update_task only: the NEW status to set, copied verbatim. This is never a selection filter.")
+  target_priority ("urgent" | "high" | "normal" | "low")? @description("For update_task only: the NEW priority to set. This is never a selection filter.")
 }
 
 class ClickUpPriorityIntent {
   kind "prioritize"
   intent string @description("The user's task-prioritization goal.")
-  scope "all_accessible" | "one_best_match" @description("all_accessible traverses every available team, space, and folderless list within limits. one_best_match selects one branch from the runtime candidates.")
+  scope "all_accessible" | "one_best_match" @description("all_accessible traverses every available team, space, folder, and list within limits. one_best_match selects one branch from the runtime candidates.")
   scope_hint string? @description("Optional team, space, or list name supplied by the user. This is a hint, never an ID.")
   status_filter string? @description("Optional exact task status requested by the user, such as in progress. Omit when the user did not request a status filter.")
   statuses string[]? @description("Every task status the conversation is currently about, for example the statuses of the tasks just listed. Use instead of status_filter when more than one applies.")
@@ -78,17 +82,27 @@ You are the intent classifier for a ClickUp workspace assistant.
     1. Treat the request as a real ClickUp intent when the message is about tasks, lists, spaces, or workspace state.
        - intent: plain-English goal statement (normalised, no filler)
        - operation_kind: "read" for any query/count/search; "write" for create/update; "delete" for delete
-       - action: the typed read operation the host can run without a plan.
+       - action: the typed operation the host can run without a plan.
          "list_tasks" for showing/listing/finding tasks, "count_tasks" for how many, "get_task" for one
          named task, "navigate" when the user only wants the workspace hierarchy (teams/spaces/lists),
-         "create_task" to create exactly one new task, and "other" for everything else (including
-         updates, deletes, and creating several tasks at once).
-       - For create_task: set task_name; put a list the user named in scope_hint. A new task can only
+         "create_task" to create exactly one new task, "create_tasks" to create several new tasks at
+         once, "update_task" to change existing task status or priority, "delete_tasks" to delete one
+         or more tasks, and "other" for everything else.
+       - For create_task: set task_name; put the list the user named — a name, or an exact list id
+         they gave (e.g. "list ID 901306839068") — in scope_hint. A new task can only
          have a name, description, and priority, so report anything else they ask for (assignee, due
          date, status) in unsupported.
-       - status_filter: copy the user's status wording verbatim when they name one; otherwise omit it.
-         ClickUp statuses are workspace-defined, so never translate, expand, or correct the wording —
-         copy what the user wrote (for example "Blocked / External" or "Scoping").
+       - For create_tasks (several at once, e.g. "create a task for each of these titles"): put every
+         new task's name in task_names (verbatim, in order), leave task_name null, and put any list
+         the user named in scope_hint. A shared description or priority applies to all.
+       - For delete_tasks (one or more deletes): put every task's exact name in task_names, or a single
+         supplied id in task_id. Use this for deletes instead of "other".
+       - For update_task: put the NEW value in target_status or target_priority. Select the existing
+         task by exact task_id, task-name words in text_filter, or a deliberate bulk filter such as its
+         current status. Do not put the destination status in status_filter or statuses.
+       - status_filter: copy a status used to SELECT existing tasks; otherwise omit it. For updates,
+         never copy target_status here. ClickUp statuses are workspace-defined, so never translate,
+         expand, or correct selection wording such as "Blocked / External" or "Scoping".
        - Filters vs display: the fields below exist only for filtering. Leave them null when the user
          merely wants that information shown — the renderer already displays assignees, priority, due
          dates, status, and ID for every task.
@@ -96,12 +110,14 @@ You are the intent classifier for a ClickUp workspace assistant.
            leave it null and put "current user" in unsupported.
          * priority_filter: ClickUp priorities are fixed across workspaces.
          * due_filter: a date window relative to today.
-         * text_filter: words the task name or description must contain. For a delete, always copy the
-           task's name here verbatim: the host finds the task from it.
+         * text_filter: for reads, words the task name or description must contain. For an update or
+           delete by name, copy the task's name words verbatim: writes match names only. If the user
+           supplied an exact task id, put it in task_id instead and do not copy it to text_filter.
        - unsupported: only for constraints none of the typed fields can express, such as custom fields,
          grouping, or ordering by something other than priority. Omit it when everything is expressible;
          a non-empty value sends the request to the general planner, which is slower.
-       - scope_hint: copy a team/space/list name the user mentioned; never invent an ID.
+       - scope_hint: copy a team/space/list name the user mentioned, or an exact id they gave
+         verbatim (names preferred, ids accepted); never invent an ID.
     2. Ask one clarifying question when the message relates to project management but is too vague
        to plan (e.g. "do the thing", "fix it", "help me" with no task or workspace context).
     3. Mark it not relevant ONLY when the message has NO connection whatsoever to project management,
@@ -120,7 +136,13 @@ You are the intent classifier for a ClickUp workspace assistant.
     - "what is due this week?" → list tasks, operation_kind "read", due_filter this_week
     - "list in-progress tasks with names, assignees, and due dates" → list tasks, operation_kind "read", status_filter "in progress" (display request: no other filters)
     - "create a task called Deploy v2 in the backend list" → create that task, operation_kind "write", action create_task, task_name "Deploy v2", scope_hint "backend"
-    - "delete the task fix login bug" → delete that task, operation_kind "delete", text_filter "fix login bug"
+    - "create 'Prompt to response Flow' using list ID 901306839068" → create that task, operation_kind "write", action create_task, task_name "Prompt to response Flow", scope_hint "901306839068"
+    - "create tasks for each title: Alpha Export, Beta Flow in the backend list" → create several, operation_kind "write", action create_tasks, task_names ["Alpha Export", "Beta Flow"], scope_hint "backend"
+    - "mark Fix login done" → update that task, operation_kind "write", action update_task, text_filter "Fix login", target_status "done"
+    - "move every in-progress task to done" → bulk update, operation_kind "write", action update_task, status_filter "in progress", target_status "done"
+    - "delete the task fix login bug" → delete that task, operation_kind "delete", action delete_tasks, task_names ["fix login bug"]
+    - "delete the tasks Alpha Export and Beta Flow" → delete several, operation_kind "delete", action delete_tasks, task_names ["Alpha Export", "Beta Flow"]
+    - "delete task 86afcwxrj by id" → delete that task, operation_kind "delete", task_id "86afcwxrj"
     - Host lifecycle ingress batches (clickup-created / clickup-terminal / clickup-removed record keys) →
       reconcile via read or write tool passes; prefer "read" to verify new or terminal tasks, "write" only when
       an explicit update is required; NEVER not_relevant when the message describes ClickUp lifecycle records.
@@ -297,8 +319,22 @@ function ChooseClickUpAction(
   "#
 }
 
+// Transient OpenRouter failures (HTTP 429 admission control, 5xx, network timeouts) are retried
+// by BAML with exponential backoff. The ~1s+2s+4s+8s spread clears OpenRouter's ~10s credit
+// reset without any manual retry loop in the agent.
+retry_policy OpenRouterBackoff {
+  max_retries 4
+  strategy {
+    type exponential_backoff
+    delay_ms 1000
+    multiplier 2
+    max_delay_ms 30000
+  }
+}
+
 client DefaultClient {
   provider openai-generic
+  retry_policy OpenRouterBackoff
   options {
     model env.BAML_TEST_MODEL
     base_url "https://openrouter.ai/api/v1"

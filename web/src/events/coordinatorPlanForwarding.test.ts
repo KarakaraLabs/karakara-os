@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  parseCoordinatorRoute,
+} from "../../../agents/coordinator-agent/src/routing.ts";
 
 type Step = { status: string; output?: unknown; error?: { message: string } };
 type Run = (ctx: unknown) => Promise<{ message?: unknown; error?: string }>;
@@ -90,8 +93,33 @@ function context(replies: string[] = []) {
   return { awaitInput, ctx: { text: "do both", emit: { message: vi.fn(), awaitInput } } };
 }
 
+describe("generic coordinator routes", () => {
+  it("parses a provider-neutral route and drops provider-specific fields for the specialist", () => {
+    const route = parseCoordinatorRoute({
+      shape: "single",
+      targets: [{ agent_package: "github-agent", capability: "github:close-issue" }],
+      goal: "Close issue 42 in acme/widgets after checking its open pull requests",
+      expected_output: "The final issue state",
+      unsupported: [],
+      // Provider-specific keys the classifier might emit: the coordinator keeps none of them. The
+      // specialist re-derives the operation from the goal under its own domain contract.
+      operation: { name: "close_issue", issue_number: 42 },
+      filters: { repository: "acme/widgets" },
+    });
+    if (!route) throw new Error("route did not parse");
+
+    expect(route).toEqual({
+      shape: "single",
+      targets: [{ agent_package: "github-agent", capability: "github:close-issue" }],
+      goal: "Close issue 42 in acme/widgets after checking its open pull requests",
+      expected_output: "The final issue state",
+      unsupported: [],
+    });
+  });
+});
+
 describe("coordinator multi-agent plans", () => {
-  it("sends each goal once and synthesizes from the final answers", async () => {
+  it("sends each goal once, forwarding earlier answers, and synthesizes from the final answers", async () => {
     scripts = {
       "notion-agent": [{ status: "done", output: textOutput("Summary of the page") }],
       "clickup-agent": [{ status: "done", output: textOutput("Deleted Step2Test") }],
@@ -100,9 +128,15 @@ describe("coordinator multi-agent plans", () => {
 
     const result = await run(ctx);
 
+    // The first step gets exactly its goal; every later step also carries the earlier answers, so a
+    // dependent step (e.g. acting on what Notion returned) can see upstream output it cannot reach
+    // through its own conversation.
     expect(sent).toEqual([
       { agent: "notion-agent", text: "Summarize the page" },
-      { agent: "clickup-agent", text: "Delete Step2Test" },
+      {
+        agent: "clickup-agent",
+        text: "Delete Step2Test\n\nResults from earlier steps:\n\n[notion-agent]\nSummary of the page",
+      },
     ]);
     expect(awaitInput).not.toHaveBeenCalled();
     expect(synthesize).toHaveBeenCalledWith({
@@ -148,7 +182,7 @@ describe("coordinator multi-agent plans", () => {
     expect(synthesize).not.toHaveBeenCalled();
   });
 
-  it("gives a foreach step the earlier answers", async () => {
+  it("forwards earlier answers regardless of the route shape", async () => {
     routeShape = "foreach";
     scripts = {
       "notion-agent": [{ status: "done", output: textOutput("Found page: Roadmap") }],

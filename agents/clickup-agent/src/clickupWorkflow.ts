@@ -709,10 +709,10 @@ async function mapWithConcurrency<T, R>(
 
 const CLICKUP_FANOUT_CONCURRENCY = 4;
 
-/** Every list reachable through teams and spaces. */
-async function collectAllLists(): Promise<ClickUpItem[]> {
+/** Every list reachable through teams and spaces. A hint is applied before the list safety gate. */
+async function collectAllLists(scopeHint: string | null = null): Promise<ClickUpItem[]> {
   const teams = (await callClickUp({})).items ?? [];
-  if (teams.length > MAX_ALL_TEAMS) {
+  if (teams.length > MAX_ALL_TEAMS && !scopeHint) {
     throw new Error(
       "There are too many teams to search safely. Name a workspace, space, or list.",
     );
@@ -723,7 +723,7 @@ async function collectAllLists(): Promise<ClickUpItem[]> {
       (await callClickUp({ team_id: team.id })).items ?? [],
     )
   ).flat();
-  if (spaces.length > MAX_ALL_SPACES) {
+  if (spaces.length > MAX_ALL_SPACES && !scopeHint) {
     throw new Error(
       "There are too many spaces to search safely. Name a workspace, space, or list.",
     );
@@ -734,12 +734,14 @@ async function collectAllLists(): Promise<ClickUpItem[]> {
       (await callClickUp({ space_id: space.id })).items ?? [],
     )
   ).flat();
-  if (lists.length > MAX_ALL_LISTS) {
+  const hintMatches = scopeHint ? matchingLists(lists, scopeHint) : [];
+  const hintedLists = hintMatches.length > 0 ? hintMatches : lists;
+  if (hintedLists.length > MAX_ALL_LISTS) {
     throw new Error(
       "There are too many lists to search safely. Name a workspace, space, or list.",
     );
   }
-  return lists;
+  return hintedLists;
 }
 
 async function collectAllTasks(
@@ -1141,7 +1143,8 @@ const MAX_BULK_UPDATE = 10;
 /** One task's outcome in a deterministic update pass. */
 type UpdateOutcome =
   | { kind: "updated"; task: ClickUpTaskSummary }
-  | { kind: "unchanged"; task: ClickUpTaskSummary };
+  | { kind: "unchanged"; task: ClickUpTaskSummary }
+  | { kind: "failed"; task: ClickUpTaskSummary; reason: string };
 
 /**
  * Deterministic status/priority update path.
@@ -1211,7 +1214,15 @@ export async function runClickUpWriteWorkflow(
     await executable?.startStep?.("apply-updates");
     const outcomes: UpdateOutcome[] = [];
     for (const task of resolution.targets) {
-      outcomes.push(await applyTaskUpdate(task, spec));
+      try {
+        outcomes.push(await applyTaskUpdate(task, spec));
+      } catch (error) {
+        outcomes.push({
+          kind: "failed",
+          task,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     await executable?.completeStep?.("apply-updates");
 
@@ -1240,6 +1251,13 @@ async function resolveWriteTargets(
   spec: Pick<ClickUpUpdateSpec, "intent" | "task_id" | "filters" | "scope_hint">,
   verb: "update" | "delete",
 ): Promise<UpdateResolution> {
+  if (!spec.task_id && !hasTaskFilters(spec.filters)) {
+    return {
+      kind: "message",
+      message: `Tell me which ClickUp task or task set to ${verb}; I did not change anything.`,
+    };
+  }
+
   if (spec.task_id) {
     const out = await callClickUp({ task_id: spec.task_id });
     const task = (out.tasks ?? [])[0];
@@ -1261,7 +1279,7 @@ async function resolveWriteTargets(
     statuses: null,
   };
   const scopeTasks = await collectScopedTasks(scopeIntent, READ_TRAVERSAL);
-  const { matching, statusMiss } = applyTaskFilters(scopeTasks, spec.filters);
+  const { matching, statusMiss } = applyWriteTaskFilters(scopeTasks, spec.filters);
 
   if (matching.length === 0) {
     const label = describeTaskFilters(spec.filters);
@@ -1280,13 +1298,12 @@ async function resolveWriteTargets(
     };
   }
 
-  // Exact-name gate: a text filter matches by substring, so several tasks can share a word. When
-  // more than one does, only an exact (case-insensitive) name match counts as the task the user
-  // meant — apply to all exact matches (a true bulk of identically named tasks), and ask rather than
-  // guess when nothing matches exactly. A status-only selection (no text) is a deliberate bulk and
-  // is left as-is.
+  // Exact-name gate: substring matching only discovers candidates. A write by name requires at
+  // least one exact (case-insensitive) name, even when the substring produced just one candidate.
+  // Apply to all exact duplicates, but ask rather than guess on a partial match. A status-only
+  // selection is a deliberate bulk and remains unchanged.
   let targets = matching;
-  if (spec.filters.text !== null && matching.length > 1) {
+  if (spec.filters.text !== null) {
     const wanted = spec.filters.text.trim().toLocaleLowerCase();
     const exact = matching.filter(
       (task) => task.name.trim().toLocaleLowerCase() === wanted,
@@ -1331,8 +1348,8 @@ function describeAmbiguousMatches(
       ? `\n…and ${candidates.length - shown.length} more.`
       : "";
   return (
-    `${candidates.length} ClickUp tasks${label} match that name, so I did not change anything. ` +
-    `Tell me which one (its exact name or id) and I'll ${verb} it:\n\n` +
+    `${candidates.length} ClickUp task(s)${label} matched only part of that name, so I did not change anything. ` +
+    `Reply with an exact task name or id and I'll ${verb} it:\n\n` +
     lines.join("\n") +
     more
   );
@@ -1524,11 +1541,98 @@ export function clickUpCreateSpecFromIntent(
 export function matchingLists(lists: ClickUpItem[], text: string): ClickUpItem[] {
   const wanted = text.trim().toLocaleLowerCase();
   if (wanted.length === 0) return [];
-  const exact = lists.filter(
-    (list) => list.id === text.trim() || list.name.toLocaleLowerCase() === wanted,
-  );
+  const exact = exactMatchingLists(lists, text);
   if (exact.length > 0) return exact;
   return lists.filter((list) => list.name.toLocaleLowerCase().includes(wanted));
+}
+
+/** Exact list choices accepted after the workflow asks the user to choose. */
+export function exactMatchingLists(lists: ClickUpItem[], text: string): ClickUpItem[] {
+  const raw = text.trim();
+  const wanted = raw.toLocaleLowerCase();
+  if (wanted.length === 0) return [];
+  return lists.filter(
+    (list) => list.id === raw || list.name.trim().toLocaleLowerCase() === wanted,
+  );
+}
+
+/**
+ * The list a free-form answer picks after the workflow asks the user to choose.
+ *
+ * An exact id or full name wins outright. Otherwise the answer must *mention* exactly one option —
+ * its id appears verbatim, or its full name appears as a substring — so a natural reply like
+ * "Project 2 in clickup" resolves to "Project 2", while a reply that fits two options (or none)
+ * stays ambiguous and the caller asks again rather than guessing. Still fully deterministic: no
+ * model interprets the answer.
+ */
+export function listChosenInReply(options: ClickUpItem[], text: string): ClickUpItem[] {
+  const exact = exactMatchingLists(options, text);
+  if (exact.length > 0) return exact;
+  const raw = text.trim();
+  const wanted = raw.toLocaleLowerCase();
+  if (wanted.length === 0) return [];
+  const mentioned = options.filter(
+    (list) => raw.includes(list.id) || wanted.includes(list.name.trim().toLocaleLowerCase()),
+  );
+  if (mentioned.length <= 1) return mentioned;
+  // Nested names (e.g. "Backend" inside "Backend ops") both match a reply naming the longer one.
+  // Prefer the most specific: drop any match whose name is wholly contained in another match's name.
+  const names = mentioned.map((list) => list.name.trim().toLocaleLowerCase());
+  const specific = mentioned.filter(
+    (_list, i) =>
+      !names.some((other, j) => j !== i && other.length > names[i]!.length && other.includes(names[i]!)),
+  );
+  return specific.length > 0 ? specific : mentioned;
+}
+
+/**
+ * Resolve the one list a create should write to, asking the user when it is not already unambiguous.
+ *
+ * `label` names what is being placed (a quoted task name, or "the N new tasks") and only shapes the
+ * question. The hint decides it outright when it names exactly one list; otherwise the user is asked
+ * and given one more try on an unclear answer, matching the tolerant reply rules. Returns null when
+ * the user never names a single list, so the caller can cancel without creating anything.
+ */
+async function resolveTargetList(
+  lists: ClickUpItem[],
+  scopeHint: string | null,
+  label: string,
+  awaitReply: (prompt: string) => Promise<string>,
+): Promise<ClickUpItem | null> {
+  const matches = scopeHint ? matchingLists(lists, scopeHint) : lists;
+  if (matches.length === 1) return matches[0]!;
+  const options = matches.length > 1 ? matches : lists;
+  const optionList = options.map((list) => `${list.name} (id: ${list.id})`).join(", ");
+  let chosen: ClickUpItem[] = [];
+  for (let attempt = 0; attempt < 2 && chosen.length !== 1; attempt++) {
+    const lead = attempt > 0
+      ? `I couldn't tell which list you meant. `
+      : scopeHint && matches.length === 0
+        ? `I could not find a ClickUp list matching "${scopeHint}". `
+        : "";
+    const reply = await awaitReply(
+      `${lead}Which ClickUp list should ${label} go in? ` +
+        `Options: ${optionList}. Reply with a list name or id.`,
+    );
+    chosen = listChosenInReply(options, reply);
+  }
+  return chosen.length === 1 ? chosen[0]! : null;
+}
+
+/** Trim, drop empties, and de-duplicate (case-insensitively) a model-supplied list of task names. */
+export function cleanNameList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const name = optionalText(value);
+    if (name === null) continue;
+    const key = name.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
 }
 
 /**
@@ -1573,30 +1677,17 @@ export async function runClickUpCreateWorkflow(
 
   try {
     await executable?.startStep?.("resolve-list");
-    const lists = await collectAllLists();
+    const lists = await collectAllLists(spec.scope_hint);
     if (lists.length === 0) {
       return await finishWithoutCreating(
         `I found no ClickUp lists to put "${spec.name}" in, so I did not create it.`,
       );
     }
 
-    let matches = spec.scope_hint ? matchingLists(lists, spec.scope_hint) : lists;
-    if (matches.length !== 1) {
-      const options = matches.length > 1 ? matches : lists;
-      const lead = spec.scope_hint && matches.length === 0
-        ? `I could not find a ClickUp list matching "${spec.scope_hint}". `
-        : "";
-      const reply = await awaitReply(
-        `${lead}Which ClickUp list should "${spec.name}" go in? ` +
-          `Options: ${options.map((list) => list.name).join(", ")}. ` +
-          `Reply with a list name; anything else cancels.`,
-      );
-      matches = matchingLists(options, reply);
-      if (matches.length !== 1) {
-        return await finishWithoutCreating(`Cancelled: "${spec.name}" was not created.`);
-      }
+    const list = await resolveTargetList(lists, spec.scope_hint, `"${spec.name}"`, awaitReply);
+    if (!list) {
+      return await finishWithoutCreating(`Cancelled: "${spec.name}" was not created.`);
     }
-    const list = matches[0]!;
     await executable?.completeStep?.("resolve-list");
 
     await executable?.startStep?.("create-task");
@@ -1612,6 +1703,124 @@ export async function runClickUpCreateWorkflow(
     const task = (out.tasks ?? [])[0];
     const reference = task ? ` (id: ${task.id})${task.url ? ` ${task.url}` : ""}` : "";
     return { message: textReply(`Created task "${spec.name}"${reference} in list ${list.name}.`) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original workflow error is more useful than a best-effort abort failure.
+    }
+    return { error: `ClickUp agent error: ${reason}` };
+  }
+}
+
+/** Several new tasks to create in one list — the deterministic fan-out of a "create one per X" ask. */
+export interface ClickUpMultiCreateSpec {
+  intent: string;
+  names: string[];
+  description: string | null;
+  priority: "urgent" | "high" | "normal" | "low" | null;
+  scope_hint: string | null;
+}
+
+/** Build a multi-create spec from the specialist's classification; null when it is not a batch create. */
+export function clickUpMultiCreateSpecFromIntent(
+  intent: ClickUpIntent,
+): ClickUpMultiCreateSpec | null {
+  if (intent.operation_kind !== "write" || intent.action !== "create_tasks") return null;
+  if ((intent.unsupported ?? []).length > 0) return null;
+  const names = cleanNameList(intent.task_names);
+  if (names.length === 0) return null;
+  return {
+    intent: intent.intent,
+    names,
+    description: optionalText(intent.task_description),
+    priority: normalizedChoice(intent.task_priority, PRIORITY_FILTERS),
+    scope_hint: optionalText(intent.scope_hint),
+  };
+}
+
+/**
+ * Deterministic batch create: resolve the list once, then create every named task in a loop.
+ *
+ * This is the fan-out the model-driven walk could not do reliably — its single write-confirmation
+ * gate stopped after the first task. Here the loop is owned by code, so N names always yield N
+ * attempts, each reported, and a shared description/priority applies to all.
+ */
+export async function runClickUpMultiCreateWorkflow(
+  spec: ClickUpMultiCreateSpec,
+  awaitReply: (prompt: string) => Promise<string>,
+): Promise<SessionResult> {
+  const slug = slugGoal(spec.intent);
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-create-many-${slug}`)
+      : null;
+  const intentId = `intent-clickup-create-many-${slug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({ intentId, description: spec.intent })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-create-many-${slug}`,
+        steps: [
+          { stepId: "resolve-list", description: "Find the list for the new tasks.", order: 0, dependsOn: [] },
+          { stepId: "create-tasks", description: "Create each task.", order: 1, dependsOn: ["resolve-list"] },
+        ],
+      })
+    : null;
+
+  const finishWithoutCreating = async (message: string): Promise<SessionResult> => {
+    await executable?.completeStep?.("resolve-list");
+    await executable?.startStep?.("create-tasks");
+    await executable?.completeStep?.("create-tasks");
+    await executable?.finish?.();
+    return { message: textReply(message) };
+  };
+
+  try {
+    await executable?.startStep?.("resolve-list");
+    const lists = await collectAllLists(spec.scope_hint);
+    if (lists.length === 0) {
+      return await finishWithoutCreating(
+        `I found no ClickUp lists to create ${spec.names.length} task(s) in, so I created nothing.`,
+      );
+    }
+    const label = spec.names.length === 1 ? `"${spec.names[0]}"` : `the ${spec.names.length} new tasks`;
+    const list = await resolveTargetList(lists, spec.scope_hint, label, awaitReply);
+    if (!list) {
+      return await finishWithoutCreating("Cancelled: no tasks were created.");
+    }
+    await executable?.completeStep?.("resolve-list");
+
+    await executable?.startStep?.("create-tasks");
+    const created: string[] = [];
+    const failed: string[] = [];
+    for (const name of spec.names) {
+      try {
+        const out = await callClickUp({
+          list_id: list.id,
+          name,
+          ...(spec.description !== null ? { description: spec.description } : {}),
+          ...(spec.priority !== null ? { priority: PRIORITY_TO_NUMBER[spec.priority] } : {}),
+        });
+        const task = (out.tasks ?? [])[0];
+        created.push(task ? `${name} (id: ${task.id})` : name);
+      } catch (error) {
+        failed.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await executable?.completeStep?.("create-tasks");
+    await executable?.finish?.();
+
+    const lines = [`Created ${created.length} of ${spec.names.length} ClickUp task(s) in list ${list.name}:`];
+    for (const entry of created) lines.push(`- ${entry}`);
+    if (failed.length > 0) {
+      lines.push(`Failed to create ${failed.length}:`);
+      for (const entry of failed) lines.push(`- ${entry}`);
+    }
+    return { message: textReply(lines.join("\n")) };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     try {
@@ -1663,18 +1872,24 @@ function renderUpdateConfirmation(
   if (spec.target_priority !== null) changes.push(`priority to '${spec.target_priority}'`);
   const changeLabel = changes.join(" and ") || "the requested fields";
 
-  const line = (o: UpdateOutcome): string =>
-    o.kind === "updated"
-      ? `Updated task ${o.task.id} (${o.task.name}) — set ${changeLabel}.`
-      : `Task ${o.task.id} (${o.task.name}) already matched ${changeLabel}; no change needed.`;
+  const line = (o: UpdateOutcome): string => {
+    if (o.kind === "updated") {
+      return `Updated task ${o.task.id} (${o.task.name}), set ${changeLabel}.`;
+    }
+    if (o.kind === "failed") {
+      return `Failed to update task ${o.task.id} (${o.task.name}): ${o.reason}`;
+    }
+    return `Task ${o.task.id} (${o.task.name}) already matched ${changeLabel}; no change needed.`;
+  };
 
   if (outcomes.length === 1) return line(outcomes[0]!);
 
   const updatedCount = outcomes.filter((o) => o.kind === "updated").length;
+  const failedCount = outcomes.filter((o) => o.kind === "failed").length;
   const header =
-    updatedCount === outcomes.length
-      ? `Updated ${outcomes.length} ClickUp task(s) — set ${changeLabel}:`
-      : `Processed ${outcomes.length} ClickUp task(s) (${updatedCount} changed):`;
+    failedCount === 0 && updatedCount === outcomes.length
+      ? `Updated ${outcomes.length} ClickUp task(s), set ${changeLabel}:`
+      : `Processed ${outcomes.length} ClickUp task(s): ${updatedCount} changed, ${failedCount} failed.`;
   return [header, "", ...outcomes.map((o) => `- ${line(o)}`)].join("\n");
 }
 
@@ -1771,49 +1986,6 @@ export function taskFiltersFromIntent(
   };
 }
 
-/**
- * Wire schema for a route declared by a calling coordinator.
- *
- * Sent as an A2A data part next to the human-readable text. When it validates, this agent executes
- * the declared capability directly instead of re-classifying a paraphrase of the request. Absent or
- * invalid declarations fall back to classification, so ingress, human messages, and older callers
- * keep working unchanged.
- */
-export const DECLARED_ROUTE_SCHEMA = "agent-route/v1";
-
-/** A typed write declared by the caller, executed deterministically with no re-classification. */
-export interface DeclaredRouteOperation {
-  name: "update_task" | "delete_task";
-  task_id: string | null;
-  target_status: string | null;
-  target_priority: "urgent" | "high" | "normal" | "low" | null;
-}
-
-export interface DeclaredRoute {
-  schema: string;
-  goal: string;
-  capability: string | null;
-  raw_user_text: string | null;
-  shape: string | null;
-  filters: ClickUpTaskFilters;
-  /** Which task set the caller says the user means, in their terms. */
-  scope_note: string | null;
-  operation: DeclaredRouteOperation | null;
-  unsupported: string[];
-}
-
-/** Capabilities this agent advertises in its manifest, mapped to the typed read action. */
-const CAPABILITY_READ_ACTIONS: Record<string, ClickUpIntent["action"]> = {
-  "clickup:list-tasks": "list_tasks",
-  "clickup:count-tasks": "count_tasks",
-  "clickup:get-task": "get_task",
-  "clickup:list-spaces": "navigate",
-};
-
-const CAPABILITY_PRIORITIZE = "clickup:prioritize";
-const CAPABILITY_UPDATE_TASK = "clickup:update-task";
-const CAPABILITY_DELETE_TASK = "clickup:delete-task";
-
 /** ClickUp numeric priority codes. */
 const PRIORITY_TO_NUMBER: Record<"urgent" | "high" | "normal" | "low", number> = {
   urgent: 1,
@@ -1825,8 +1997,8 @@ const PRIORITY_TO_NUMBER: Record<"urgent" | "high" | "normal" | "low", number> =
 /**
  * A validated status/priority update the host can execute without a plan or a ReAct loop.
  *
- * Either `task_id` names the exact task, or `filters` select the tasks by their current status and
- * name words. The destination value lives in `target_status` / `target_priority`, never in `filters`.
+ * Either `task_id` names the exact task, or `filters` select tasks by their current properties.
+ * Destination values stay separate from selection filters.
  */
 export interface ClickUpUpdateSpec {
   intent: string;
@@ -1838,35 +2010,41 @@ export interface ClickUpUpdateSpec {
 }
 
 /**
- * Build a deterministic update spec from a declared `clickup:update-task` route.
+ * Build a deterministic update from the ClickUp specialist's own classification.
  *
- * Returns null when the capability is not an update, the caller reported an inexpressible
- * constraint, or the operation carries no destination value — the caller then classifies, which is
- * the slow but correct path.
+ * The coordinator only chooses this agent and one of its advertised capabilities. ClickUp owns the
+ * provider-specific selector, destination values, ambiguity checks, and write limits.
  */
-export function clickUpUpdateSpecFromDeclaredRoute(
-  route: DeclaredRoute,
+export function clickUpUpdateSpecFromIntent(
+  intent: ClickUpIntent,
 ): ClickUpUpdateSpec | null {
-  if (route.capability !== CAPABILITY_UPDATE_TASK) return null;
-  if (route.unsupported.length > 0) return null;
-  const op = route.operation;
-  if (!op || op.name !== "update_task") return null;
-  if (!op.target_status && !op.target_priority) return null;
+  if (intent.operation_kind !== "write" || intent.action !== "update_task") return null;
+  if ((intent.unsupported ?? []).length > 0) return null;
 
-  // The destination status must not also act as a selection filter: the classifier is told to keep
-  // them apart, but strip it defensively so "move from in progress to to do" never matches on "to do".
-  const targetKey = op.target_status ? statusKey(op.target_status) : null;
-  const selectionStatuses = targetKey
-    ? route.filters.statuses.filter((status) => statusKey(status) !== targetKey)
-    : route.filters.statuses;
+  const targetStatus = optionalText(intent.target_status);
+  const targetPriority = normalizedChoice(intent.target_priority, PRIORITY_FILTERS);
+  if (!targetStatus && !targetPriority) return null;
+
+  const taskId = optionalText(intent.task_id);
+  const originalFilters = taskFiltersFromIntent(intent);
+
+  // A task id or name is enough to select the target. A status remembered from earlier conversation
+  // can otherwise hide the named task after it changes. Keep statuses for explicit bulk selectors,
+  // as in "move every urgent in-progress task to done".
+  const targetKey = targetStatus ? statusKey(targetStatus) : null;
+  const selectionStatuses = taskId || originalFilters.text
+    ? []
+    : targetKey
+      ? originalFilters.statuses.filter((status) => statusKey(status) !== targetKey)
+      : originalFilters.statuses;
 
   return {
-    intent: route.goal,
-    task_id: op.task_id,
-    target_status: op.target_status,
-    target_priority: op.target_priority,
-    filters: { ...route.filters, statuses: selectionStatuses },
-    scope_hint: null,
+    intent: intent.intent,
+    task_id: taskId,
+    target_status: targetStatus,
+    target_priority: targetPriority,
+    filters: { ...originalFilters, statuses: selectionStatuses },
+    scope_hint: optionalText(intent.scope_hint),
   };
 }
 
@@ -1878,186 +2056,144 @@ export interface ClickUpDeleteSpec {
   scope_hint: string | null;
 }
 
-/**
- * Build a delete spec from a declared `clickup:delete-task` route.
- *
- * Statuses are dropped because the caller fills them from whatever the conversation last listed; a
- * delete names its task, and a stale status must not hide it.
- */
-export function clickUpDeleteSpecFromDeclaredRoute(
-  route: DeclaredRoute,
-): ClickUpDeleteSpec | null {
-  if (route.capability !== CAPABILITY_DELETE_TASK) return null;
-  if (route.unsupported.length > 0) return null;
-  return {
-    intent: route.goal,
-    task_id: route.operation?.name === "delete_task" ? route.operation.task_id : null,
-    filters: { ...route.filters, statuses: [] },
-    scope_hint: null,
-  };
-}
-
-/** Build a delete spec from a classified intent, for callers that did not declare a route. */
+/** Build a delete spec from the ClickUp specialist's classification. */
 export function clickUpDeleteSpecFromIntent(
   intent: ClickUpIntent,
 ): ClickUpDeleteSpec {
   return {
     intent: intent.intent,
-    task_id: null,
+    task_id: optionalText(intent.task_id),
     filters: { ...taskFiltersFromIntent(intent), statuses: [] },
-    scope_hint: intent.scope_hint ?? null,
+    scope_hint: optionalText(intent.scope_hint),
   };
 }
 
-/** Statuses declared by a caller, accepting `statuses[]` or the legacy `status`. */
-function declaredStatuses(filters: Record<string, unknown>): string[] {
-  const listed = Array.isArray(filters.statuses)
-    ? filters.statuses
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0)
-    : [];
-  if (listed.length > 0) return listed;
-  const single = optionalText(filters.status);
-  return single ? [single] : [];
-}
-
-function declaredRouteFromValue(value: unknown): DeclaredRoute | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  // Accept the route directly or wrapped under a named key, so callers can namespace it.
-  const candidate =
-    record.schema === DECLARED_ROUTE_SCHEMA
-      ? record
-      : record.declared_route !== null &&
-          typeof record.declared_route === "object" &&
-          !Array.isArray(record.declared_route)
-        ? (record.declared_route as Record<string, unknown>)
-        : null;
-  if (!candidate || candidate.schema !== DECLARED_ROUTE_SCHEMA) return null;
-
-  const goal = optionalText(candidate.goal);
-  if (!goal) return null;
-  const filters =
-    candidate.filters !== null &&
-    typeof candidate.filters === "object" &&
-    !Array.isArray(candidate.filters)
-      ? (candidate.filters as Record<string, unknown>)
-      : {};
-  const unsupported = Array.isArray(candidate.unsupported)
-    ? candidate.unsupported
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0)
-    : [];
-
-  return {
-    schema: DECLARED_ROUTE_SCHEMA,
-    goal,
-    capability: optionalText(candidate.capability),
-    raw_user_text: optionalText(candidate.raw_user_text),
-    shape: optionalText(candidate.shape),
-    filters: {
-      statuses: declaredStatuses(filters),
-      assignee: optionalText(filters.assignee),
-      priority: normalizedChoice(filters.priority, PRIORITY_FILTERS),
-      due: normalizedChoice(filters.due, DUE_FILTERS),
-      text: optionalText(filters.text),
-    },
-    scope_note: optionalText(candidate.scope_note),
-    operation: declaredRouteOperation(candidate.operation),
-    unsupported,
-  };
-}
-
-/** Parse a typed write operation from the declared route; anything unactionable becomes `null`. */
-function declaredRouteOperation(value: unknown): DeclaredRouteOperation | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (record.name === "delete_task") {
-    return {
-      name: "delete_task",
-      task_id: optionalText(record.task_id),
-      target_status: null,
-      target_priority: null,
-    };
-  }
-  if (record.name !== "update_task") return null;
-  const target_status = optionalText(record.target_status);
-  const target_priority = normalizedChoice(record.target_priority, PRIORITY_FILTERS);
-  if (!target_status && !target_priority) return null;
-  return {
-    name: "update_task",
-    task_id: optionalText(record.task_id),
-    target_status,
-    target_priority,
-  };
-}
-
-/** Extract a declared route from the inbound message parts, if the caller sent one. */
-export function declaredRouteFromMessage(message: unknown): DeclaredRoute | null {
-  if (message === null || typeof message !== "object") return null;
-  const parts = (message as { parts?: unknown }).parts;
-  if (!Array.isArray(parts)) return null;
-  for (const part of parts) {
-    if (part === null || typeof part !== "object") continue;
-    const route = declaredRouteFromValue((part as { data?: unknown }).data);
-    if (route) return route;
-  }
-  return null;
+/** One or more explicitly-named tasks to delete in a single pass, no confirmation. */
+export interface ClickUpMultiDeleteSpec {
+  intent: string;
+  task_ids: string[];
+  names: string[];
+  scope_hint: string | null;
 }
 
 /**
- * Build the typed read intent a calling coordinator already declared.
+ * Build a batch-delete spec from the specialist's classification; null when it is not a `delete_tasks`.
  *
- * Returns null when the capability is unknown, the goal is missing, or the coordinator reported a
- * constraint it could not encode: the caller must then classify, which is the slow but correct path.
+ * `delete_tasks` is the explicit path: the user named the exact tasks, so there is nothing to
+ * confirm. A delete expressed only as a selection (a text or status filter, no names) stays on the
+ * single confirmed path, where confirmation is the safety net for a fuzzy match.
  */
-export function clickUpIntentFromDeclaredRoute(
-  route: DeclaredRoute,
-): ClickUpIntent | null {
-  if (route.unsupported.length > 0) return null;
-  const capability = route.capability ?? "";
-  const readAction = CAPABILITY_READ_ACTIONS[capability];
-  // A declared create carries no task name, so it returns null and the classifier extracts one.
-  if (!readAction) return null;
-
-  return {
-    kind: "intent",
-    // Keep the declared goal verbatim: no second paraphrase in the child.
-    intent: route.goal,
-    operation_kind: "read",
-    action: readAction,
-    status_filter: route.filters.statuses[0] ?? null,
-    statuses: route.filters.statuses.length > 0 ? route.filters.statuses : null,
-    assignee_filter: route.filters.assignee,
-    priority_filter: route.filters.priority,
-    due_filter: route.filters.due,
-    text_filter: route.filters.text,
-    unsupported: null,
-    scope_hint: null,
-    task_name: null,
-    task_description: null,
-    task_priority: null,
-  };
+export function clickUpMultiDeleteSpecFromIntent(
+  intent: ClickUpIntent,
+): ClickUpMultiDeleteSpec | null {
+  if (intent.operation_kind !== "delete" || intent.action !== "delete_tasks") return null;
+  const names = cleanNameList(intent.task_names);
+  const id = optionalText(intent.task_id);
+  const task_ids = id ? [id] : [];
+  if (names.length === 0 && task_ids.length === 0) return null;
+  return { intent: intent.intent, task_ids, names, scope_hint: optionalText(intent.scope_hint) };
 }
 
-/** Build a priority intent from a declared `clickup:prioritize` route. */
-export function clickUpPriorityIntentFromDeclaredRoute(
-  route: DeclaredRoute,
-): ClickUpPriorityIntent | null {
-  if (route.capability !== CAPABILITY_PRIORITIZE) return null;
-  if (route.unsupported.length > 0) return null;
-  return {
-    kind: "prioritize",
-    intent: route.goal,
-    scope: "all_accessible",
-    scope_hint: null,
-    status_filter: route.filters.statuses[0] ?? null,
-    statuses: route.filters.statuses.length > 0 ? route.filters.statuses : null,
-  };
+/**
+ * Deterministic batch delete with no confirmation: each task was named explicitly by the user.
+ *
+ * Ids are fetched directly; names are resolved against one scoped traversal and must match a task
+ * name exactly (a name that matches several is reported, not guessed, so a fuzzy name never deletes
+ * the wrong task). Every resolved task is deleted in one pass and the outcome of each is reported.
+ */
+export async function runClickUpMultiDeleteWorkflow(
+  spec: ClickUpMultiDeleteSpec,
+): Promise<SessionResult> {
+  const slug = slugGoal(spec.intent);
+  const executionSession =
+    typeof openA2aExecutionSession === "function"
+      ? await openA2aExecutionSession(`clickup-delete-many-${slug}`)
+      : null;
+  const intentId = `intent-clickup-delete-many-${slug}`;
+  const intentPhase = executionSession
+    ? await executionSession.submitIntent({ intentId, description: spec.intent })
+    : null;
+  const executable = intentPhase
+    ? await intentPhase.submitPlan({
+        intentId,
+        planId: `plan-clickup-delete-many-${slug}`,
+        steps: [
+          { stepId: "resolve-targets", description: "Find the tasks to delete.", order: 0, dependsOn: [] },
+          { stepId: "apply-deletes", description: "Delete each resolved task.", order: 1, dependsOn: ["resolve-targets"] },
+        ],
+      })
+    : null;
+
+  try {
+    await executable?.startStep?.("resolve-targets");
+    const targets: ClickUpTaskSummary[] = [];
+    const notFound: string[] = [];
+    const ambiguous: string[] = [];
+
+    for (const id of spec.task_ids) {
+      const out = await callClickUp({ task_id: id });
+      const task = (out.tasks ?? [])[0];
+      if (task) targets.push(task);
+      else notFound.push(`id ${id}`);
+    }
+
+    if (spec.names.length > 0) {
+      const scopeIntent: ClickUpPriorityIntent = {
+        kind: "prioritize",
+        intent: spec.intent,
+        scope: spec.scope_hint?.trim() ? "one_best_match" : "all_accessible",
+        scope_hint: spec.scope_hint ?? null,
+        status_filter: null,
+        statuses: null,
+      };
+      const scopeTasks = await collectScopedTasks(scopeIntent, READ_TRAVERSAL);
+      for (const name of spec.names) {
+        const wanted = name.trim().toLocaleLowerCase();
+        const exact = scopeTasks.filter((task) => task.name.trim().toLocaleLowerCase() === wanted);
+        if (exact.length === 0) notFound.push(name);
+        else if (exact.length > 1) ambiguous.push(`${name} (${exact.length} matches)`);
+        else targets.push(exact[0]!);
+      }
+    }
+    await executable?.completeStep?.("resolve-targets");
+
+    // A task named by both id and name, or matched twice, is deleted once.
+    const unique = [...new Map(targets.map((task) => [task.id, task])).values()];
+
+    await executable?.startStep?.("apply-deletes");
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    for (const task of unique) {
+      try {
+        await callClickUp({ task_id: task.id, confirm_delete: true });
+        deleted.push(`${task.name} (id: ${task.id})`);
+      } catch (error) {
+        failed.push(`${task.name} (id: ${task.id}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await executable?.completeStep?.("apply-deletes");
+    await executable?.finish?.();
+
+    const lines = [
+      deleted.length > 0 ? `Deleted ${deleted.length} ClickUp task(s):` : "No ClickUp tasks were deleted.",
+    ];
+    for (const entry of deleted) lines.push(`- ${entry}`);
+    if (notFound.length > 0) lines.push(`Not found: ${notFound.join(", ")}.`);
+    if (ambiguous.length > 0) lines.push(`Matched more than one, so not deleted: ${ambiguous.join(", ")}.`);
+    if (failed.length > 0) {
+      lines.push(`Failed to delete ${failed.length}:`);
+      for (const entry of failed) lines.push(`- ${entry}`);
+    }
+    return { message: textReply(lines.join("\n")) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await executable?.abort?.(reason);
+    } catch {
+      // The original workflow error is more useful than a best-effort abort failure.
+    }
+    return { error: `ClickUp agent error: ${reason}` };
+  }
 }
 
 /** True when the intent narrows the task list at all. */
@@ -2169,9 +2305,10 @@ function matchesDueFilter(task: ClickUpTaskSummary, due: string): boolean {
  * caller asked in their own words. When nothing matches, `statusMiss` tells the renderer to list
  * the statuses that do exist instead of claiming there are no tasks.
  */
-export function applyTaskFilters(
+function applyTaskFiltersInternal(
   tasks: ClickUpTaskSummary[],
   filters: ClickUpTaskFilters,
+  includeDescriptions: boolean,
 ): { matching: ClickUpTaskSummary[]; statusMiss: boolean } {
   let statusMiss = false;
   let matching = tasks;
@@ -2216,15 +2353,31 @@ export function applyTaskFilters(
   }
   if (filters.text) {
     const wanted = filters.text.toLocaleLowerCase();
-    matching = matching.filter((task) =>
-      `${task.name} ${task.description ?? ""}`
-        .toLocaleLowerCase()
-        .includes(wanted),
-    );
+    matching = matching.filter((task) => {
+      const searchable = includeDescriptions
+        ? `${task.name} ${task.description ?? ""}`
+        : task.name;
+      return searchable.toLocaleLowerCase().includes(wanted);
+    });
   }
   return { matching, statusMiss };
 }
 
+/** Read filters search task names and descriptions. */
+export function applyTaskFilters(
+  tasks: ClickUpTaskSummary[],
+  filters: ClickUpTaskFilters,
+): { matching: ClickUpTaskSummary[]; statusMiss: boolean } {
+  return applyTaskFiltersInternal(tasks, filters, true);
+}
+
+/** Write selectors search names only; description text can never select a task to mutate. */
+function applyWriteTaskFilters(
+  tasks: ClickUpTaskSummary[],
+  filters: ClickUpTaskFilters,
+): { matching: ClickUpTaskSummary[]; statusMiss: boolean } {
+  return applyTaskFiltersInternal(tasks, filters, false);
+}
 
 function renderTaskTable(tasks: ClickUpTaskSummary[]): string {
   const header = "| Task | Status | Priority | Assignees | Due | ID |";

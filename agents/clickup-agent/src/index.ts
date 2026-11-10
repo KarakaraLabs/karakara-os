@@ -2,12 +2,10 @@
 import type { ClickUpIntent, RunContext, SessionResult } from "./baml-runtime";
 import {
   clickUpCreateSpecFromIntent,
-  clickUpDeleteSpecFromDeclaredRoute,
   clickUpDeleteSpecFromIntent,
-  clickUpIntentFromDeclaredRoute,
-  clickUpPriorityIntentFromDeclaredRoute,
-  clickUpUpdateSpecFromDeclaredRoute,
-  declaredRouteFromMessage,
+  clickUpMultiCreateSpecFromIntent,
+  clickUpMultiDeleteSpecFromIntent,
+  clickUpUpdateSpecFromIntent,
   isClickUpIntent,
   isClickUpPriorityIntent,
   isDeterministicTaskRead,
@@ -17,6 +15,8 @@ import {
   parseClickUpStructuredPlanFromPlanning,
   runClickUpCreateWorkflow,
   runClickUpDeleteWorkflow,
+  runClickUpMultiCreateWorkflow,
+  runClickUpMultiDeleteWorkflow,
   runClickUpPriorityWorkflow,
   runClickUpStructuredPlan,
   runClickUpTaskQueryWorkflow,
@@ -29,7 +29,7 @@ import {
 /**
  * Plan → validate → execute for a read/write intent that is not a deterministic task query.
  *
- * Shared by the declared-route path and the classify path so both enforce the same contract.
+ * Used when the specialist's classified intent does not have a deterministic workflow.
  */
 async function runPlannedIntent(
   intent: ClickUpIntent,
@@ -73,33 +73,6 @@ __chat_register({
     const awaitReply = async (prompt: string): Promise<string> =>
       messageText(await ctx.emit.awaitInput(prompt));
 
-    // A calling coordinator can declare the route as a data part. When it validates, the declared
-    // goal and filters are authoritative: no classifier call and no second paraphrase. Ingress,
-    // human messages, and older callers send text only and keep the classify path below.
-    const declaredRoute = declaredRouteFromMessage(ctx.message);
-    if (declaredRoute) {
-      // A typed update runs deterministically: no classify, no plan, no ReAct action-selection loop.
-      const declaredUpdate = clickUpUpdateSpecFromDeclaredRoute(declaredRoute);
-      if (declaredUpdate) {
-        return runClickUpWriteWorkflow(declaredUpdate);
-      }
-      const declaredDelete = clickUpDeleteSpecFromDeclaredRoute(declaredRoute);
-      if (declaredDelete) {
-        return runClickUpDeleteWorkflow(declaredDelete, awaitReply);
-      }
-      const declaredPriority = clickUpPriorityIntentFromDeclaredRoute(declaredRoute);
-      if (declaredPriority) {
-        return runClickUpPriorityWorkflow(declaredPriority, declaredRoute.scope_note);
-      }
-      const declaredIntent = clickUpIntentFromDeclaredRoute(declaredRoute);
-      if (declaredIntent) {
-        if (isDeterministicTaskRead(declaredIntent)) {
-          return runClickUpTaskQueryWorkflow(declaredIntent);
-        }
-        return runPlannedIntent(declaredIntent);
-      }
-    }
-
     let resolvedIntent: ClickUpIntent | null = null;
     while (true) {
       const intentResult = await InferClickUpIntent({});
@@ -139,10 +112,31 @@ __chat_register({
       return runClickUpTaskQueryWorkflow(resolvedIntent);
     }
 
-    // A delete needs the user's answer between finding the task and removing it, which a single
-    // planned step cannot express.
+    // The specialist owns provider-specific update fields and resolves them under the same safety
+    // gates whether the request came directly from a user or through the coordinator.
+    const updateSpec = clickUpUpdateSpecFromIntent(resolvedIntent);
+    if (updateSpec) {
+      return runClickUpWriteWorkflow(updateSpec);
+    }
+
+    // Deleting explicitly-named tasks (one or many) runs deterministically with no confirmation:
+    // the user named the exact tasks, so each is resolved and removed in a single pass.
+    const multiDeleteSpec = clickUpMultiDeleteSpecFromIntent(resolvedIntent);
+    if (multiDeleteSpec) {
+      return runClickUpMultiDeleteWorkflow(multiDeleteSpec);
+    }
+
+    // A delete selected by a fuzzy filter needs the user's answer between finding the task and
+    // removing it, which a single planned step cannot express.
     if (resolvedIntent.operation_kind === "delete") {
       return runClickUpDeleteWorkflow(clickUpDeleteSpecFromIntent(resolvedIntent), awaitReply);
+    }
+
+    // Creating several named tasks loops the deterministic create over every name, resolving the
+    // list once — reliable where the model-driven walk stopped after the first task.
+    const multiCreateSpec = clickUpMultiCreateSpecFromIntent(resolvedIntent);
+    if (multiCreateSpec) {
+      return runClickUpMultiCreateWorkflow(multiCreateSpec, awaitReply);
     }
 
     // Creating a task needs only the list id, so code walks teams → spaces → lists directly.

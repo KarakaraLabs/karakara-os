@@ -4,17 +4,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  clickUpDeleteSpecFromDeclaredRoute,
+  clickUpDeleteSpecFromIntent,
+  clickUpMultiDeleteSpecFromIntent,
   collectStepEvidence,
-  declaredRouteFromMessage,
   isDeleteConfirmation,
   runClickUpDeleteWorkflow,
+  runClickUpMultiDeleteWorkflow,
   type ClickUpDeleteSpec,
-  type DeclaredRoute,
 } from "../../../agents/clickup-agent/src/clickupWorkflow.ts";
 import {
   delegatedPromptFromOutput,
-  parseRouteOperation,
   planStepMessage,
   replyText,
 } from "../../../agents/coordinator-agent/src/routing.ts";
@@ -105,10 +104,7 @@ describe("ClickUp delete workflow", () => {
     const sent = stubClickUp(foundTask);
     const awaitReply = vi.fn(async () => "yes");
 
-    const result = await runClickUpDeleteWorkflow(
-      { ...byId, task_id: null },
-      awaitReply,
-    );
+    const result = await runClickUpDeleteWorkflow({ ...byId, task_id: null }, awaitReply);
 
     expect(awaitReply).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
@@ -131,8 +127,7 @@ describe("ClickUp delete workflow", () => {
     const result = await runClickUpDeleteWorkflow(byId, async () => "yes");
 
     expect(result).toEqual({
-      error:
-        'ClickUp agent error: ClickUp API returned 400: {"err":"Task not found"}',
+      error: 'ClickUp agent error: ClickUp API returned 400: {"err":"Task not found"}',
     });
   });
 
@@ -143,48 +138,106 @@ describe("ClickUp delete workflow", () => {
   });
 });
 
-describe("declared delete routes", () => {
-  function declared(operation: unknown, capability = "clickup:delete-task"): DeclaredRoute {
-    const route = declaredRouteFromMessage({
-      parts: [
-        {
-          data: {
-            schema: "agent-route/v1",
-            capability,
-            goal: "Delete Test1",
-            filters: { statuses: ["in progress"], text: "Test1" },
-            operation,
-            unsupported: [],
-          },
-        },
-      ],
-    });
-    if (!route) throw new Error("route did not parse");
-    return route;
-  }
+/** Fake a full teams → spaces → lists → tasks hierarchy, with named tasks in the one list. */
+function stubHierarchy(tasks: { id: string; name: string; status: string }[]): Input[] {
+  return stubClickUp((input) => {
+    if (input.confirm_delete === true) return { status: "done", output: { message: "Deleted", tasks: [], items: [] } };
+    if ("list_id" in input) return { status: "done", output: { message: "", tasks, items: [] } };
+    if ("space_id" in input) return { status: "done", output: { message: "", items: [{ id: "list-1", name: "L", kind: "list" }] } };
+    if ("team_id" in input) return { status: "done", output: { message: "", items: [{ id: "space-1", name: "S", kind: "space" }] } };
+    return { status: "done", output: { message: "", items: [{ id: "team-1", name: "T", kind: "team" }] } };
+  });
+}
 
-  it("keeps the id and name but drops statuses inherited from the conversation", () => {
-    const spec = clickUpDeleteSpecFromDeclaredRoute(
-      declared({ name: "delete_task", task_id: test1.id }),
-    );
-    expect(spec?.task_id).toBe(test1.id);
-    expect(spec?.filters.text).toBe("Test1");
-    expect(spec?.filters.statuses).toEqual([]);
+const alpha = { id: "t-alpha", name: "Alpha Export", status: "to do" };
+const beta = { id: "t-beta", name: "Beta Flow", status: "to do" };
+
+describe("ClickUp multi-delete workflow", () => {
+  it("deletes a named task with no confirmation step", async () => {
+    const sent = stubHierarchy([alpha, beta]);
+
+    const result = await runClickUpMultiDeleteWorkflow({
+      intent: "Delete tasks",
+      task_ids: [],
+      names: ["Alpha Export", "Beta Flow"],
+      scope_hint: null,
+    });
+
+    expect(sent).toContainEqual({ task_id: "t-alpha", confirm_delete: true });
+    expect(sent).toContainEqual({ task_id: "t-beta", confirm_delete: true });
+    expect(text(result)).toContain("Deleted 2");
   });
 
-  it("ignores other capabilities", () => {
-    expect(
-      clickUpDeleteSpecFromDeclaredRoute(declared(null, "clickup:update-task")),
-    ).toBeNull();
+  it("deletes by id without confirmation", async () => {
+    const sent = stubClickUp(foundTask);
+
+    const result = await runClickUpMultiDeleteWorkflow({
+      intent: "Delete Test1",
+      task_ids: [test1.id],
+      names: [],
+      scope_hint: null,
+    });
+
+    expect(sent).toContainEqual({ task_id: test1.id, confirm_delete: true });
+    expect(text(result)).toContain("Deleted 1");
   });
 
-  it("parses delete_task on the coordinator side without a destination value", () => {
-    expect(parseRouteOperation({ name: "delete_task", task_id: "abc" })).toEqual({
-      name: "delete_task",
-      task_id: "abc",
-      target_status: null,
-      target_priority: null,
+  it("reports names that match zero or many tasks instead of guessing", async () => {
+    const dup1 = { id: "t-dup1", name: "Dup", status: "to do" };
+    const dup2 = { id: "t-dup2", name: "Dup", status: "to do" };
+    const sent = stubHierarchy([alpha, dup1, dup2]);
+
+    const result = await runClickUpMultiDeleteWorkflow({
+      intent: "Delete tasks",
+      task_ids: [],
+      names: ["Alpha Export", "Ghost", "Dup"],
+      scope_hint: null,
     });
+
+    // Only the unambiguous match is deleted; the missing and the duplicate are left alone.
+    expect(sent.filter((input) => input.confirm_delete === true)).toEqual([
+      { task_id: "t-alpha", confirm_delete: true },
+    ]);
+    expect(text(result)).toContain("Not found: Ghost");
+    expect(text(result)).toContain("Dup");
+  });
+});
+
+describe("classified multi-delete intent", () => {
+  const base = {
+    kind: "intent",
+    intent: "Delete tasks",
+    operation_kind: "delete",
+    action: "delete_tasks",
+    task_names: ["Alpha", "Beta", "alpha"],
+  } as never;
+
+  it("collects and de-duplicates the names", () => {
+    expect(clickUpMultiDeleteSpecFromIntent(base)?.names).toEqual(["Alpha", "Beta"]);
+  });
+
+  it.each([
+    ["a non delete_tasks action", { action: "other" }],
+    ["no names or id", { task_names: [] }],
+  ])("returns null for %s", (_label, change) => {
+    expect(clickUpMultiDeleteSpecFromIntent({ ...(base as object), ...change } as never)).toBeNull();
+  });
+});
+
+describe("classified delete intent", () => {
+  it("uses an exact id classified by the ClickUp specialist", () => {
+    const spec = clickUpDeleteSpecFromIntent({
+      kind: "intent",
+      intent: "Delete task 86afcwxrj by id",
+      operation_kind: "delete",
+      action: "other",
+      task_id: "86afcwxrj",
+      text_filter: null,
+      status_filter: null,
+      statuses: null,
+      scope_hint: null,
+    } as never);
+    expect(spec.task_id).toBe("86afcwxrj");
   });
 });
 
@@ -217,9 +270,7 @@ describe("delegated prompts", () => {
         message: { parts: [{ text: "Delete Test1?" }] },
       },
     });
-    expect(delegatedPromptFromOutput({ chunks: [{ statusUpdate }] })).toBe(
-      "Delete Test1?",
-    );
+    expect(delegatedPromptFromOutput({ chunks: [{ statusUpdate }] })).toBe("Delete Test1?");
   });
 
   it("still reads a plain message chunk", () => {
@@ -231,9 +282,7 @@ describe("delegated prompts", () => {
   });
 
   it("returns null when no chunk carries a question", () => {
-    expect(
-      delegatedPromptFromOutput({ chunks: [{ statusUpdate: "not json" }] }),
-    ).toBeNull();
+    expect(delegatedPromptFromOutput({ chunks: [{ statusUpdate: "not json" }] })).toBeNull();
   });
 });
 
@@ -242,16 +291,12 @@ describe("coordinator plan steps", () => {
     { agent_package: "notion-agent", goal: "Find the doc", answer: "Found page: Roadmap" },
   ];
 
-  it("sends the first step exactly as planned", () => {
-    expect(planStepMessage("Find the doc", [], null)).toBe("Find the doc");
+  it("sends the first step (no earlier answers) exactly as planned", () => {
+    expect(planStepMessage("Find the doc", [])).toBe("Find the doc");
   });
 
-  it.each(["sequence", "aggregate"] as const)("keeps %s steps independent", (shape) => {
-    expect(planStepMessage("Delete Test1", earlier, shape)).toBe("Delete Test1");
-  });
-
-  it.each(["foreach", null] as const)("carries earlier answers into a %s step", (shape) => {
-    const message = planStepMessage("Create a task for each page", earlier, shape);
+  it("carries earlier answers into every downstream step", () => {
+    const message = planStepMessage("Create a task for each page", earlier);
     expect(message.startsWith("Create a task for each page")).toBe(true);
     expect(message).toContain("[notion-agent]");
     expect(message).toContain("Found page: Roadmap");

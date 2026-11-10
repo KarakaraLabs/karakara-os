@@ -16,7 +16,6 @@
 import {
   type CoordinatorRoute,
   type CoordinatorRouteTarget,
-  declaredRoutePayload,
   delegatedPromptFromOutput,
   directRouteTarget,
   parseCoordinatorRoute,
@@ -176,25 +175,17 @@ async function forwardDelegation(
   ctx: RunContext,
   agent_package: string,
   goal: string,
-  declaredRoute: ReturnType<typeof declaredRoutePayload> | null = null,
 ): Promise<StructuredReply> {
   const session = await openToolSession("system/internal_a2a", {
     target: { agent_package },
   });
   let nextMessage = goal;
   let finished = false;
-  let declaredSent = false;
 
   try {
     while (true) {
-      // The declared route rides along once, with the first message: it describes the request, not
-      // each follow-up. Specialists that understand it skip their classifier; others ignore it.
-      const parts: { text?: string; data?: unknown }[] = [{ text: nextMessage }];
-      if (!declaredSent && declaredRoute) {
-        parts.push({ data: declaredRoute });
-        declaredSent = true;
-      }
-      await session.send({ parts } as never);
+      // The specialist classifies and validates the forwarded goal under its own domain contract.
+      await session.send({ parts: [{ text: nextMessage }] } as never);
 
       while (true) {
         const step = await session.continue();
@@ -283,8 +274,6 @@ async function discoverAgentsForTurn(
 __chat_register({
   run: async (ctx): Promise<SessionResult> => {
     let text = (ctx.text ?? "").trim() || "unknown";
-
-    const rawUserText = text;
 
     let runDiscovery = false;
     let intentText = "";
@@ -440,12 +429,8 @@ __chat_register({
         const goal = String(step.sub_message ?? objective);
         if (!agent_package) throw new Error("Delegation step did not name an agent package.");
 
-        const declared =
-          directTarget && directRoute && agent_package === directTarget.agent_package
-            ? declaredRoutePayload(directRoute, directTarget, rawUserText)
-            : null;
         await delegateExecutable?.startStep(stepId);
-        const forwarded = await forwardDelegation(ctx, agent_package, goal, declared);
+        const forwarded = await forwardDelegation(ctx, agent_package, goal);
         await delegateExecutable?.completeStep(stepId);
         await delegateExecutable?.finish();
         return { message: forwarded };
@@ -464,7 +449,7 @@ __chat_register({
         }
 
         await delegateExecutable?.startStep(stepId);
-        const message = planStepMessage(goal, answers, directRoute?.shape ?? null);
+        const message = planStepMessage(goal, answers);
         const forwarded = await forwardDelegation(ctx, agent_package, message);
         answers.push({ agent_package, goal, answer: replyText(forwarded) });
         await delegateExecutable?.completeStep(stepId);

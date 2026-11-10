@@ -188,8 +188,22 @@ Do not add text before or after the JSON object.
 "#
 }
 
+// Transient OpenRouter failures (HTTP 429 admission control, 5xx, network timeouts) are retried
+// by BAML with exponential backoff. The ~1s+2s+4s+8s spread clears OpenRouter's ~10s credit
+// reset without any manual retry loop in the agent.
+retry_policy OpenRouterBackoff {
+  max_retries 4
+  strategy {
+    type exponential_backoff
+    delay_ms 1000
+    multiplier 2
+    max_delay_ms 30000
+  }
+}
+
 client OpenRouterGPT {
   provider openai-generic
+  retry_policy OpenRouterBackoff
   options {
     model env.BAML_TEST_MODEL
     base_url "https://openrouter.ai/api/v1"

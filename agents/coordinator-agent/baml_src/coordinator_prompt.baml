@@ -11,30 +11,12 @@ class CoordinatorRouteTarget {
   capability string @description("One capability string that agent advertises. Copy it verbatim.")
 }
 
-class CoordinatorRouteFilters {
-  statuses string[]? @description("Every task status the conversation is currently about, copied verbatim: the statuses of tasks a specialist just listed, or the status the user named this turn. Emit all of them. Do not copy a status the user is not discussing, and do not narrow to one when they are looking at several.")
-  scope_note string? @description("One clause naming the task set the user means, in their own terms: for example 'the in-progress tasks just listed' or 'the to-do list just listed'. Omit only when no set has been established.")
-  assignee string? @description("Person the user named when filtering by assignee. Never for 'me'/'my tasks': leave null and list it in unsupported.")
-  priority ("urgent" | "high" | "normal" | "low")? @description("Priority filter only when the user filtered by priority; omit when they merely want it shown.")
-  due ("overdue" | "today" | "this_week" | "next_week")? @description("Due-date window only when the user filtered by it; omit when they merely want dates shown.")
-  text string? @description("Words the task name or description must contain, copied verbatim. Omit otherwise.")
-}
-
-class CoordinatorRouteOperation {
-  name "update_task" | "delete_task" @description("Typed write the target capability can execute deterministically. 'update_task': a status and/or priority change on existing tasks. 'delete_task': permanently delete one named task. Omit the whole operation for reads and creates.")
-  task_id string? @description("Exact task id when the user named one, or it appears verbatim in the transcript (for example a task just listed). Never invent, guess, or reformat an id. Omit when the user described the tasks by name/status instead of id.")
-  target_status string? @description("The NEW status to set, copied verbatim from the user (for example 'to do', 'in progress'). Never translate or correct the wording. This is the destination status, not the status used to select which tasks to change — that goes in filters.statuses.")
-  target_priority ("urgent" | "high" | "normal" | "low")? @description("The NEW priority to set, only when the user asked to change priority.")
-}
-
 class CoordinatorRoute {
   shape "single" | "sequence" | "foreach" | "aggregate" @description("single: one target capability answers the whole request. sequence: ordered independent calls. foreach: apply an action to each item from an upstream result. aggregate: combine several results into one answer.")
   targets CoordinatorRouteTarget[] @description("The specialists this request needs. Exactly one for shape single.")
-  goal string @description("Goal-level instruction for the target agent. Keep the user's own terms; never add constraints they did not state.")
-  filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. For an update_task operation, filters select WHICH existing tasks to change (their current status in filters.statuses, name words in filters.text). Omit when the request is not a task filter and when the user only wants those fields displayed.")
-  operation CoordinatorRouteOperation? @description("Typed write to execute directly. Set this ONLY for a status/priority change with target capability 'clickup:update-task', or a task delete with target capability 'clickup:delete-task'. Leave unset for reads and creates.")
+  goal string @description("Complete goal-level instruction for the target agent. Preserve the requested action, resource names or ids, filters, destination values, and conversation context in the user's terms. The specialist interprets its own domain.")
   expected_output string? @description("What the answer must contain, in one short clause.")
-  unsupported string[]? @description("Constraints no target capability can express. A non-empty value sends the request to the slower planning path, so keep it empty unless genuinely needed.")
+  unsupported string[]? @description("Requirements that no advertised target capability can satisfy. A non-empty value sends the request to the planner. Omit when one advertised capability covers the request.")
 }
 
 // --- Coordinator classification (before discovery) ---
@@ -100,45 +82,22 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
     Routing rules for `route`:
     - AVAILABLE AGENTS is the complete registry result for this turn. Use only exact `agent_package` and
       `capability` strings from it. Never invent either, and never route to yourself.
+    - Infer the requested operation from the advertised capability names and agent descriptions. Select the
+      narrowest capability that covers the request, but treat its string as opaque. Do not invent a provider
+      operation or arguments that the registry did not advertise.
+    - Keep provider semantics in `goal`, not in coordinator-owned fields. Preserve exact resource names, ids,
+      filters, requested changes, and relevant context. The receiving specialist resolves and validates them.
     - shape "single" only when one capability answers the whole request. Then `targets` has exactly one entry.
-    - shape "sequence" when the request needs several independent calls, "foreach" when an action applies to
-      each item produced upstream (e.g. \"create a task for each document\"), "aggregate" when several results
-      must be merged. Those shapes still need a plan; the host will build it.
-      add requirements they did not state. Put such constraints in `filters` only when they are real filters.
-      identity, ordering by an unlisted property). Keep it empty or omitted otherwise: a non-empty value sends
-      the request to the slower planner.
+    - shape "sequence" when the request needs several ordered calls, "foreach" when an action applies to each
+      item produced upstream, and "aggregate" when several results must be merged. Those shapes still need a
+      plan; the host will build it.
+    - Put a requirement in `unsupported` only when no advertised target capability can satisfy it. Do not use
+      `unsupported` for provider-specific details that the selected specialist can interpret.
+    - Preserve conversation continuity in `goal`. For a follow-up, name the resource set or result the user is
+      referring to using the transcript's wording. Never manufacture ids, statuses, names, or constraints.
+    - Do not ask for destructive-action confirmation. The specialist that owns the resource applies its own
+      confirmation and write-safety rules.
     - When no capability fits, omit `route` entirely. The host will then plan from the goal.
-
-    Typed writes (status / priority changes on EXISTING tasks):
-    - When the user asks to change the status or priority of one or more existing tasks, and the target
-      advertises the `clickup:update-task` capability, route shape "single" to that capability and fill `operation`.
-      Copy that capability string verbatim; do not use a generic tracking capability for an update.
-    - Set `operation.target_status` to the NEW status the user wants, verbatim. Set `operation.target_priority`
-      only when they change priority. Put the destination value in `operation`, never in `filters`.
-    - Use `filters` to say WHICH tasks change: `filters.statuses` = their CURRENT status(es), `filters.text` =
-      name words the tasks must contain. Do not put the destination status in `filters.statuses`.
-    - Set `operation.task_id` only when the user named an exact id or one is visible verbatim in the transcript
-      (e.g. a task just listed). Otherwise omit it and let `filters` select the tasks.
-    - Creates are not typed writes: omit `operation` and let the host plan them.
-
-    Typed deletes (one EXISTING task):
-    - When the user asks to delete a task and the target advertises the `clickup:delete-task` capability,
-      route shape "single" to that capability with `operation.name` = "delete_task".
-    - Put the task's name, verbatim, in `filters.text`. Set `operation.task_id` only when the user named an
-      exact id or the task's id is visible verbatim in the transcript. Leave `target_status` and
-      `target_priority` unset.
-    - Do not ask the user to confirm: the specialist asks before anything is deleted.
-
-    Conversation continuity (infer the scope, do not copy it mechanically):
-    - Infer which task set the user is talking about from the conversation: the statuses of tasks a
-      specialist just listed, or the statuses the user named this turn. Put every status you find in
-      `statuses`, verbatim, and describe the set in `scope_note` in the user's own terms.
-    - Follow the subject of the conversation, not the previous filter: after "which tasks are in todo?"
-      a follow-up "what should I start first?" is about the to-do tasks, not about whatever was discussed
-      before that.
-    - Leave `statuses` empty and say so in `scope_note` when the user asks openly with no established set
-      ("what should I work on next?" with nothing listed).
-    - Never invent a status the user has not mentioned and that has not appeared in the records.
 
     ---AVAILABLE AGENTS---
     {{ available_agents }}
@@ -321,8 +280,22 @@ Do not add text before or after the JSON object.
 "#
 }
 
+// Transient OpenRouter failures (HTTP 429 admission control, 5xx, network timeouts) are retried
+// by BAML with exponential backoff. The ~1s+2s+4s+8s spread clears OpenRouter's ~10s credit
+// reset without any manual retry loop in the agent.
+retry_policy OpenRouterBackoff {
+  max_retries 4
+  strategy {
+    type exponential_backoff
+    delay_ms 1000
+    multiplier 2
+    max_delay_ms 30000
+  }
+}
+
 client DefaultClient {
   provider openai-generic
+  retry_policy OpenRouterBackoff
   options {
     model env.BAML_TEST_MODEL
     base_url "https://openrouter.ai/api/v1"
