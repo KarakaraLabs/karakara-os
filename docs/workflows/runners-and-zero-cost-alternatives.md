@@ -8,20 +8,19 @@ When Karakara OS was forked from `Agentium OS`, several workflows referenced cus
 
 | Runner Label | Type | Hardware (Public Repo) | Cost | Workflows Using It |
 |---|---|---|---|---|
-| `ubuntu-latest` | GitHub-hosted standard | 4 vCPU, 16 GB RAM, 14 GB SSD (x86_64) | **`$0` (Free)** | `secret-scan.yml`, `reuse.yml`, `release-please.yml`, `release-pr-postprocess.yml`, `release-publish.yml`, plus `changes` & `nextest-untrusted` in `rust-ci.yml` |
-| `ubuntu-22.04` | GitHub-hosted standard | 4 vCPU, 16 GB RAM (x86_64, glibc 2.35) | **`$0` (Free)** | `release-please.yml`, `release-publish.yml` (`x86_64-unknown-linux-gnu` binary builds) |
-| `ubuntu-22.04-arm` | GitHub-hosted ARM64 | 4 vCPU, 16 GB RAM (aarch64, glibc 2.35) | **`$0` (Free)** | `release-please.yml`, `release-publish.yml` (`aarch64-unknown-linux-gnu` native binary builds) |
-| `arc-runner-set` | Self-hosted Kubernetes ARC | Custom K8s pod pool (not provisioned) | **Infra cost** | `rust-ci.yml` (trusted lane), `claude-md-sync.yml`, `k8s-pilot-validation.yml` |
+| `ubuntu-latest` | GitHub-hosted standard | 4 vCPU, 16 GB RAM, 14 GB SSD (x86_64) | **`$0`** | `rust-ci-standard.yml` (standard PR nextest & fmt/clippy), `secret-scan.yml`, `reuse.yml`, `release-please.yml`, `release-pr-postprocess.yml`, `release-publish.yml` |
+| `ubuntu-22.04` | GitHub-hosted standard | 4 vCPU, 16 GB RAM (x86_64, glibc 2.35) | **`$0`** | `release-please.yml`, `release-publish.yml` (`x86_64-unknown-linux-gnu` binary builds) |
+| `ubuntu-22.04-arm` | GitHub-hosted ARM64 | 4 vCPU, 16 GB RAM (aarch64, glibc 2.35) | **`$0`** | `release-please.yml`, `release-publish.yml` (`aarch64-unknown-linux-gnu` native binary builds) |
+| `arc-runner-set` | Self-hosted Kubernetes ARC | Custom K8s pod pool (not provisioned) | **Infra cost** | `rust-ci.yml` (legacy reference lane), `claude-md-sync.yml`, `k8s-pilot-validation.yml` |
 
 ---
 
 ## 2. Zero-Cost Migration Paths for Self-Hosted Workflows
 
-### A. `rust-ci.yml` — Run Non-LLM `fmt` + `clippy` + `nextest` on Free `ubuntu-latest`
-- **Current bottleneck:** Same-repo PRs (`trusted == 'true'`) route to the `nextest` job on `arc-runner-set` and require `OPENROUTER_API_KEY` for `llm-tests`, while external fork PRs (`trusted != 'true'`) route to `nextest-untrusted` on `ubuntu-latest` using `CI_FEATURES_UNTRUSTED` (no secrets, no `llm-tests`).
-- **`$0` Alternative:**
-  - Route standard PRs and `main` pushes through the non-LLM `CI_FEATURES_UNTRUSTED` feature set (`baml-rt-tools/http-tools,baml-rt-builder/http-tools,baml-rt-builder/dev-tools,baml-agent-runner/http-tools,baml-agent-runner/memory`) on `ubuntu-latest`.
-  - Gate the paid `llm-tests` lane behind manual `workflow_dispatch` (or a dedicated label) so routine PRs get full Rust `fmt` + `clippy` + `nextest` coverage at `$0` cost.
+### A. Dedicated Standard Workflow: `rust-ci-standard.yml` (Issue #69)
+- **Resolved in Issue #69:** Rather than modifying the legacy `rust-ci.yml` (which is kept for reference with its ARC and secret configurations), a new dedicated standard workflow `.github/workflows/rust-ci-standard.yml` runs on GitHub-hosted `ubuntu-latest` ($0) with `CI_FEATURES_UNTRUSTED` (`baml-rt-tools/http-tools,baml-rt-builder/http-tools,baml-rt-builder/dev-tools,baml-agent-runner/http-tools,baml-agent-runner/memory`).
+- **Triggers:** Automatically runs on pull requests (`pull_request`), pushes to `main` (`push`), and manual `workflow_dispatch`. Pushing to PR branches triggers solely via `pull_request` to avoid duplicate workflow runs.
+- **Standalone:** Requires no third-party API keys and no self-hosted runner infrastructure.
 - **Local Verification Alternative:**
   ```bash
   just fmt

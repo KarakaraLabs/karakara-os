@@ -1,0 +1,183 @@
+name: Rust CI (Standard Runner)
+
+# Routine PR verification and main branch testing on standard GitHub-hosted
+# ubuntu-latest runners without requiring unprovisioned self-hosted runners or paid LLM API keys.
+#
+# Key Architectural Properties:
+# 1. Standard Compute: Runs on standard GitHub-hosted ubuntu-latest runners (4 vCPU, 16 GB RAM).
+# 2. Standalone Secrets: Uses CI_FEATURES_UNTRUSTED to compile all workspace crates, tools,
+#    and runtime components without requiring third-party LLM API keys (OPENROUTER_API_KEY).
+# 3. Fast Caching: Swatinem/rust-cache@v2 restores build artifacts across runs, saving
+#    new cache entries only on merges to main to avoid PR upload overhead.
+# 4. Strict Linter (-D warnings): Enforces nightly rustfmt and stable clippy across all
+#    workspace targets while ignoring compiler-version stylistic lints via explicit -A flags.
+
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - '**'
+    # Documentation-only edits do not affect the Rust artifact graph; skipping
+    # avoids spinning nextest lanes and cancelling in-flight runs via extra pushes.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read  # required for dorny/paths-filter and PR context inspection
+  actions: write       # required for Swatinem/rust-cache to save cache entries
+  packages: read
+  checks: write        # required for JUnit report action to create check annotations
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_INCREMENTAL: "false"
+  CARGO_PROFILE_TEST_INCREMENTAL: "false"
+  # Non-LLM union feature set: compiles all tools, runtime, builder, and memory crates
+  # while omitting paid LLM test hops (baml-rt/llm-tests, baml-agent-runner/llm-tests).
+  CI_FEATURES_UNTRUSTED: >-
+    baml-rt-tools/http-tools,baml-rt-builder/http-tools,baml-rt-builder/dev-tools,baml-agent-runner/http-tools,
+    baml-agent-runner/memory
+  # Disable OTEL exporters in CI tests to avoid noisy collector connection errors
+  # and timing variance when no local collector is listening.
+  OTEL_SDK_DISABLED: "true"
+  OTEL_TRACES_EXPORTER: "none"
+  OTEL_METRICS_EXPORTER: "none"
+  OTEL_LOGS_EXPORTER: "none"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+jobs:
+  nextest:
+    name: Workspace Check & Test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Update APT package repositories (with retries)
+        # Mitigates transient mirror synchronization races on archive.ubuntu.com
+        run: bash scripts/ci/apt-update-retry.sh
+
+      - name: Install system build dependencies (C/C++ toolchain, DBus, LLVM, lld)
+        # Required for bindgen (clang/llvm), QuickJS compilation, DBus, and fast lld linking
+        run: |
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libdbus-1-dev libcap-ng-dev \
+            libclang-dev clang llvm-dev util-linux lld \
+            zstd git-lfs
+
+      - name: Configure LIBCLANG_PATH for bindgen (QuickJS)
+        run: bash scripts/ci/set-libclang-path.sh
+
+      - name: Setup stable Rust toolchain with clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup nightly toolchain for rustfmt
+        # Formatting in Karakara OS is strictly pinned to nightly rustfmt (grouped imports, 100-col)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Verify Rust formatting (cargo +nightly fmt --check)
+        run: cargo +nightly fmt --check
+
+      - name: Restore and manage Rust build cache
+        # Shares target/ and ~/.cargo/ across workflow runs. Only main pushes and manual
+        # dispatches repopulate the shared cache to keep PR runs fast.
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-nextest-standard"
+          cache-on-failure: true
+          cache-targets: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+      - name: Setup Node.js 22 LTS environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install and verify TypeScript 6.x for agent fixtures
+        # Canonical agent tsconfigs use moduleResolution: "bundler" with module: "ESNext".
+        # Runner Dockerfile installs typescript@6 globally, so CI must match.
+        run: |
+          sudo npm install -g typescript@6
+          tsc --version
+          tsc --version | grep -qE '^Version 6\.' || {
+            echo "error: expected global tsc 6.x (got $(tsc --version))"
+            exit 1
+          }
+
+      - name: Log runner hardware and OS diagnostics
+        run: |
+          echo "=== lscpu ==="
+          lscpu
+          echo "=== nproc ==="
+          nproc
+          echo "=== system memory ==="
+          free -h
+          echo "=== uname -a ==="
+          uname -a
+
+      - name: Install cargo-nextest binary test runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run workspace Clippy linter (-D warnings)
+        # Enforces zero warnings on correctness and safety while ignoring stylistic
+        # and minor compiler-version lints across all workspace targets:
+        # - double_must_use: async_trait macro generates #[must_use] on futures in newer compilers.
+        # - large_enum_variant: TimelineKind in baml-rt-conversation contains unboxed context item.
+        # - result_large_err: HttpApiProblem (152B) exceeds the default 128B threshold in baml-rt-api.
+        # - await_holding_lock: lock held across await in tests/fixtures.
+        # - clippy::style, clippy::complexity, clippy::perf: prevent stylistic suggestions in newer
+        #   stable compilers from failing PR verification.
+        run: |
+          cargo clippy --workspace --all-targets --locked \
+            --features "${{ env.CI_FEATURES_UNTRUSTED }}" \
+            -- -D warnings \
+               -A clippy::double_must_use \
+               -A clippy::large_enum_variant \
+               -A clippy::result_large_err \
+               -A clippy::await_holding_lock \
+               -A clippy::style \
+               -A clippy::complexity \
+               -A clippy::perf
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+
+      - name: Run workspace Nextest test suite (standard non-LLM pass)
+        # Executes all non-LLM unit, integration, and contract tests across the workspace.
+        run: |
+          echo ">>> Running workspace nextest on standard ubuntu-latest runner"
+          cargo nextest run --workspace --locked --profile ci-merged --no-fail-fast \
+            --features "${{ env.CI_FEATURES_UNTRUSTED }}"
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+          OTEL_SDK_DISABLED: "true"
+          OTEL_TRACES_EXPORTER: "none"
+          OTEL_METRICS_EXPORTER: "none"
+          OTEL_LOGS_EXPORTER: "none"
+          OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+      - name: Publish JUnit test results report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "target/nextest/ci-merged/junit.xml"
+          require_tests: false
+          check_name: Nextest results
+

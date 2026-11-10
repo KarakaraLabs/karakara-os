@@ -241,7 +241,7 @@ async fn prepare_external_tool_snapshots(
                 } = &v2.delivery
             {
                 let bytes = service
-                    .get_external_tool_bundle(bundle_digest.clone())
+                    .get_external_tool_bundle(*bundle_digest)
                     .await
                     .map_err(|err| BamlBuilderError::InvalidArgumentWithSource {
                         message: format!(
