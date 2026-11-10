@@ -567,7 +567,7 @@ fn build_tool_step_executors_map(
         .map(|m| (m.class_name.as_str(), m.name.to_string()))
         .collect();
     let mut function_plans: Vec<_> = session_plan_map.iter().collect();
-    function_plans.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    function_plans.sort_unstable_by_key(|(left, _)| *left);
 
     let mut map = HashMap::new();
     for (func_name, plan_types) in function_plans {
@@ -962,7 +962,7 @@ mod external_tools_lockfile_tests {
         let reqs = parse_toolset_requirements(&dir.path().join("baml_src")).unwrap();
         assert_eq!(reqs.get("support").unwrap().raw, "^1.2");
         assert!(
-            reqs.get("system").is_none(),
+            !reqs.contains_key("system"),
             "bare entries do not constrain"
         );
     }

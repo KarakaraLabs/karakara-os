@@ -993,6 +993,7 @@ impl baml_rt_tools::external_tools::sandbox::SandboxProvider for NoVmProvider {
     }
 }
 
+#[allow(clippy::needless_return)]
 async fn build_v2_tool_host(
     agent_id: &AgentId,
     bundles: &[(
@@ -1024,11 +1025,11 @@ async fn build_v2_tool_host(
     #[cfg(feature = "sandbox-provider")]
     {
         let pool = runner_tool_vm_pool().await?;
-        return Ok(Arc::new(ToolHost::new(
+        Ok(Arc::new(ToolHost::new(
             pool,
             policy,
             Arc::new(DnsResolver),
-        )?));
+        )?))
     }
 
     #[cfg(all(not(feature = "sandbox-provider"), test))]
@@ -1038,11 +1039,11 @@ async fn build_v2_tool_host(
         let provider: Arc<dyn SandboxProvider> = Arc::new(NoVmProvider);
         // Tests keep a pool per host so parallel tests never share a VM budget.
         let pool = VmPool::new(provider, fresh_runner_id(), PoolPolicy::default());
-        return Ok(Arc::new(ToolHost::new(
+        Ok(Arc::new(ToolHost::new(
             pool,
             policy,
             Arc::new(DnsResolver),
-        )?));
+        )?))
     }
 
     #[cfg(all(not(feature = "sandbox-provider"), not(test)))]

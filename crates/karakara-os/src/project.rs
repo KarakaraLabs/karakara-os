@@ -151,6 +151,22 @@ pub fn write_file(path: &Path, config: &KarakaraConfig) -> Result<()> {
     std::fs::write(path, raw).with_context(|| format!("Failed to write {}", path.display()))
 }
 
+pub fn init_project(dir: &Path, runner_url: &str, agent_name: Option<&str>) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let config_path = dir.join("karakara.toml");
+    if config_path.exists() {
+        bail!("{} already exists", config_path.display());
+    }
+    let mut config = KarakaraConfig::default();
+    config.runner.url = runner_url.trim_end_matches('/').to_string();
+    if let Some(name) = agent_name {
+        config.project.default_agent = Some(name.to_string());
+        config.project.agent_path = Some(format!("./{name}"));
+    }
+    write_file(&config_path, &config)?;
+    Ok(config_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,20 +245,4 @@ mode = "spawn"
             TrustedSection::Spawn { node: None }
         );
     }
-}
-
-pub fn init_project(dir: &Path, runner_url: &str, agent_name: Option<&str>) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let config_path = dir.join("karakara.toml");
-    if config_path.exists() {
-        bail!("{} already exists", config_path.display());
-    }
-    let mut config = KarakaraConfig::default();
-    config.runner.url = runner_url.trim_end_matches('/').to_string();
-    if let Some(name) = agent_name {
-        config.project.default_agent = Some(name.to_string());
-        config.project.agent_path = Some(format!("./{name}"));
-    }
-    write_file(&config_path, &config)?;
-    Ok(config_path)
 }

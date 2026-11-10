@@ -507,6 +507,7 @@ async fn trusted_invoke_attaches_to_operator_daemon() {
     assert_eq!(invokes[0].5, "trace-1");
     assert_eq!(invokes[1].4, "invoke-2");
     assert_eq!(invokes[1].5, "trace-2");
+    drop(events);
 
     // Shutting the host down must leave the operator's daemon socket alone.
     host.shutdown().await;
