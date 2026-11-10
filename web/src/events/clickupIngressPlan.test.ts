@@ -13,14 +13,20 @@ import {
   taskFiltersFromIntent,
   validateClickUpPlanForExecution,
 } from "../../../agents/clickup-agent/src/clickupExecution.ts";
+import type { ClickUpPlanStep } from "../../../agents/clickup-agent/src/baml-runtime.d.ts";
 
 type PlanInput = Parameters<typeof validateClickUpPlanForExecution>[0];
+type RawPlanStep = {
+  agent_package: string;
+  sub_message: string;
+  expects?: ClickUpPlanStep["expects"];
+};
 
-function plan(steps: PlanInput["plan_steps"]): PlanInput {
+function plan(steps: RawPlanStep[]): PlanInput {
   return {
     intent_description: "Test",
     objective: "Test",
-    plan_steps: steps,
+    plan_steps: steps as ClickUpPlanStep[],
     citations: null,
   };
 }
@@ -31,12 +37,10 @@ describe("validateClickUpPlanForExecution", () => {
       plan([
         {
           agent_package: PKG_CLICKUP_EXECUTE,
-          agent_instance_id: "default",
           sub_message: "List tasks",
         },
         {
           agent_package: PKG_CLICKUP_FORMAT,
-          agent_instance_id: "default",
           sub_message: "Summarize",
         },
       ]),
@@ -49,7 +53,6 @@ describe("validateClickUpPlanForExecution", () => {
       plan([
         {
           agent_package: PKG_CLICKUP_EXECUTE,
-          agent_instance_id: "default",
           sub_message: "Only execute",
         },
       ]),
@@ -62,17 +65,14 @@ describe("validateClickUpPlanForExecution", () => {
       plan([
         {
           agent_package: PKG_CLICKUP_EXECUTE,
-          agent_instance_id: "default",
           sub_message: "Execute",
         },
         {
           agent_package: PKG_CLICKUP_FORMAT,
-          agent_instance_id: "default",
           sub_message: "Format 1",
         },
         {
           agent_package: PKG_CLICKUP_FORMAT,
-          agent_instance_id: "default",
           sub_message: "Format 2",
         },
       ]),
@@ -85,12 +85,10 @@ describe("validateClickUpPlanForExecution", () => {
       plan([
         {
           agent_package: "clickup-agent",
-          agent_instance_id: "default",
           sub_message: "Wrong package",
         },
         {
           agent_package: PKG_CLICKUP_FORMAT,
-          agent_instance_id: "default",
           sub_message: "Format",
         },
       ]),
@@ -160,18 +158,18 @@ describe("validateClickUpPlanForExecution", () => {
   });
 
   it("fills expects from the instruction when the plan omits it", () => {
-    const steps = collapseReadOnlyExecuteSteps(
-      validateClickUpPlanForExecution(
-        plan([
-          {
-            agent_package: PKG_CLICKUP_EXECUTE,
-            sub_message: "List all tasks in the list.",
-          },
-          { agent_package: PKG_CLICKUP_FORMAT, sub_message: "Answer." },
-        ]),
-        "read",
-      ) as { expects: string }[],
+    const validated = validateClickUpPlanForExecution(
+      plan([
+        {
+          agent_package: PKG_CLICKUP_EXECUTE,
+          sub_message: "List all tasks in the list.",
+        },
+        { agent_package: PKG_CLICKUP_FORMAT, sub_message: "Answer." },
+      ]),
+      "read",
     );
+    expect(Array.isArray(validated)).toBe(true);
+    const steps = collapseReadOnlyExecuteSteps(validated as ClickUpPlanStep[]);
     expect(steps[0]!.expects).toBe("task_list");
   });
 
@@ -256,7 +254,13 @@ describe("validateClickUpPlanForExecution", () => {
       { id: "2", name: "B", status: "In Progress (Dev)", url: "", priority: "high" },
       { id: "3", name: "C", status: "to do", url: "", priority: "low" },
     ];
-    const empty = { statuses: [] as string[], assignee: null, priority: null, due: null, text: null };
+    const empty = {
+      statuses: [] as string[],
+      assignee: null,
+      priority: null,
+      due: null,
+      text: null,
+    };
     expect(
       applyTaskFilters(tasks, { ...empty, statuses: ["in progress"] }).matching.map((t) => t.id),
     ).toEqual(["1"]);
@@ -264,7 +268,9 @@ describe("validateClickUpPlanForExecution", () => {
       applyTaskFilters(tasks, { ...empty, statuses: ["progress"] }).matching.map((t) => t.id),
     ).toEqual(["1", "2"]);
     expect(
-      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "scoping"] }).matching.map((t) => t.id),
+      applyTaskFilters(tasks, { ...empty, statuses: ["in progress", "scoping"] }).matching.map(
+        (t) => t.id,
+      ),
     ).toEqual(["1"]);
     // Statuses are workspace-defined: case, spaces, and punctuation are insignificant.
     expect(
