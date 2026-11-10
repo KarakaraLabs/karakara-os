@@ -21,19 +21,26 @@ When Karakara OS was forked from `Agentium OS`, several workflows referenced cus
 - **Resolved in Issue #69:** Rather than modifying the legacy `rust-ci.yml` (which is kept for reference with its ARC and secret configurations), a new dedicated standard workflow `.github/workflows/rust-ci-standard.yml` runs on GitHub-hosted `ubuntu-latest` ($0) with `CI_FEATURES_UNTRUSTED` (`baml-rt-tools/http-tools,baml-rt-builder/http-tools,baml-rt-builder/dev-tools,baml-agent-runner/http-tools,baml-agent-runner/memory`).
 - **Triggers:** Automatically runs on pull requests (`pull_request`), pushes to `main` (`push`), and manual `workflow_dispatch`. Pushing to PR branches triggers solely via `pull_request` to avoid duplicate workflow runs.
 - **Standalone:** Requires no third-party API keys and no self-hosted runner infrastructure.
-- **Observed Execution Durations (`ubuntu-latest` 4 vCPU):**
-  - Setup Phase (system packages, LLVM/lld, stable + nightly toolchains, Node 22, TS 6.x): ~40s
-  - Linter Phase (`cargo clippy --workspace --all-targets`): ~7m 30s (cold) / ~2-3m (warm cache)
-  - Test Phase (`cargo nextest run --workspace` non-LLM): ~1-2m (reuses compilation artifacts from clippy)
-  - Report Phase (JUnit XML check publish): ~2s
-  - Total Duration: ~9-11 min (cold build) / ~3-5 min (warm build cache)
+- **Observed Execution Durations (`ubuntu-latest` 4 vCPU, Measured in Run `42762805390`):**
+
+  | Pipeline Phase / Step | Cold Run Duration (`42762805390`) | Estimated Warm Cache | Operation Details |
+  |---|---|---|---|
+  | **OS & Package Setup** | 3m 31s | ~40s | `apt-get` OS build deps, DBus, LLVM 21, `lld` linker |
+  | **Toolchains & TS 6.x** | ~20s | ~15s | Stable Rust toolchain, nightly rustfmt, Node 22, global `typescript@6` |
+  | **Formatting Check** | 3s | 3s | `cargo +nightly fmt --check` |
+  | **Cache Restore (`rust-cache@v2`)** | 1s | ~30s | Restores `target/` and `~/.cargo/` from GitHub storage |
+  | **Workspace Clippy (`--all-targets`)** | 9m 44s | ~2 to 3m | Lints 48 workspace crates and 920+ files with compiler-drift overrides |
+  | **Nextest Build & Execution** | 20m 33s | ~3 to 5m | Compiles integration test binaries + executes full 2,116 non-LLM tests |
+  | **JUnit Check Publishing** | 3s | 3s | `mikepenz/action-junit-report@v4` publishes test annotations |
+  | **Total Pipeline Duration** | **34m 13s** (100% cold run, 2,116 tests) | **~6 to 8m** (warm cache on routine PRs) | Standard free `ubuntu-latest` VM (4 vCPU, 16 GB RAM) |
+
 - **Compilation Performance Profile & Duration Drivers:**
   - **Workspace Scale:** Karakara OS encompasses 48 workspace crates, 920+ Rust source files, and 650+ transitive crate dependencies (including Tokio, Axum, SurrealDB, FastEmbed, ONNX/tract, and QuickJS native C-bindgen).
   - **Hardware Allocation:** Standard GitHub-hosted `ubuntu-latest` runners provide 4 vCPUs and 16 GB RAM, capping Cargo build parallelism to 4 concurrent compilation jobs (`cargo -j 4`).
   - **Full Target Coverage (`--all-targets`):** The workflow lints not only core library targets, but all binaries (`bin`), test harnesses (`tests/*.rs`), and dev examples. In Rust, each integration test file compiles and links as an independent executable binary.
   - **Cold Builds vs. Warm Cache (`rust-cache@v2`):**
-    - *Cold builds* (~7m 30s linter / ~9-11 min total) occur on initial branch setup or cache key resets, compiling all 650+ third-party dependencies from scratch.
-    - *Warm cache builds* (~2-3 min linter / ~3-5 min total) occur on routine PR checks once dependencies are cached on `main`, compiling only the incremental code differences.
+    - *Cold builds* (~34 min total) occur on initial branch setup or cache key resets, compiling all 650+ third-party dependencies and 2,116 test harnesses from scratch.
+    - *Warm cache builds* (~6 to 8 min total) occur on routine PR checks once dependencies are cached on `main`, compiling only the incremental code differences.
 - **Local Verification Alternative:**
   ```bash
   just fmt
