@@ -565,10 +565,6 @@ function noul(output: SystemOneOutput, id: string): number {
   return answer !== undefined && answer.type === "noul" ? answer.noul : 0;
 }
 
-function normalizedStatus(value: string): string {
-  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
-}
-
 /**
  * Status comparison key: case, spaces, and punctuation are insignificant.
  *
