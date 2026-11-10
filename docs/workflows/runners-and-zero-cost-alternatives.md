@@ -23,22 +23,25 @@ When Karakara OS was forked from `Agentium OS`, several workflows referenced cus
 - **Standalone:** Requires no third-party API keys and no self-hosted runner infrastructure.
 - **Observed Execution Durations across Runs (`ubuntu-latest` 4 vCPU):**
 
-  | Pipeline Phase / Step | Run `42762805390` (Cold) | Run `42766895532` (Linter Gate) | Run `42767973623` (Test Isolation) | Run `42814971004` (100% Green) | Estimated Warm Cache (`main`) | Operation Details |
-  |---|---|---|---|---|---|---|
-  | **OS & Package Setup** | 3m 31s | 26s | 14s | 14s | ~15s | `apt-get` OS build deps, DBus, LLVM 21, `lld` linker |
-  | **Toolchains & TS 6.x** | ~20s | 15s | 16s | 16s | ~15s | Stable Rust toolchain, nightly rustfmt, Node 22, global `typescript@6` |
-  | **Formatting Check** | 3s | 2s | 2s | 2s | 2s | `cargo +nightly fmt --check` |
-  | **Cache Restore (`rust-cache@v2`)** | 1s | 2s | 2s | 1s | ~30s | Restores `target/` and `~/.cargo/` from GitHub storage |
-  | **Workspace Clippy (`--all-targets`)** | 9m 44s (lint drift) | 5m 03s (caught unused import) | 8m 14s (PASSED) | **6m 58s (PASSED 100%)** | ~2 to 3m | Lints 48 workspace crates, 920+ files with compiler-drift overrides |
-  | **Nextest Build & Execution** | *(skipped)* | *(skipped)* | 22m 03s (2,115 passed) | **17m 26s (2,116 / 2,116 passed)** | ~3 to 5m | Compiles integration binaries + runs union non-LLM test suite |
-  | **JUnit Check Publishing** | 3s | 3s | 4s | 1s | 3s | `mikepenz/action-junit-report@v4` publishes test annotations |
-  | **Total Pipeline Duration** | **34m 13s** | **6m 03s** | **30m 54s** | **24m 57s (ALL PASS)** | **~6 to 8m** | Standard GitHub-hosted `ubuntu-latest` VM ($0) |
+  | Pipeline Phase / Step | Run `42762805390` (Cold) | Run `42766895532` (Linter Gate) | Run `42767973623` (Test Isolation) | Run `42814971004` (100% Green) | Run `42819658094` (Step Summary) | Run `42842255686` (`main` Merge & Cache Seed) | Estimated Warm Cache (`main`) | Operation Details |
+  |---|---|---|---|---|---|---|---|---|
+  | **OS & Package Setup** | 3m 31s | 26s | 14s | 14s | 2m 35s | 14s | ~15s | `apt-get` OS build deps, DBus, LLVM 21, `lld` linker |
+  | **Toolchains & TS 6.x** | ~20s | 15s | 16s | 16s | 16s | 14s | ~15s | Stable Rust toolchain, nightly rustfmt, Node 22, global `typescript@6` |
+  | **Formatting Check** | 3s | 2s | 2s | 2s | 3s | 1s | 2s | `cargo +nightly fmt --check` |
+  | **Cache Restore (`rust-cache@v2`)** | 1s | 2s | 2s | 1s | 1s | 2s | ~30s | Restores `target/` and `~/.cargo/` from GitHub storage |
+  | **Workspace Clippy (`--all-targets`)** | 9m 44s (lint drift) | 5m 03s (caught unused import) | 8m 14s (PASSED) | **6m 58s (PASSED 100%)** | **9m 14s (PASSED 100%)** | **6m 29s (PASSED 100%)** | ~2 to 3m | Lints 48 workspace crates, 920+ files with compiler-drift overrides |
+  | **Nextest Build & Execution** | *(skipped)* | *(skipped)* | 22m 03s (2,115 passed) | **17m 26s (2,116 / 2,116 passed)** | **20m 41s (2,116 / 2,116 passed)** | **18m 16s (2,116 / 2,116 passed)** | ~3 to 5m | Compiles integration binaries + runs union non-LLM test suite |
+  | **JUnit & Step Summary** | 3s | 3s | 4s | 1s | 1s | 1s | 3s | Publishes JUnit check + renders dynamic `$GITHUB_STEP_SUMMARY` |
+  | **Post Cache Save (`main`)** | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | *(skipped on PR)* | **46s (CACHE SAVED)** | N/A (PR skips) | `Swatinem/rust-cache@v2` seeds `ci-nextest-standard` cache |
+  | **Total Pipeline Duration** | **34m 13s** | **6m 03s** | **30m 54s** | **24m 57s (ALL PASS)** | **32m 58s (ALL PASS)** | **26m 03s (MERGED & SEEDED)** | **~6 to 8m** | Standard GitHub-hosted `ubuntu-latest` VM ($0) |
 
 - **Recent Benchmark Run History:**
   - **Run `42762805390`:** Initial cold run on standard runner. Identified floating compiler version drift under `-D warnings` on newer stable Rust.
   - **Run `42766895532`:** Fast lint check (6m 03s total). Verified that `-D warnings` correctly caught an `unused import` in `baml-rt-interceptor/tests/interception_test.rs` while safely ignoring stylistic compiler drift.
   - **Run `42767973623`:** Full pipeline test run (30m 54s total). Clippy passed in 8m 14s. Nextest executed 2,116 tests with 2,115 passed and exactly 1 failure (`prop_interleaved_a2a_tool_llm_multi_context_isolation` at line 412:26) caused by unscaled proptest operation length (capped at 7 rather than CI-budgeted 4) leading to single-permit QuickJS bridge serialization timeout.
-  - **Run `42814971004`:** Final authoritative run (24m 57s total). All 2,116 tests passed (100% green). Verification completed with 0 annotations and 0 failures. Fixed by introducing `interleaving_ops_strategy()` (capping ops at 4 in CI, with 171s scaled timeout) and setting `retries = 1` in `.config/nextest.toml`.
+  - **Run `42814971004`:** Initial 100% green run (24m 57s total). All 2,116 tests passed. Fixed by introducing `interleaving_ops_strategy()` (capping ops at 4 in CI, with 171s scaled timeout) and setting `retries = 1` in `.config/nextest.toml`.
+  - **Run `42819658094`:** Authoritative end-to-end run (32m 58s total). Verified live dynamic generation of `$GITHUB_STEP_SUMMARY` with real-time Quality Gates status, runner specs, and dynamic Nextest execution metrics (2,116 / 2,116 passed, 0 failures, 0 skipped).
+  - **Run `42842255686`:** Authoritative post-merge `push` run on `main` (26m 03s total). Triggered upon squash-merging PR #71 (`90dc898a`). All 2,116 tests passed. In the post-job phase, `Swatinem/rust-cache@v2` successfully saved the warm `ci-nextest-standard` cache entry to GitHub cache storage (46s upload), seeding the baseline for future incremental PR runs.
 
 - **Compilation Performance Profile & Duration Drivers:**
   - **Workspace Scale:** Karakara OS encompasses 48 workspace crates, 920+ Rust source files, and 650+ transitive crate dependencies (including Tokio, Axum, SurrealDB, FastEmbed, ONNX/tract, and QuickJS native C-bindgen).
