@@ -90,6 +90,7 @@ jobs:
           components: rustfmt
 
       - name: Verify Rust formatting (cargo +nightly fmt --check)
+        id: fmt
         run: cargo +nightly fmt --check
 
       - name: Restore and manage Rust build cache
@@ -135,6 +136,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Run workspace Clippy linter (-D warnings)
+        id: clippy
         # Enforces zero warnings on correctness and safety while ignoring stylistic
         # and minor compiler-version lints across all workspace targets:
         # - double_must_use: async_trait macro generates #[must_use] on futures in newer compilers.
@@ -159,6 +161,7 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
 
       - name: Run workspace Nextest test suite (standard non-LLM pass)
+        id: nextest
         # Executes all non-LLM unit, integration, and contract tests across the workspace.
         run: |
           echo ">>> Running workspace nextest on standard ubuntu-latest runner"
@@ -174,10 +177,86 @@ jobs:
           OTEL_EXPORTER_OTLP_ENDPOINT: ""
 
       - name: Publish JUnit test results report
+        id: junit
         if: always()
         uses: mikepenz/action-junit-report@v4
         with:
           report_paths: "target/nextest/ci-merged/junit.xml"
           require_tests: false
           check_name: Nextest results
+          detailed_summary: true
+
+      - name: Generate Pipeline Execution Summary
+        if: always()
+        run: |
+          FMT_STATUS="${{ steps.fmt.outcome }}"
+          CLIPPY_STATUS="${{ steps.clippy.outcome }}"
+          NEXTEST_STATUS="${{ steps.nextest.outcome }}"
+          JUNIT_STATUS="${{ steps.junit.outcome }}"
+
+          format_status() {
+            case "$1" in
+              success) echo "PASSED" ;;
+              skipped) echo "SKIPPED" ;;
+              *) echo "FAILED" ;;
+            esac
+          }
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Rust CI (Standard Runner) - Execution Summary
+
+          ### Quality Gates Status
+          | Gate | Target / Tool | Status |
+          |---|---|---|
+          | **Code Formatting** | \`cargo +nightly fmt --check\` | $(format_status "$FMT_STATUS") |
+          | **Workspace Linter** | \`cargo clippy --workspace --all-targets --locked -D warnings\` | $(format_status "$CLIPPY_STATUS") |
+          | **Union Test Suite** | \`cargo nextest run --profile ci-merged\` | $(format_status "$NEXTEST_STATUS") |
+          | **JUnit Test Report** | \`target/nextest/ci-merged/junit.xml\` | $(format_status "$JUNIT_STATUS") |
+
+          ### Runner & Infrastructure
+          | Property | Specification | Details |
+          |---|---|---|
+          | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0 / unlimited minutes) |
+          | **Hardware Allocation** | 4 vCPU, 16 GB RAM | Bounded Cargo concurrency (\`-j 4\`) |
+          | **External Secrets** | None (\$0) | Standalone non-LLM execution (no OPENROUTER_API_KEY required) |
+          | **Dependency Cache** | \`Swatinem/rust-cache@v2\` | Key: \`ci-nextest-standard\` (restores on PR, saves on main) |
+          | **Feature Scope** | \`CI_FEATURES_UNTRUSTED\` | Full workspace union non-LLM pass |
+
+          EOF
+
+          if [ -f "target/nextest/ci-merged/junit.xml" ]; then
+            python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+
+          try:
+              tree = ET.parse("target/nextest/ci-merged/junit.xml")
+              root = tree.getroot()
+              tests = int(root.attrib.get("tests", 0))
+              failures = int(root.attrib.get("failures", 0))
+              errors = int(root.attrib.get("errors", 0))
+              skipped = int(root.attrib.get("skipped", 0))
+              time_s = float(root.attrib.get("time", 0.0))
+
+              if tests == 0 and len(root) > 0:
+                  for suite in root.findall("testsuite"):
+                      tests += int(suite.attrib.get("tests", 0))
+                      failures += int(suite.attrib.get("failures", 0))
+                      errors += int(suite.attrib.get("errors", 0))
+                      skipped += int(suite.attrib.get("skipped", 0))
+                      time_s += float(suite.attrib.get("time", 0.0))
+
+              passed = tests - (failures + errors + skipped)
+
+              print("### Nextest Execution Metrics")
+              print("| Metric | Count | Details |")
+              print("|---|---|---|")
+              print(f"| **Total Tests** | {tests} | Full union non-LLM test suite |")
+              print(f"| **Passed** | {passed} | Successfully executed |")
+              print(f"| **Failed** | {failures + errors} | Panics or assertion errors |")
+              print(f"| **Skipped** | {skipped} | Conditionally gated tests |")
+              print(f"| **Execution Time** | {time_s:.2f}s | Cumulative test execution time |")
+          except Exception as e:
+              print(f"Failed to parse JUnit report metrics: {e}")
+          PYEOF
+          fi
 
