@@ -27,6 +27,13 @@ When Karakara OS was forked from `Agentium OS`, several workflows referenced cus
   - Test Phase (`cargo nextest run --workspace` non-LLM): ~1-2m (reuses compilation artifacts from clippy)
   - Report Phase (JUnit XML check publish): ~2s
   - Total Duration: ~9-11 min (cold build) / ~3-5 min (warm build cache)
+- **Compilation Performance Profile & Duration Drivers:**
+  - **Workspace Scale:** Karakara OS encompasses 48 workspace crates, 920+ Rust source files, and 650+ transitive crate dependencies (including Tokio, Axum, SurrealDB, FastEmbed, ONNX/tract, and QuickJS native C-bindgen).
+  - **Hardware Allocation:** Standard GitHub-hosted `ubuntu-latest` runners provide 4 vCPUs and 16 GB RAM, capping Cargo build parallelism to 4 concurrent compilation jobs (`cargo -j 4`).
+  - **Full Target Coverage (`--all-targets`):** The workflow lints not only core library targets, but all binaries (`bin`), test harnesses (`tests/*.rs`), and dev examples. In Rust, each integration test file compiles and links as an independent executable binary.
+  - **Cold Builds vs. Warm Cache (`rust-cache@v2`):**
+    - *Cold builds* (~7m 30s linter / ~9-11 min total) occur on initial branch setup or cache key resets, compiling all 650+ third-party dependencies from scratch.
+    - *Warm cache builds* (~2-3 min linter / ~3-5 min total) occur on routine PR checks once dependencies are cached on `main`, compiling only the incremental code differences.
 - **Local Verification Alternative:**
   ```bash
   just fmt
