@@ -15,7 +15,7 @@ use baml_rt_core::{
     ids::{AgentId, UuidId},
 };
 use serde_json::Value;
-use test_support::common::{opt_api_key, require_api_key, setup_baml_runtime_manager_default};
+use test_support::common::{opt_api_key, setup_baml_runtime_manager_default};
 use tokio::sync::Mutex;
 
 /// Stub interceptor: substitutes "Hello, Test!" for SimpleGreeting so integration tests avoid real LLM calls.
