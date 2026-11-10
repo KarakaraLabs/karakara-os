@@ -56,6 +56,8 @@ impl LLMCompletionHandle {
     /// Complete the LLM effect with the given outcome. Call once after execute_tool_from_baml_result_or_value.
     /// When outcome is Failure, pass rejection_reason (e.g. plan extraction error) to emit PromptRejected in provenance.
     pub async fn complete(self, outcome: Outcome, rejection_reason: Option<String>) {
+        tracing::debug!("LLM completion: begin");
+        let trace_started = Instant::now();
         // Notify interceptors (reads BAML trace; independent of the effect system).
         if let Err(e) = self.collector.process_trace_events(&self.scope).await {
             tracing::warn!(
@@ -63,7 +65,9 @@ impl LLMCompletionHandle {
                 "LLMCompletionHandle: failed to process trace events for interceptor notification"
             );
         }
+        let trace_ms = trace_started.elapsed().as_millis() as u64;
         let elapsed_ms = self.start.elapsed().as_millis() as u64;
+        let effects_started = Instant::now();
         self.collector
             .complete_pending_effects(
                 outcome,
@@ -72,6 +76,11 @@ impl LLMCompletionHandle {
                 Some(self.llm_result_payload),
             )
             .await;
+        tracing::debug!(
+            trace_ms,
+            effects_ms = effects_started.elapsed().as_millis() as u64,
+            "LLM completion: end"
+        );
     }
 }
 
