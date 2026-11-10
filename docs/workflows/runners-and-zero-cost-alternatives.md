@@ -142,3 +142,26 @@ flowchart LR
   just verify-k8s-pilot-package
   ```
 
+---
+
+## 3. Active Workflows Standardization & Best Practices
+
+All active workflows operating on GitHub-hosted standard pools follow the architectural blueprint established by `rust-ci-standard.yml`:
+
+| Workflow File | Display Name | Runner Class | Cost | Primary Quality Gate |
+|---|---|---|---|---|
+| `rust-ci-standard.yml` | **Rust CI (Standard Runner)** | `ubuntu-latest` | `$0` | Nightly formatting, strict Clippy, union non-LLM Nextest pass |
+| `secret-scan.yml` | **Secret Scan (Gitleaks)** | `ubuntu-latest` | `$0` | Full history & working tree Gitleaks credential scanning |
+| `reuse.yml` | **License Compliance (REUSE)** | `ubuntu-latest` | `$0` | FSFE REUSE 3.3 SPDX Apache-2.0 / MIT header verification |
+| `release-please.yml` | **Release Please (Automation & Assets)** | `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm` | `$0` | Release PR maintenance, tag creation, multi-arch binary builds |
+| `release-pr-postprocess.yml` | **Release PR Post-Process (Cargo.lock)** | `ubuntu-latest` | `$0` | Workspace lockfile version synchronization on release candidate PRs |
+| `release-publish.yml` | **Release Publish (Multi-Arch Binaries)** | `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm` | `$0` | Native Linux x86_64 and aarch64 binary tarball packaging |
+
+### Architectural Best Practices Enforced
+1. **Structured Header Documentation:** Every workflow begins with a structured comment describing its routine operational purpose and an explicit numbered list of Key Architectural Properties.
+2. **Least-Privilege Permissions:** Top-level and job-level `permissions:` blocks explicitly restrict privileges (`contents: read`, `pull-requests: read`, `contents: write`), with inline comments documenting why each permission is required.
+3. **Resilient Package Management:** Package installation steps utilize `scripts/ci/apt-update-retry.sh` to prevent transient mirror synchronization races on `archive.ubuntu.com`.
+4. **Descriptive Step Nomenclature:** Steps use standardized, unambiguous names (`Checkout repository with full history`, `Setup stable Rust toolchain`, etc.) rather than anonymous action invocations.
+5. **Observability via Step Summaries:** Every active workflow formats quality gate outcomes and execution metrics as clean Markdown tables and appends them to `$GITHUB_STEP_SUMMARY`, enabling instant review directly within the GitHub Actions UI without reading raw terminal logs.
+
+
