@@ -228,6 +228,7 @@ pub fn render_ts_declarations(
             tokens =>
             export interface StepExecutorRunOptions {
                 max_steps?: number;
+                onInputRequired?: (prompt: string) => Promise<ChatMessage>;
             }
         );
         tokens.line();

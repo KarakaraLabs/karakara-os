@@ -28,6 +28,8 @@
             "clickup:get-task",
             "clickup:list-spaces",
             "clickup:create-task",
+            "clickup:update-task",
+            "clickup:delete-task",
             "clickup:intake",
             "clickup:prioritize",
             "ingress:clickup-lifecycle",

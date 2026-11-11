@@ -285,6 +285,22 @@ describe("validateClickUpPlanForExecution", () => {
     ).toEqual(["3"]);
   });
 
+  it("matches read text against task names and descriptions", () => {
+    const tasks = [
+      { id: "1", name: "Fix login", description: "Auth cleanup", status: "to do", url: "" },
+      { id: "2", name: "Auth migration", description: null, status: "to do", url: "" },
+    ];
+    const filters = {
+      statuses: [] as string[],
+      assignee: null,
+      priority: null,
+      due: null,
+      text: "auth",
+    };
+
+    expect(applyTaskFilters(tasks, filters).matching.map((task) => task.id)).toEqual(["1", "2"]);
+  });
+
   it("explains an abstain instead of returning silence", () => {
     const message = describePriorityAbstain(
       {

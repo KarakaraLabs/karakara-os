@@ -149,7 +149,9 @@ impl ToolFailure {
             disposition: ErrorDisposition::LlmCorrectable,
             message: message.clone(),
             hint: Some(
-                "The delegated agent could not complete the request; re-ask to retry.".to_string(),
+                "The delegated agent could not complete the request; read the error before \
+                 deciding whether re-asking can help."
+                    .to_string(),
             ),
             retry_after_ms: None,
         };

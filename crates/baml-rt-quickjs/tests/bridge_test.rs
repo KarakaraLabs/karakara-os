@@ -1319,6 +1319,297 @@ async fn test_step_executor_loop_drives_full_session_with_interceptor() {
     );
 }
 
+/// A session that suspends for the user must pause the run with its question, then continue from
+/// the same hop once the reply is delivered, archiving the final output like any other Send.
+#[tokio::test]
+async fn test_step_executor_loop_pauses_and_resumes_on_suspended_session() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use baml_rt::baml::BamlRuntimeManager;
+    use baml_rt_core::context::InvocationScope;
+    use baml_rt_quickjs::step_executor_loop::{
+        StepExecutorResume, resume_step_executor_loop, run_step_executor_loop,
+    };
+    use baml_rt_tools::{
+        ToolCapability, ToolHandler, ToolSession, ToolSessionError, ToolStep,
+        tools::ToolFunctionMetadata,
+    };
+    use serde_json::json;
+
+    /// Suspends after the first Send and completes after the second.
+    struct SuspendingSession {
+        inputs: Arc<StdMutex<Vec<Value>>>,
+    }
+
+    #[async_trait]
+    impl ToolSession for SuspendingSession {
+        async fn send(&mut self, input: Value) -> std::result::Result<(), ToolSessionError> {
+            self.inputs.lock().unwrap().push(input);
+            Ok(())
+        }
+
+        async fn read(&mut self, _input: Value) -> std::result::Result<ToolStep, ToolSessionError> {
+            if self.inputs.lock().unwrap().len() < 2 {
+                let status = json!({
+                    "status": {
+                        "state": "TASK_STATE_INPUT_REQUIRED",
+                        "message": { "parts": [{ "text": "Delete Test1?" }] }
+                    }
+                });
+                return Ok(ToolStep::Suspended {
+                    output: json!({ "chunks": [{ "statusUpdate": status.to_string() }] }),
+                });
+            }
+            Ok(ToolStep::Done {
+                output: Some(json!({ "answer": "Deleted Test1" })),
+            })
+        }
+
+        async fn finish(&mut self) -> std::result::Result<(), ToolSessionError> {
+            Ok(())
+        }
+
+        async fn abort(
+            &mut self,
+            _reason: Option<String>,
+        ) -> std::result::Result<(), ToolSessionError> {
+            Ok(())
+        }
+    }
+
+    struct SuspendingHandler {
+        metadata: ToolFunctionMetadata,
+        inputs: Arc<StdMutex<Vec<Value>>>,
+    }
+
+    #[async_trait]
+    impl ToolHandler for SuspendingHandler {
+        fn metadata(&self) -> &ToolFunctionMetadata {
+            &self.metadata
+        }
+
+        fn capability(&self) -> ToolCapability {
+            ToolCapability::Streaming
+        }
+
+        async fn open_session(
+            &self,
+            _ctx: ToolSessionContext,
+            _open_input: Value,
+        ) -> baml_rt_core::Result<Box<dyn ToolSession>> {
+            Ok(Box::new(SuspendingSession {
+                inputs: self.inputs.clone(),
+            }))
+        }
+    }
+
+    struct SequenceInterceptor {
+        count: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl baml_rt::interceptor::LLMInterceptor for SequenceInterceptor {
+        async fn intercept_llm_call(
+            &self,
+            _ctx: &baml_rt::interceptor::LLMCallContext,
+        ) -> baml_rt_core::Result<baml_rt::interceptor::InterceptorDecision> {
+            let response = match self.count.fetch_add(1, Ordering::Relaxed) {
+                0 => json!({ "step": { "op": "Open" } }),
+                1 => json!({
+                    "step": {
+                        "op": "Send",
+                        "input": { "expression": { "left": 2, "operation": "Add", "right": 3 } }
+                    }
+                }),
+                _ => json!({ "step": { "op": "Finish" } }),
+            };
+            Ok(baml_rt::interceptor::InterceptorDecision::Substitute(
+                response,
+            ))
+        }
+
+        async fn on_llm_call_complete(
+            &self,
+            _: &baml_rt::interceptor::LLMCallContext,
+            _: &baml_rt_core::Result<Value>,
+            _: u64,
+        ) {
+        }
+    }
+
+    test_support::common::ensure_fixture_runtime_types();
+    let agent_dir =
+        test_support::common::workspace_root().join("tests/fixtures/agents/stream-baml-tool");
+    let built =
+        test_support::common::build_agent_package_to_temp(agent_dir, "stream-baml-tool").await;
+
+    let scope = InvocationScope::synthetic_task(AgentId::from_uuid(
+        UuidId::parse_str("00000000-0000-0000-0000-000000000095").unwrap(),
+    ));
+    let (context_id, message_id, task_id) = {
+        let rs = scope.as_scope();
+        let task_id = rs
+            .task_id_opt()
+            .expect("synthetic_task has task_id")
+            .clone();
+        (rs.context_id().clone(), rs.message_id().clone(), task_id)
+    };
+
+    let mut manager = BamlRuntimeManager::builder().build().unwrap();
+    manager
+        .load_schema(built.to_str().unwrap())
+        .expect("load schema");
+
+    // Borrow the real tool's metadata so the fixture's generated phase functions still apply.
+    let manifest = baml_rt_tools::ManifestToolNames::parse(&["support/calculate".to_string()])
+        .expect("parse manifest");
+    let policy = baml_rt_tools::parse_access_allowlist();
+    let real_tools = baml_rt_tools::ToolRegistry::new();
+    baml_rt_tools::register_manifest_tools(&real_tools, &manifest, &policy).unwrap();
+    let metadata = real_tools
+        .get_metadata("support/calculate")
+        .expect("calculator metadata");
+
+    manager
+        .set_tool_allowlist(
+            ["support/calculate"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+        .await
+        .unwrap();
+    let inputs = Arc::new(StdMutex::new(Vec::new()));
+    manager
+        .tool_registry()
+        .register_dynamic(
+            metadata.clone(),
+            Arc::new(SuspendingHandler {
+                metadata,
+                inputs: inputs.clone(),
+            }),
+        )
+        .unwrap();
+    manager.rebuild_function_tool_manifest();
+
+    let bus: Arc<dyn EffectEmitter> = Arc::new(BusWithEffects::new());
+    let store = SurrealStoreBuilder::in_memory_isolated()
+        .build()
+        .await
+        .expect("in-memory provenance for suspended-session e2e");
+    manager.set_effect_emitter(bus.clone());
+    let manager = Arc::new(RwLock::new(manager));
+    baml_rt::a2a_transport::install_provenance_conversation_wiring(
+        store.clone(),
+        Some(store.clone()),
+        &manager,
+        &bus,
+        Arc::new(baml_rt_provenance::FixedCompactionSummarizer::new(
+            "Prior conversation was compacted; continue from recent context.",
+        )),
+        Arc::new(baml_rt_llm_config::LlmClientConfig::sensible_default()),
+        None,
+    )
+    .await
+    .expect("provenance + conversation wiring");
+
+    {
+        let agent = scope.as_scope().agent_id().clone();
+        store
+            .add_event(ProvEvent::task_exists(context_id.clone(), task_id.clone()))
+            .await
+            .expect("task exists");
+        store
+            .add_event(ProvEvent::task_execution_started(
+                context_id.clone(),
+                task_id.clone(),
+                agent.clone(),
+            ))
+            .await
+            .expect("task execution started");
+        store
+            .add_event(ProvEvent::message_received_task(
+                context_id.clone(),
+                task_id,
+                message_id,
+                "user".to_string(),
+                vec!["suspended session e2e".to_string()],
+                None,
+                agent,
+                1_700_000_010_305,
+            ))
+            .await
+            .expect("message received");
+    }
+
+    let call_count = Arc::new(AtomicU32::new(0));
+    {
+        let w = manager.write().await;
+        w.register_llm_interceptor(SequenceInterceptor {
+            count: call_count.clone(),
+        })
+        .await;
+    }
+
+    let base_args = json!({ "user_message": "what is 2 + 3?" });
+    let paused = context::with_scope(
+        scope.as_scope().clone(),
+        run_step_executor_loop(
+            &manager,
+            scope.as_scope(),
+            "ChooseCalcTool",
+            base_args.clone(),
+            8,
+            None,
+        ),
+    )
+    .await
+    .expect("loop should pause, not fail");
+
+    let pause = paused
+        .input_required
+        .expect("run should pause for the user");
+    assert_eq!(pause.prompt, "Delete Test1?");
+    assert_eq!(call_count.load(Ordering::Relaxed), 2, "Open and Send only");
+
+    let resumed = context::with_scope(
+        scope.as_scope().clone(),
+        resume_step_executor_loop(
+            &manager,
+            scope.as_scope(),
+            "ChooseCalcTool",
+            base_args,
+            8,
+            StepExecutorResume {
+                token: pause.resume_token,
+                text: "yes".to_string(),
+            },
+        ),
+    )
+    .await
+    .expect("resumed loop should complete");
+
+    assert!(resumed.input_required.is_none());
+    assert_eq!(
+        inputs.lock().unwrap().last(),
+        Some(&json!({ "parts": [{ "text": "yes" }] })),
+        "the reply must reach the same session"
+    );
+    assert!(
+        resumed
+            .steps
+            .iter()
+            .any(|step| step.get("archive_ref").is_some()),
+        "the completed output must be archived: {:?}",
+        resumed.steps
+    );
+    assert_eq!(
+        call_count.load(Ordering::Relaxed),
+        3,
+        "resuming must not replay the Send through the model"
+    );
+}
+
 /// Tier-1 entry-Send handoff: a one-shot Send auto-closes its tool session, then the next hop
 /// must use its generated Consume union to read or synthesize the archived result. That union does
 /// not admit another Send until the receipt is consumed.

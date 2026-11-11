@@ -13,6 +13,13 @@ pub(crate) fn step_executor_outcome_from_loop_result(
     result: Result<StepExecutorResult, BamlRtError>,
 ) -> StepExecutorOutcome {
     match result {
+        Ok(StepExecutorResult {
+            input_required: Some(pause),
+            ..
+        }) => StepExecutorOutcome::InputRequired {
+            prompt: pause.prompt,
+            resume_token: pause.resume_token,
+        },
         Ok(r) => StepExecutorOutcome::Completed {
             last: r.last,
             steps: r.steps,

@@ -13,7 +13,7 @@ pub mod poll;
 mod source_records;
 mod spans;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 use baml_derive::BamlType;
@@ -37,6 +37,8 @@ pub use source_records::{
     clickup_task_snapshot_value,
 };
 use tracing::Instrument;
+
+const MAX_CLICKUP_LIST_TASK_PAGES: u32 = 50;
 
 fn option_is_empty(opt: &Option<String>) -> bool {
     opt.as_ref().is_none_or(|s| s.is_empty())
@@ -164,7 +166,7 @@ baml_rt_tools::impl_describe_action_identity! {
         GetTask(p) => "get_task" { task_id: p.task_id },
         CreateTask(p) => "create_task" { list_id: p.list_id, name: p.name },
         UpdateTask(p) => "update_task" { task_id: p.task_id },
-        DeleteTask(p) => "delete_task" { task_id: p.task_id },
+        DeleteTask(p) => "delete_task" { task_id: p.task_id, confirm_delete: p.confirm_delete },
     }
 }
 
@@ -264,6 +266,8 @@ pub(crate) struct RawPriority {
 pub(crate) struct RawTaskList {
     #[serde(default)]
     pub tasks: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub last_page: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -292,6 +296,18 @@ pub(crate) struct RawSpace {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RawFolderlessList {
+    #[serde(default)]
+    pub lists: Vec<RawClickUpList>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RawFolderList {
+    #[serde(default)]
+    pub folders: Vec<RawFolder>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RawFolder {
     #[serde(default)]
     pub lists: Vec<RawClickUpList>,
 }
@@ -444,23 +460,42 @@ impl ClickUpTool {
 
     async fn list_lists(&self, api_key: &str, space_id: &str) -> Result<ClickUpOutput> {
         async {
-            let json = self
+            let folderless_json = self
                 .client
                 .send_json(self.client.get(&format!("/space/{space_id}/list"), api_key))
                 .await
                 .map_err(ClickUpError::Client)?;
+            let folders_json = self
+                .client
+                .send_json(
+                    self.client
+                        .get(&format!("/space/{space_id}/folder"), api_key)
+                        .query(&[("archived", "false")]),
+                )
+                .await
+                .map_err(ClickUpError::Client)?;
 
-            let raw: RawFolderlessList =
-                serde_json::from_value(json).map_err(|e| ClickUpError::UnexpectedShape {
-                    message: format!("unexpected lists response shape: {e}"),
+            let folderless: RawFolderlessList =
+                serde_json::from_value(folderless_json).map_err(|e| {
+                    ClickUpError::UnexpectedShape {
+                        message: format!("unexpected folderless lists response shape: {e}"),
+                    }
                 })?;
+            let folders: RawFolderList = serde_json::from_value(folders_json).map_err(|e| {
+                ClickUpError::UnexpectedShape {
+                    message: format!("unexpected folders response shape: {e}"),
+                }
+            })?;
 
-            let items: Vec<ClickUpItem> = raw
+            let mut seen = HashSet::new();
+            let items: Vec<ClickUpItem> = folderless
                 .lists
                 .into_iter()
-                .map(|l| ClickUpItem {
-                    id: l.id,
-                    name: l.name,
+                .chain(folders.folders.into_iter().flat_map(|folder| folder.lists))
+                .filter(|list| seen.insert(list.id.clone()))
+                .map(|list| ClickUpItem {
+                    id: list.id,
+                    name: list.name,
                     kind: "list".to_string(),
                 })
                 .collect();
@@ -483,29 +518,78 @@ impl ClickUpTool {
 
     async fn list_tasks(&self, api_key: &str, list_id: &str) -> Result<ClickUpOutput> {
         async {
-            let json = self
-                .client
-                .send_json(self.client.get(&format!("/list/{list_id}/task"), api_key))
-                .await
-                .map_err(ClickUpError::Client)?;
+            let mut tasks = Vec::new();
+            let mut page = 0_u32;
+            let mut previous_page_signature: Option<Vec<String>> = None;
 
-            let raw_list: RawTaskList =
-                serde_json::from_value(json).map_err(|e| ClickUpError::UnexpectedShape {
-                    message: format!("unexpected response shape: {e}"),
-                })?;
+            loop {
+                let page_value = page.to_string();
+                let json = self
+                    .client
+                    .send_json(
+                        self.client
+                            .get(&format!("/list/{list_id}/task"), api_key)
+                            .query(&[
+                                ("include_closed", "true"),
+                                ("subtasks", "true"),
+                                ("page", page_value.as_str()),
+                            ]),
+                    )
+                    .await
+                    .map_err(ClickUpError::Client)?;
 
-            let mut tasks = Vec::with_capacity(raw_list.tasks.len());
-            for (idx, raw_value) in raw_list.tasks.into_iter().enumerate() {
-                match serde_json::from_value::<RawClickUpTask>(raw_value) {
-                    Ok(raw_task) => tasks.push(ClickUpTaskSummary::from(raw_task)),
-                    Err(err) => {
-                        tracing::warn!(
-                            task_index = idx,
-                            error = %err,
-                            "Skipping malformed task entry from ClickUp response",
-                        );
+                let raw_list: RawTaskList =
+                    serde_json::from_value(json).map_err(|e| ClickUpError::UnexpectedShape {
+                        message: format!("unexpected task-list response shape on page {page}: {e}"),
+                    })?;
+                let raw_page_len = raw_list.tasks.len();
+                let page_signature: Vec<String> = raw_list
+                    .tasks
+                    .iter()
+                    .filter_map(|task| task.get("id")?.as_str().map(str::to_owned))
+                    .collect();
+
+                if page > 0
+                    && previous_page_signature
+                        .as_ref()
+                        .is_some_and(|previous| previous == &page_signature)
+                {
+                    return Err(ClickUpError::UnexpectedShape {
+                        message: format!(
+                            "task pagination for list {list_id} repeated page {page}; refusing partial results"
+                        ),
+                    }
+                    .into());
+                }
+
+                for (idx, raw_value) in raw_list.tasks.into_iter().enumerate() {
+                    match serde_json::from_value::<RawClickUpTask>(raw_value) {
+                        Ok(raw_task) => tasks.push(ClickUpTaskSummary::from(raw_task)),
+                        Err(err) => {
+                            tracing::warn!(
+                                list_id,
+                                page,
+                                task_index = idx,
+                                error = %err,
+                                "Skipping malformed task entry from ClickUp response",
+                            );
+                        }
                     }
                 }
+
+                if raw_list.last_page.unwrap_or(false) || raw_page_len == 0 {
+                    break;
+                }
+                if page + 1 >= MAX_CLICKUP_LIST_TASK_PAGES {
+                    return Err(ClickUpError::UnexpectedShape {
+                        message: format!(
+                            "task pagination for list {list_id} exceeded {MAX_CLICKUP_LIST_TASK_PAGES} pages; refusing partial results"
+                        ),
+                    }
+                    .into());
+                }
+                previous_page_signature = Some(page_signature);
+                page = page.saturating_add(1);
             }
 
             let count = tasks.len();
@@ -801,5 +885,134 @@ impl BamlTool for ClickUpTool {
             }
         }
         c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    use baml_rt_tools::{DescribeActionIdentity, project_archive_action_identity_from_parts};
+
+    use super::{ClickUpInput, ClickUpTool, DeleteTaskInput};
+
+    fn fixture_server(
+        responses: Vec<(&'static str, &'static str)>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+        let address = listener.local_addr().expect("fixture address");
+        let handle = thread::spawn(move || {
+            for (expected_target, body) in responses {
+                let (mut stream, _) = listener.accept().expect("accept fixture request");
+                let mut request = [0_u8; 8192];
+                let read = stream.read(&mut request).expect("read fixture request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                let target = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .expect("request target");
+                assert!(
+                    target.contains(expected_target),
+                    "expected request target {target:?} to contain {expected_target:?}"
+                );
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .expect("write fixture response");
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    fn rendered_delete(confirm_delete: bool) -> String {
+        let input = ClickUpInput::DeleteTask(DeleteTaskInput {
+            task_id: "abc".to_string(),
+            confirm_delete,
+        });
+        let identity = input.action_identity();
+        project_archive_action_identity_from_parts("Send", identity.name, identity.fields)
+    }
+
+    /// The clickup-agent evidence gate reads this text to tell a dry run from a real delete.
+    #[test]
+    fn delete_identity_distinguishes_a_dry_run() {
+        assert_eq!(
+            rendered_delete(false),
+            r#"Send(delete_task task_id="abc" confirm_delete=false)"#
+        );
+        assert_eq!(
+            rendered_delete(true),
+            r#"Send(delete_task task_id="abc" confirm_delete=true)"#
+        );
+    }
+
+    #[tokio::test]
+    async fn list_lists_includes_folderless_and_folder_lists() {
+        let (base_url, server) = fixture_server(vec![
+            (
+                "/space/space-1/list",
+                r#"{"lists":[{"id":"list-1","name":"Inbox"}]}"#,
+            ),
+            (
+                "/space/space-1/folder?archived=false",
+                r#"{"folders":[{"lists":[{"id":"list-2","name":"Backend"}]}]}"#,
+            ),
+        ]);
+        let tool = ClickUpTool::with_base_url(base_url).expect("clickup tool");
+
+        let output = tool
+            .list_lists("test-token", "space-1")
+            .await
+            .expect("list lists");
+
+        assert_eq!(
+            output
+                .items
+                .iter()
+                .map(|item| (item.id.as_str(), item.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("list-1", "Inbox"), ("list-2", "Backend")]
+        );
+        server.join().expect("fixture server");
+    }
+
+    #[tokio::test]
+    async fn list_tasks_fetches_closed_tasks_and_all_pages() {
+        let page_0 = r#"{"tasks":[{"id":"task-1","name":"Closed task","status":{"status":"closed"},"url":"https://clickup.test/task-1"}],"last_page":false}"#;
+        let page_1 = r#"{"tasks":[{"id":"task-2","name":"Open task","status":{"status":"to do"},"url":"https://clickup.test/task-2"}],"last_page":true}"#;
+        let (base_url, server) = fixture_server(vec![
+            (
+                "/list/list-1/task?include_closed=true&subtasks=true&page=0",
+                page_0,
+            ),
+            (
+                "/list/list-1/task?include_closed=true&subtasks=true&page=1",
+                page_1,
+            ),
+        ]);
+        let tool = ClickUpTool::with_base_url(base_url).expect("clickup tool");
+
+        let output = tool
+            .list_tasks("test-token", "list-1")
+            .await
+            .expect("list tasks");
+
+        assert_eq!(
+            output
+                .tasks
+                .iter()
+                .map(|task| (task.id.as_str(), task.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("task-1", "closed"), ("task-2", "to do")]
+        );
+        server.join().expect("fixture server");
     }
 }

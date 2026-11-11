@@ -30,15 +30,17 @@
 use std::{
     fs,
     sync::{Arc, OnceLock},
+    time::{Duration, Instant},
 };
 
 use baml_rt::{A2aAgent, A2aRequestHandler, QuickJSConfig, baml::BamlRuntimeManager};
 use baml_rt_core::{A2aStreamChunk, A2aWireRequest, collect_a2a_stream_one_shot};
 use serde_json::Value;
 use test_support::common::{
-    CalculatorTool, agent_fixture, build_fixture_package_to_temp, chunk_content,
-    chunks_from_responses, ensure_fixture_runtime_types, message_texts_from_chunks,
-    message_visible_content_from_chunks, send_stream_request,
+    CalculatorTool, agent_fixture, build_fixture_package_to_temp,
+    build_minimal_a2a_agent_with_stream_idle_secs, chunk_content, chunks_from_responses,
+    ensure_fixture_runtime_types, message_texts_from_chunks, message_visible_content_from_chunks,
+    send_stream_request,
 };
 
 fn task_state_from_chunk(chunk: &Value) -> Option<String> {
@@ -357,6 +359,69 @@ async fn test_a2a_stream_input_required_suspends_quickjs() {
     assert_eq!(
         final_count, 0,
         "INPUT_REQUIRED turn must not have final: true (stream suspended, not ended)"
+    );
+}
+
+/// Asks one question, then yields nothing after the reply, the way an agent stays silent while a
+/// slow host call is in flight.
+const ASK_THEN_STAY_SILENT: &str = r#"
+let asked = false;
+globalThis.onChatMessage = async function(message) {
+    if (!asked) {
+        asked = true;
+        __chat_yield({
+            __session: message.__session,
+            task: { status: { state: "TASK_STATE_SUBMITTED" } }
+        });
+        __chat_yield({
+            __session: message.__session,
+            statusUpdate: {
+                status: {
+                    state: "TASK_STATE_INPUT_REQUIRED",
+                    message: { parts: [{ text: "continue?" }] }
+                }
+            }
+        });
+        return;
+    }
+    // The reply call returns at once, as `awaitInput` routing does, and nothing is yielded after it.
+};
+"#;
+
+/// A user who takes longer than the stream idle limit to answer must still resume the turn: the
+/// limit measures agent silence, so the clock restarts when the reply arrives. The agent never
+/// finishes, so the resumed turn does end in a timeout, and only how soon it ends tells the two
+/// behaviours apart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a2a_stream_slow_user_reply_restarts_idle_clock_quickjs() {
+    const STREAM_IDLE_SECS: u64 = 3;
+
+    let _permit = test_gate().await;
+    let agent =
+        build_minimal_a2a_agent_with_stream_idle_secs(ASK_THEN_STAY_SILENT, STREAM_IDLE_SECS).await;
+    let context_id = baml_rt_core::ids::ContextId::new(11, 1);
+
+    let turn1 = send_stream_request("msg-11-1", "start", "corr-11-1", Some(context_id.clone()));
+    let r1 = collect_stream(&agent, turn1).await.expect("turn1 stream");
+    let s1: Vec<String> = chunks_from_responses(&r1)
+        .into_iter()
+        .filter_map(task_state_from_chunk)
+        .collect();
+    assert!(
+        s1.contains(&"TASK_STATE_INPUT_REQUIRED".to_string()),
+        "turn1 must suspend for input; states: {s1:?}"
+    );
+
+    tokio::time::sleep(Duration::from_secs(STREAM_IDLE_SECS + 1)).await;
+
+    let replied_at = Instant::now();
+    let turn2 = send_stream_request("msg-11-2", "yes", "corr-11-2", Some(context_id.clone()));
+    collect_stream(&agent, turn2).await.expect("turn2 stream");
+    let silence_allowed = replied_at.elapsed();
+
+    assert!(
+        silence_allowed >= Duration::from_secs(STREAM_IDLE_SECS - 1),
+        "the reply must restart the idle clock, but the turn ended after {silence_allowed:?}"
     );
 }
 

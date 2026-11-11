@@ -10,15 +10,18 @@
  *   2. system/discover_agents — deterministic registry lookup for delegatable work.
  *   3. MakeStructuredPlan — LLM plans from the explicit discovered-agent list.
  *   4a. FormatCapabilities — if no steps: capability summary (StructuredReply)
- *   4b. One delegation — host forwards its terminal structured reply; multiple delegations use the FSM
- *   5. CoordinatorSynthesizeReply — only for multi-agent plans
+ *   4b. Delegation — each plan step forwards its goal and relays any question to the user
+ *   5. CoordinatorSynthesizeReply — only for multi-agent plans, from each specialist's final answer
  */
 import {
   type CoordinatorRoute,
   type CoordinatorRouteTarget,
-  declaredRoutePayload,
+  delegatedPromptFromOutput,
   directRouteTarget,
   parseCoordinatorRoute,
+  planStepMessage,
+  replyText,
+  type SpecialistAnswer,
 } from "./routing";
 import type {
   A2aExecutionSessionExecutable,
@@ -168,44 +171,21 @@ function delegatedReplyFromOutput(output: unknown): StructuredReply | null {
   return { parts, citations: [] };
 }
 
-function delegatedPromptFromOutput(output: unknown): string | null {
-  if (!isObject(output) || !Array.isArray(output.chunks)) return null;
-  for (const rawChunk of [...output.chunks].reverse()) {
-    if (!isObject(rawChunk) || !isObject(rawChunk.message) || !Array.isArray(rawChunk.message.parts)) {
-      continue;
-    }
-    for (const rawPart of rawChunk.message.parts) {
-      if (isObject(rawPart) && typeof rawPart.text === "string" && rawPart.text.trim()) {
-        return rawPart.text.trim();
-      }
-    }
-  }
-  return null;
-}
-
-async function forwardSingleDelegation(
+async function forwardDelegation(
   ctx: RunContext,
   agent_package: string,
   goal: string,
-  declaredRoute: ReturnType<typeof declaredRoutePayload> | null = null,
 ): Promise<StructuredReply> {
   const session = await openToolSession("system/internal_a2a", {
     target: { agent_package },
   });
   let nextMessage = goal;
   let finished = false;
-  let declaredSent = false;
 
   try {
     while (true) {
-      // The declared route rides along once, with the first message: it describes the request, not
-      // each follow-up. Specialists that understand it skip their classifier; others ignore it.
-      const parts: { text?: string; data?: unknown }[] = [{ text: nextMessage }];
-      if (!declaredSent && declaredRoute) {
-        parts.push({ data: declaredRoute });
-        declaredSent = true;
-      }
-      await session.send({ parts } as never);
+      // The specialist classifies and validates the forwarded goal under its own domain contract.
+      await session.send({ parts: [{ text: nextMessage }] } as never);
 
       while (true) {
         const step = await session.continue();
@@ -294,8 +274,6 @@ async function discoverAgentsForTurn(
 __chat_register({
   run: async (ctx): Promise<SessionResult> => {
     let text = (ctx.text ?? "").trim() || "unknown";
-
-    const rawUserText = text;
 
     let runDiscovery = false;
     let intentText = "";
@@ -451,17 +429,14 @@ __chat_register({
         const goal = String(step.sub_message ?? objective);
         if (!agent_package) throw new Error("Delegation step did not name an agent package.");
 
-        const declared =
-          directTarget && directRoute && agent_package === directTarget.agent_package
-            ? declaredRoutePayload(directRoute, directTarget, rawUserText)
-            : null;
         await delegateExecutable?.startStep(stepId);
-        const forwarded = await forwardSingleDelegation(ctx, agent_package, goal, declared);
+        const forwarded = await forwardDelegation(ctx, agent_package, goal);
         await delegateExecutable?.completeStep(stepId);
         await delegateExecutable?.finish();
         return { message: forwarded };
       }
 
+      const answers: SpecialistAnswer[] = [];
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         const stepId = "step-" + i;
@@ -474,24 +449,16 @@ __chat_register({
         }
 
         await delegateExecutable?.startStep(stepId);
-        const delegateRun = await runGeneratedStepExecutor(
-          "DecideDelegationAction",
-          { goal, agent_package },
-          { max_steps: 10 },
-        );
-        if (delegateRun.outcome !== "completed") {
-          throw new Error(
-            delegateRun.outcome === "fatal"
-              ? delegateRun.message
-              : `[${delegateRun.recovery.code}] ${delegateRun.recovery.mistake}`,
-          );
-        }
+        const message = planStepMessage(goal, answers);
+        const forwarded = await forwardDelegation(ctx, agent_package, message);
+        answers.push({ agent_package, goal, answer: replyText(forwarded) });
         await delegateExecutable?.completeStep(stepId);
       }
 
       const reacted = (await CoordinatorSynthesizeReply({
         user_message: text,
         plan_objective: objective,
+        specialist_answers: answers,
       })) as StructuredReply;
       await delegateExecutable?.finish();
       return { message: reacted };

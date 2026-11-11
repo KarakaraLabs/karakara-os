@@ -11,22 +11,12 @@ class CoordinatorRouteTarget {
   capability string @description("One capability string that agent advertises. Copy it verbatim.")
 }
 
-class CoordinatorRouteFilters {
-  statuses string[]? @description("Every task status the conversation is currently about, copied verbatim: the statuses of tasks a specialist just listed, or the status the user named this turn. Emit all of them. Do not copy a status the user is not discussing, and do not narrow to one when they are looking at several.")
-  scope_note string? @description("One clause naming the task set the user means, in their own terms: for example 'the in-progress tasks just listed' or 'the to-do list just listed'. Omit only when no set has been established.")
-  assignee string? @description("Person the user named when filtering by assignee. Never for 'me'/'my tasks': leave null and list it in unsupported.")
-  priority ("urgent" | "high" | "normal" | "low")? @description("Priority filter only when the user filtered by priority; omit when they merely want it shown.")
-  due ("overdue" | "today" | "this_week" | "next_week")? @description("Due-date window only when the user filtered by it; omit when they merely want dates shown.")
-  text string? @description("Words the task name or description must contain, copied verbatim. Omit otherwise.")
-}
-
 class CoordinatorRoute {
   shape "single" | "sequence" | "foreach" | "aggregate" @description("single: one target capability answers the whole request. sequence: ordered independent calls. foreach: apply an action to each item from an upstream result. aggregate: combine several results into one answer.")
   targets CoordinatorRouteTarget[] @description("The specialists this request needs. Exactly one for shape single.")
-  goal string @description("Goal-level instruction for the target agent. Keep the user's own terms; never add constraints they did not state.")
-  filters CoordinatorRouteFilters? @description("Optional task filters for task-tracking agents. Omit when the request is not a task filter and when the user only wants those fields displayed.")
+  goal string @description("Complete goal-level instruction for the target agent. Preserve the requested action, resource names or ids, filters, destination values, and conversation context in the user's terms. The specialist interprets its own domain.")
   expected_output string? @description("What the answer must contain, in one short clause.")
-  unsupported string[]? @description("Constraints no target capability can express. A non-empty value sends the request to the slower planning path, so keep it empty unless genuinely needed.")
+  unsupported string[]? @description("Requirements that no advertised target capability can satisfy. A non-empty value sends the request to the planner. Omit when one advertised capability covers the request.")
 }
 
 // --- Coordinator classification (before discovery) ---
@@ -92,25 +82,22 @@ You classify this turn for a **coordinator agent** that routes **real work** to 
     Routing rules for `route`:
     - AVAILABLE AGENTS is the complete registry result for this turn. Use only exact `agent_package` and
       `capability` strings from it. Never invent either, and never route to yourself.
+    - Infer the requested operation from the advertised capability names and agent descriptions. Select the
+      narrowest capability that covers the request, but treat its string as opaque. Do not invent a provider
+      operation or arguments that the registry did not advertise.
+    - Keep provider semantics in `goal`, not in coordinator-owned fields. Preserve exact resource names, ids,
+      filters, requested changes, and relevant context. The receiving specialist resolves and validates them.
     - shape "single" only when one capability answers the whole request. Then `targets` has exactly one entry.
-    - shape "sequence" when the request needs several independent calls, "foreach" when an action applies to
-      each item produced upstream (e.g. \"create a task for each document\"), "aggregate" when several results
-      must be merged. Those shapes still need a plan; the host will build it.
-      add requirements they did not state. Put such constraints in `filters` only when they are real filters.
-      identity, ordering by an unlisted property). Keep it empty or omitted otherwise: a non-empty value sends
-      the request to the slower planner.
+    - shape "sequence" when the request needs several ordered calls, "foreach" when an action applies to each
+      item produced upstream, and "aggregate" when several results must be merged. Those shapes still need a
+      plan; the host will build it.
+    - Put a requirement in `unsupported` only when no advertised target capability can satisfy it. Do not use
+      `unsupported` for provider-specific details that the selected specialist can interpret.
+    - Preserve conversation continuity in `goal`. For a follow-up, name the resource set or result the user is
+      referring to using the transcript's wording. Never manufacture ids, statuses, names, or constraints.
+    - Do not ask for destructive-action confirmation. The specialist that owns the resource applies its own
+      confirmation and write-safety rules.
     - When no capability fits, omit `route` entirely. The host will then plan from the goal.
-
-    Conversation continuity (infer the scope, do not copy it mechanically):
-    - Infer which task set the user is talking about from the conversation: the statuses of tasks a
-      specialist just listed, or the statuses the user named this turn. Put every status you find in
-      `statuses`, verbatim, and describe the set in `scope_note` in the user's own terms.
-    - Follow the subject of the conversation, not the previous filter: after "which tasks are in todo?"
-      a follow-up "what should I start first?" is about the to-do tasks, not about whatever was discussed
-      before that.
-    - Leave `statuses` empty and say so in `scope_note` when the user asks openly with no established set
-      ("what should I work on next?" with nothing listed).
-    - Never invent a status the user has not mentioned and that has not appeared in the records.
 
     ---AVAILABLE AGENTS---
     {{ available_agents }}
@@ -234,24 +221,18 @@ Do not add text before or after the JSON object.
 "#
 }
 
-/// Coordinate with a specialist agent to achieve a goal.
-/// FSM phase instructions are injected by codegen — this prompt carries goal context only.
-function DecideDelegationAction(
-  goal: string,
-  agent_package: string,
-) -> SystemInternalA2aSessionPlan | string? {
-  client DefaultClient
-  prompt #"
-    Goal: Coordinate with agent {{ agent_package }} to achieve: {{ goal }}
-    Return `null` when the goal is satisfied or after 2+ exchanges.
-  "#
+class CoordinatorSpecialistAnswer {
+  agent_package string
+  goal string @description("What this specialist was asked to do.")
+  answer string @description("The specialist's final answer, as the user would read it.")
 }
 
-// Synthesize the user-visible reply after delegation step(s).
-// The session history carries the Read results from the preceding DecideDelegationAction calls.
+// Synthesize the user-visible reply after a multi-agent plan. Each specialist's final answer is
+// passed in directly; its tool results stay with the specialist.
 function CoordinatorSynthesizeReply(
   user_message: string,
   plan_objective: string,
+  specialist_answers: CoordinatorSpecialistAnswer[],
 ) -> StructuredReply {
   client DefaultClient
   prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
@@ -276,8 +257,16 @@ You are the coordinator agent: professional, concise, and accurate. Use prior tu
     The user asked: {{ user_message }}
     Plan objective: {{ plan_objective }}
 
-    The transcript below contains the results from your specialist agent(s).
-    Match the output schema exactly (StructuredReply: parts + citations).
+    Final answers from your specialist agents, in plan order:
+    {% for item in specialist_answers %}
+    --- {{ item.agent_package }} (asked: {{ item.goal }}) ---
+    {{ item.answer }}
+    {% endfor %}
+    --- end of answers ---
+
+    Report only what these answers say. Never say an action happened unless its answer says so; if a
+    specialist cancelled or could not do something, say that plainly.
+    Match the output schema exactly (StructuredReply: parts + citations). Set citations to an empty list.
     Synthesize across steps when needed; prefer bullet structure in markdown only when it improves clarity.
 
 {{ ctx.output_format }}
@@ -291,8 +280,22 @@ Do not add text before or after the JSON object.
 "#
 }
 
+// Transient OpenRouter failures (HTTP 429 admission control, 5xx, network timeouts) are retried
+// by BAML with exponential backoff. The ~1s+2s+4s+8s spread clears OpenRouter's ~10s credit
+// reset without any manual retry loop in the agent.
+retry_policy OpenRouterBackoff {
+  max_retries 4
+  strategy {
+    type exponential_backoff
+    delay_ms 1000
+    multiplier 2
+    max_delay_ms 30000
+  }
+}
+
 client DefaultClient {
   provider openai-generic
+  retry_policy OpenRouterBackoff
   options {
     model env.BAML_TEST_MODEL
     base_url "https://openrouter.ai/api/v1"

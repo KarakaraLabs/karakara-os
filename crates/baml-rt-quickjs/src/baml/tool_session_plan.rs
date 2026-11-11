@@ -13,8 +13,12 @@ use baml_rt_tools::{
 use super::{BamlRuntimeManager, ToolSessionOp, ToolSessionPlan, manager_prelude::*, open_input};
 use crate::{
     provenance_errors::map_archive_provenance_err,
+    step_executor_loop::{STATUS_INPUT_REQUIRED, SuspendedStepRun},
     tool_session_handle::{SendResult, ToolSessionSendBlockingOutcome, send_signature},
 };
+
+/// Longest wait between chunks of a blocking Send before the session counts as hung.
+const SEND_CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Recoverable miss: LLM cited `@N` before it exists, wrong index, or stale session — return as
 /// tool output instead of `Err` so the hop completes with `Outcome::Success` and the model can
@@ -82,6 +86,108 @@ fn send_unavailable_result(tool_name: &str, reason: &str) -> Value {
         },
         "result": Value::Null,
     })
+}
+
+fn input_required_json(tool_name: &str, session_id: &ToolSessionId, prompt: &str) -> Value {
+    serde_json::json!({
+        "status": STATUS_INPUT_REQUIRED,
+        "tool_name": tool_name,
+        "session_id": session_id.to_string(),
+        "prompt": prompt,
+    })
+}
+
+impl BamlRuntimeManager {
+    /// Keep a paused run until the user answers. One per context: a coordinator pauses one
+    /// delegation at a time, and this bounds what an abandoned question can hold on to.
+    pub(crate) fn store_suspended_step_run(&self, context_id: &str, run: SuspendedStepRun) {
+        self.state
+            .suspended_step_runs
+            .insert(context_id.to_string(), run);
+    }
+
+    /// Take the paused run for this context, if `token` names it.
+    pub(crate) fn take_suspended_step_run(
+        &self,
+        context_id: &str,
+        token: &str,
+    ) -> Option<SuspendedStepRun> {
+        self.state
+            .suspended_step_runs
+            .remove_if(context_id, |_, run| run.resume_token() == token)
+            .map(|(_, run)| run)
+    }
+
+    /// Deliver the user's answer to a suspended session and wait for its next outcome.
+    ///
+    /// Returns the same JSON shape as a planned Send, so the step loop continues as if the Send
+    /// that suspended had just completed. The completed output is archived like any other Send.
+    pub(crate) async fn resume_suspended_send(
+        &self,
+        scope: &context::RuntimeScope,
+        tool_name: &str,
+        session_id: &ToolSessionId,
+        text: &str,
+    ) -> Result<Value> {
+        let outcome = self
+            .tool_session_handle()
+            .tool_session_send_blocking(
+                session_id,
+                serde_json::json!({ "parts": [{ "text": text }] }),
+                scope,
+                &self.state.archive_ref_tables,
+                SEND_CHUNK_TIMEOUT,
+            )
+            .await?;
+        match outcome {
+            ToolSessionSendBlockingOutcome::Completed(send_result) => {
+                self.emit_send_done(scope, tool_name, session_id, &send_result)
+                    .await;
+                Ok(send_done_json(&send_result))
+            }
+            ToolSessionSendBlockingOutcome::InputRequired { prompt } => {
+                Ok(input_required_json(tool_name, session_id, &prompt))
+            }
+            ToolSessionSendBlockingOutcome::ToolFailed(failure) => {
+                if failure.classified.code == A2A_DELEGATION_FAILED_CODE {
+                    return Err(BamlRtError::from(StepPlanRecovery::delegation_failed(
+                        &failure.message,
+                    )));
+                }
+                if matches!(failure.classified.disposition, ErrorDisposition::Fatal) {
+                    return Err(tool_failure_to_baml_tool_execution_error(&failure));
+                }
+                Ok(plan_send_tool_error_value(tool_name, session_id, &failure))
+            }
+        }
+    }
+
+    async fn emit_send_done(
+        &self,
+        scope: &context::RuntimeScope,
+        tool_name: &str,
+        session_id: &ToolSessionId,
+        send_result: &SendResult,
+    ) {
+        if let Some(emitter) = self.effect_emitter_for_tool_effects() {
+            let _ = emitter
+                .emit(baml_rt_core::bus::EffectEvent::ToolSessionStep {
+                    context_id: scope.context_id().clone(),
+                    tool_name: tool_name.to_string(),
+                    session_id: session_id.to_string(),
+                    op: baml_rt_core::bus::SessionStepOp::SendDone {
+                        archive_ref: send_result.archive_ref.to_string(),
+                        header: send_result.header.clone(),
+                        informed_by: send_result
+                            .informed_by_tool_activity_anchor
+                            .as_str()
+                            .to_string(),
+                    },
+                    task_id: scope.task_id_opt().cloned(),
+                })
+                .await;
+        }
+    }
 }
 
 fn send_done_json(send_result: &SendResult) -> Value {
@@ -516,6 +622,8 @@ impl BamlRuntimeManager {
         let mut last_output: Option<Value> = None;
         // Set once a Send fragment reaches Done — gates the OneShot auto-finish after the loop.
         let mut send_completed = false;
+        // Set when the tool is waiting for the user: the session must outlive this hop.
+        let mut awaiting_user_input = false;
 
         for step in steps {
             match step {
@@ -633,7 +741,7 @@ impl BamlRuntimeManager {
                         send_completed = true;
                         continue;
                     }
-                    let chunk_timeout = std::time::Duration::from_secs(300);
+                    let chunk_timeout = SEND_CHUNK_TIMEOUT;
                     let mut active_session = current_session.clone();
 
                     let mut send_outcome = self
@@ -680,24 +788,22 @@ impl BamlRuntimeManager {
                             Ok(ToolSessionSendBlockingOutcome::Completed(send_result)) => {
                                 last_output = Some(send_done_json(&send_result));
                                 send_completed = true;
-                                if let Some(emitter) = self.effect_emitter_for_tool_effects() {
-                                    let _ = emitter
-                                        .emit(baml_rt_core::bus::EffectEvent::ToolSessionStep {
-                                            context_id: plan_scope.context_id().clone(),
-                                            tool_name: tool_name_str.clone(),
-                                            session_id: active_session.to_string(),
-                                            op: baml_rt_core::bus::SessionStepOp::SendDone {
-                                                archive_ref: send_result.archive_ref.to_string(),
-                                                header: send_result.header.clone(),
-                                                informed_by: send_result
-                                                    .informed_by_tool_activity_anchor
-                                                    .as_str()
-                                                    .to_string(),
-                                            },
-                                            task_id: plan_scope.task_id_opt().cloned(),
-                                        })
-                                        .await;
-                                }
+                                self.emit_send_done(
+                                    &plan_scope,
+                                    &tool_name_str,
+                                    &active_session,
+                                    &send_result,
+                                )
+                                .await;
+                                break;
+                            }
+                            Ok(ToolSessionSendBlockingOutcome::InputRequired { prompt }) => {
+                                last_output = Some(input_required_json(
+                                    &tool_name_str,
+                                    &active_session,
+                                    &prompt,
+                                ));
+                                awaiting_user_input = true;
                                 break;
                             }
                             Ok(ToolSessionSendBlockingOutcome::ToolFailed(failure)) => {
@@ -1075,6 +1181,7 @@ impl BamlRuntimeManager {
         let should_auto_finish_one_shot = (auto_opened && auto_open_one_shot_strict)
             || (!auto_opened && tool_one_shot_strict && send_completed);
         if let Some(session) = session_id.clone()
+            && !awaiting_user_input
             && (auto_opened || should_auto_finish_one_shot)
         {
             if send_completed {

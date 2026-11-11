@@ -805,6 +805,7 @@ export interface StepExecutorStateInput {
 
 export interface StepExecutorRunOptions {
     max_steps?: number;
+    onInputRequired?: (prompt: string) => Promise<ChatMessage>;
 }
 
 export interface StepPlanRecovery {
