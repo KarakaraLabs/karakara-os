@@ -1,6 +1,11 @@
 # Karakara OS Helm Chart
 
-Supported Kubernetes install surface for the Karakara OS pilot. Deploys a two-runner StatefulSet with a shared SurrealDB provenance store in a single namespace.
+> [!WARNING]
+> **Status: DORMANT / PARKED PILOT** (see Issue `#44`).
+> This chart is retained as a parked starting point and is **not** an active deployment target today. Primary deployment paths are the Linux `karak` binary ([`INSTALL.md`](../../../../INSTALL.md)) and standalone container ([`operations/containers/runner.Dockerfile`](../../../containers/runner.Dockerfile), tracked in `#29`).
+> Additionally, this chart does **not** yet support the External Tools v2 Sandbox tier (`/dev/kvm`, tracked in `#33`).
+
+Multi-runner Helm chart for Karakara OS: deploys a two-runner StatefulSet with a shared SurrealDB provenance store in a single namespace.
 
 ## Prerequisites
 
@@ -37,23 +42,14 @@ helm upgrade --install karakara operations/deployment/helm/karakara-os/ \
   -f operations/deployment/helm/karakara-os/examples/design-partner-values.yaml
 ```
 
-### Local k3d (Argo CD + local registry)
-
-In-repo local validation uses Argo CD and a nonce image tag:
-
-```bash
-just up
-# or: just verify-k8s-pilot-package
-```
-
-Values: [`operations/deployment/values/local/defaults.yaml`](../../values/local/defaults.yaml) plus generated [`operations/deployment/values/generated/images.yaml`](../../values/generated/images.yaml). See [`operations/deployment/argocd/README.md`](../../argocd/README.md) and [`RELEASING.md`](../../../../RELEASING.md).
-
-The host pushes to `localhost:5400`; the cluster pulls from `k3d-karakara-registry:5000` (`operations/deployment/k3d/cluster.yaml`).
-
 ## Verify
 
 ```bash
-# Port-forward to the runner API service
+# Cluster-free probe contract check (no cluster required)
+./scripts/test-helm-runner-probes.sh
+# or: just helm-probe-check
+
+# Port-forward to a running runner API service
 kubectl port-forward svc/karakara-karakara-os-runner-api 18080:18080 -n karakara
 
 # Health check
@@ -64,7 +60,7 @@ curl http://localhost:18080/readyz
 curl http://localhost:18080/agents
 ```
 
-For a scripted, end-to-end local validation of this same install path (cluster → three required objects → `helm upgrade --install` → smoke → cluster_runners verify), run `just verify-k8s-pilot-package` (see [`docs/runbooks/e2e-k8s.md`](../../../../docs/runbooks/e2e-k8s.md)).
+*(The former local k3d / Argo CD / load-test validation harness was pruned under Issue `#44` and remains in git history if k8s deployment is reactivated.)*
 
 ## Runner image
 
@@ -125,7 +121,7 @@ The chart provisions a single SurrealDB instance shared by every runner crate. E
 | `baml`       | `repository`   | `baml-rt-repository`   | content-addressable agent package archive           |
 | `baml`       | `runner_state` | `karak serve`       | deployment state                                    |
 
-The authoritative list lives at `scripts/e2e-k8s/lib.sh:SURREAL_KNOWN_NAMESPACES`; update it (and this table) when a crate adds a new namespace.
+The table above summarizes the SurrealDB namespaces and databases used by the runner crates (`cluster/registry`, `provenance/store`, `config/store`, `baml/repository`, `baml/runner_state`).
 
 ### Querying interactively
 
@@ -147,7 +143,7 @@ kubectl exec -n karakara "$SURREAL_POD" -c surrealdb -i -- \
   <<<"SELECT count() FROM prov_node GROUP ALL;"
 ```
 
-For repeated use, `scripts/e2e-k8s/lib.sh` exposes a `surreal_query <sql> [ns] [db]` helper with a stable output contract and a namespace pre-check that catches typos before they hit SurrealDB.
+Querying interactively:
 
 ### Troubleshooting: "Couldn't write to a read only transaction"
 

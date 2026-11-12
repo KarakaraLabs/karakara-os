@@ -44,23 +44,12 @@ git push origin "v${VERSION}"
 
 The tag must point at the commit containing all version and lockfile updates.
 
-## Local k3d validation
+## Helm chart probe check (cluster-free)
 
 ```bash
-just up
-just verify-k8s-pilot-package
+just helm-probe-check
 ```
 
-Image tags are nonces (`local-dev-…`) written to `operations/deployment/values/generated/.last-image-tag`.
+## Parked Kubernetes pilot & remote registry publish
 
-## Dev deploy refs (remote GitOps)
-
-Rolling dev on `main` + `latest`:
-
-```bash
-just publish-release
-```
-
-## Remote registry publish
-
-Deferred: GHCR push workflow and post-publish deploy ref bump on `main`.
+The local k3d / Argo CD validation harness was pruned and the Kubernetes pilot is dormant (Issue `#44`). GHCR container publishing and remote GitOps deploy ref updates remain deferred.

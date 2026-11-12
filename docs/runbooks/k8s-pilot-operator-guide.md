@@ -1,8 +1,15 @@
 # Kubernetes Pilot Operator Guide
 
-This is the supported first-run path for the Karakara OS Kubernetes pilot. It takes an operator from an empty cluster to a working, authenticated runner with a deployed smoke agent in one sitting.
+> [!WARNING]
+> **Status: DORMANT / PARKED PILOT** (see Issue `#44`).
+> This guide documents the parked Helm chart at [`operations/deployment/helm/karakara-os/`](../../operations/deployment/helm/karakara-os/). It is **not** an active deployment target today:
+> - Primary deployment paths are the Linux `karak` binary ([`INSTALL.md`](../../INSTALL.md)) and standalone container ([`operations/containers/runner.Dockerfile`](../../operations/containers/runner.Dockerfile), tracked in `#29`).
+> - The Helm chart does **not** yet support the External Tools v2 Sandbox tier (`/dev/kvm`, tracked in `#33`).
+> - The former k3d / Argo CD / load-test script harness (`just up`, `just verify-k8s-pilot-package`, `scripts/e2e-k8s/`, `scripts/k8s-pilot-*`) was pruned under `#44` (preserved in git history). Cluster-free probe validation remains available via `./scripts/test-helm-runner-probes.sh` (`just helm-probe-check`).
 
-For the HTTP API and CLI reference, see [`docs/reference/agent-runner.md`](../reference/agent-runner.md) and [`docs/reference/sdk-cli.md`](../reference/sdk-cli.md).
+Exploratory first-run path for deploying the parked Karakara OS Helm chart to a Kubernetes cluster.
+
+For the HTTP API and CLI reference, see [`docs/reference/agent-runner.md`](../reference/agent-runner.md) and [`docs/reference/karakara-cli.md`](../reference/karakara-cli.md).
 
 ## Supported topology
 
@@ -14,7 +21,7 @@ The pilot packages one topology:
 - Operator access over `kubectl port-forward`. Ingress and TLS termination are out of scope for the pilot.
 - LLM credentials come from a file-mounted `fnox.toml` (`BAML_FNOX_CONFIG=/config/fnox.toml`). Runners do not read LLM API keys from environment variables.
 
-The supported install surface is the Helm chart at [`operations/deployment/helm/karakara-os/`](../../operations/deployment/helm/karakara-os/). Local k3d uses Argo CD (`just up`). Raw manifests under `operations/deployment/k8s/` are legacy only.
+The parked install surface is the Helm chart at [`operations/deployment/helm/karakara-os/`](../../operations/deployment/helm/karakara-os/).
 
 ## Prerequisites
 
@@ -25,8 +32,6 @@ The supported install surface is the Helm chart at [`operations/deployment/helm/
 - Repo checkout. All commands below are run from the repository root.
 
 The Karakara runner image is not published to a public registry. Operators build and push their own image.
-
-For local k3d development use `just up`. See [`RELEASING.md`](../../RELEASING.md) and [`operations/deployment/argocd/README.md`](../../operations/deployment/argocd/README.md).
 
 ## Step 1 — Build and push the runner image
 
@@ -39,24 +44,7 @@ docker build -f operations/containers/runner.Dockerfile \
 docker push your-registry.example.com/karakara-runner:0.1.0
 ```
 
-For local k3d development:
-
-```bash
-just up
-```
-
-This creates the k3d cluster, pushes the runner image to `k3d-karakara-registry:5000`, and installs via Argo CD. After code changes: `just sync`.
-
-### Re-pushing the same tag
-
-The local flow uses `pullPolicy: Always` and registry-backed pulls. After a rebuild under the same nonce tag, run `just sync` so Argo rolls out the new digest.
-
-`scripts/verify-k8s-pilot-package.sh` compares each runner pod's `containerStatuses[].imageID` against the digest just pushed (exit 4 on mismatch). To verify manually after a rebuild + restart:
-
-```bash
-kubectl -n karakara get pod -l app.kubernetes.io/component=runner \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[?(@.name=="runner")].imageID}{"\n"}{end}'
-```
+> **Note:** [`operations/containers/runner.Dockerfile`](../../operations/containers/runner.Dockerfile) currently has a known `models/fastembed` / `karak` entrypoint issue tracked in `#29`.
 
 Compare the trailing `sha256:…` digests against the one printed by
 `docker push` (or the registry's manifest).
@@ -92,7 +80,7 @@ if_missing = "ignore"
 # default = "sk-or-v1-..."  # uncomment and set for agents that call an LLM
 ```
 
-See [`fnox.toml`](../fnox.toml) in the repo root for the full template.
+See [`fnox.toml`](../../fnox.toml) in the repo root for the full template.
 
 Store the runner token once and reuse it for the rest of this guide:
 
@@ -202,19 +190,7 @@ Expected:
 }
 ```
 
-## Step 9 — One-shot packaged smoke
-
-Steps 6–8 are packaged in [`scripts/k8s-pilot-smoke.sh`](../scripts/k8s-pilot-smoke.sh). With the chart installed and a running port-forward:
-
-```bash
-RUNNER_TOKEN="$RUNNER_TOKEN" bash scripts/k8s-pilot-smoke.sh
-# or
-just k8s-pilot-smoke
-```
-
-The script discovers the token from the `runner-token` secret if `RUNNER_TOKEN` is not exported. Pass `--port-forward` to have it open and close its own port-forward. Pass `--help` to see all flags.
-
-## Step 10 — Cross-runner A2A verification (optional)
+## Step 9 — Cross-runner A2A verification (optional)
 
 Cluster fallback is implemented on the A2A path, not the dispatch path — `POST /.../dispatch` only resolves against the receiving pod's local registry and returns `AgentNotFound` otherwise. To confirm cross-pod forwarding works, send an A2A chat request to each pod directly and check the HTTP status:
 
@@ -239,44 +215,7 @@ done
 
 Expected: both lines print `http=200`. `dispatch-echo` does not implement A2A, so its response body is the literal string `"dispatch-echo does not handle A2A messages"`; the step does not assert anything about the body because the HTTP status alone is sufficient to prove the runner layer routed the request end-to-end.
 
-## Step 11 — Distributed multi-agent conversation (optional, LLM-backed)
-
-This is the supported pilot validation path for the `argument-cleese` / `argument-chapman` cross-pod conversation. It uses the Helm-installed runner pods directly and enforces the Kubernetes `fnox` contract: no host `.env` secrets, no ad hoc local env exports.
-
-Before running it, make sure the mounted `fnox-config` ConfigMap contains a real `OPENROUTER_API_KEY` default:
-
-```toml
-[secrets.OPENROUTER_API_KEY]
-default = "sk-or-v1-..."
-```
-
-If you changed the ConfigMap after the runners started, restart them first:
-
-```bash
-kubectl -n karakara rollout restart statefulset/karakara-karakara-os-runner
-kubectl -n karakara rollout status statefulset/karakara-karakara-os-runner --timeout=180s
-```
-
-Then run:
-
-```bash
-bash scripts/k8s-pilot-cleese-chapman.sh
-```
-
-The script:
-
-- opens per-pod port-forwards to runner-0 and runner-1
-- publishes `argument-cleese` and `argument-chapman` to both repositories
-- deploys Cleese on runner-0 and Chapman on runner-1
-- sends an A2A request to Cleese through the supported runner API
-- prints the resulting `contextId`, `taskId`, Chapman's contradiction reply, placement rows, and provenance-backed transcript lookups
-
-Two important caveats:
-
-- This path is intentionally LLM-driven. It is slower and less deterministic than the dispatch smoke.
-- Provider cold starts and network latency can make the conversation take tens of seconds. Re-run once before treating a single timeout as a cluster regression.
-
-## Step 12 — Observability sanity check (optional)
+## Step 10 — Observability sanity check (optional)
 
 If `observability.enabled` is `true` and `observability.otlpEndpoint` points at a reachable collector, OTLP traces and metrics are emitted with the pilot identity contract (`service.name=karakara-runner`, `service.instance.id=<pod-name>`, `k8s.namespace.name=<namespace>`). `deployment.environment` is the first non-empty of `observability.environment`, `global.environment`, or the literal `pilot`. See [`operations/observability/README.md`](../../operations/observability/README.md) for the collector setup and dashboard walkthrough, and [`docs/reference/metrics-inventory.md`](../reference/metrics-inventory.md) for the canonical metric names.
 
@@ -286,15 +225,14 @@ If `observability.enabled` is `true` and `observability.otlpEndpoint` points at 
 |---|---|---|
 | Pods stuck in `Pending` with `pod has unbound immediate PersistentVolumeClaims` event | `kubectl -n karakara describe pod <name>` | Default `StorageClass` missing, or PVC cannot be satisfied. Set `runner.persistence.storageClass` / `surrealdb.persistence.storageClass`. |
 | Pods stuck in `Pending` with `0/N nodes are available: N Insufficient memory` event | `kubectl -n karakara describe pod <name>` | Cluster host doesn't have enough schedulable memory. Two runner replicas (2Gi request each) plus SurrealDB (256Mi request) account for 4.25Gi of requests; kube-system pods consume more on top. On local k3d, raise Docker Desktop / colima allocation to ≥6 GiB. Distinct from `OOMKilled` below — this happens before scheduling. |
-| Pods in `ImagePullBackOff` | `kubectl -n karakara describe pod <name>` | Wrong `runner.image.repository`/`tag` or registry unreachable. Local k3d: confirm push via `just sync` and `docker logs k3d-karakara-registry`. |
-| Same-tag rebuild + `rollout restart` reports complete but pods still run the old code | `kubectl -n karakara get pod -l app.kubernetes.io/component=runner -o jsonpath='{.items[*].status.containerStatuses[?(@.name=="runner")].imageID}'` | `runner.image.pullPolicy` is `IfNotPresent` in the values you installed with. Either set it to `Always` (chart default) or use a unique tag per build. See [Re-pushing the same tag](#re-pushing-the-same-tag). |
-| `POST /deploy` returns `connection closed before message completed`, or pods show `Reason: OOMKilled` / exit code 137 | `kubectl -n karakara describe pod <name>` | Runner exceeded its memory limit during deploy (tar extract + BAML IL load + QuickJS init + tool registration on top of resident fastembed ONNX, SurrealDB client, and provenance backend). The chart default is 5Gi, which fits the documented multi-agent fixtures; raise `runner.resources.limits.memory` if a heavier workload still OOMs. |
+| Pods in `ImagePullBackOff` | `kubectl -n karakara describe pod <name>` | Wrong `runner.image.repository`/`tag` or registry unreachable. |
+| Same-tag rebuild + `rollout restart` reports complete but pods still run the old code | `kubectl -n karakara get pod -l app.kubernetes.io/component=runner -o jsonpath='{.items[*].status.containerStatuses[?(@.name=="runner")].imageID}'` | `runner.image.pullPolicy` is `IfNotPresent` in the values you installed with. Either set it to `Always` (chart default) or use a unique tag per build. |
+| `POST /deploy` returns `connection closed before message completed`, or pods show `Reason: OOMKilled` / exit code 137 | `kubectl -n karakara describe pod <name>` | Runner exceeded its memory limit during deploy (tar extract + BAML IL load + QuickJS init + tool registration on top of resident SurrealDB client and provenance backend). The chart default is 5Gi, which fits the documented multi-agent fixtures; raise `runner.resources.limits.memory` if a heavier workload still OOMs. |
 | `readyz` returns 503 for more than a minute | `kubectl -n karakara logs statefulset/karakara-karakara-os-runner` | SurrealDB not up, or runner cannot reach it. Verify `surrealdb-credentials` keys match `values.yaml` (`username`/`password`). |
 | `401 authentication required` from publish/deploy | `kubectl -n karakara get secret runner-token -o yaml` | `RUNNER_TOKEN` missing or wrong. Re-export from the secret (see Step 2). |
 | `400 routing_key must be non-empty` on dispatch | request body | Ensure `routing_key` and `message_type` are present and non-empty strings. |
-| `/agents` is empty after publish+deploy | runner logs, `karakara list-deployed-instances --url http://localhost:18080` | Deploy silently failed or ran on the other pod. Check both pods (Step 10). |
+| `/agents` is empty after publish+deploy | runner logs, `karakara list-deployed-instances --url http://localhost:18080` | Deploy silently failed or ran on the other pod. Check both pods (Step 9). |
 | LLM-backed agents fail with `secret not resolved` | runner logs | `fnox.toml` in the ConfigMap does not have a `default = "..."` for the required key. Update the ConfigMap, then `kubectl -n karakara rollout restart statefulset/karakara-karakara-os-runner`. |
-| `scripts/k8s-pilot-cleese-chapman.sh` times out after deploy | script output, runner logs | The LLM-backed path can stall on provider latency or cold starts. Re-run once. If it repeats, inspect `fnox-config`, runner connectivity, and the provider account. |
 
 Pod logs:
 
@@ -313,13 +251,10 @@ Supported in the pilot:
 - `fnox-config` ConfigMap mounted at `/config/fnox.toml` for LLM credentials.
 - Helm values profiles: [`examples/k3d-values.yaml`](../../operations/deployment/helm/karakara-os/examples/k3d-values.yaml) (local) and [`examples/design-partner-values.yaml`](../../operations/deployment/helm/karakara-os/examples/design-partner-values.yaml) (production-like).
 - OpenTelemetry export to an operator-supplied OTLP gRPC endpoint.
-- Optional distributed conversation validation via [`scripts/k8s-pilot-cleese-chapman.sh`](../scripts/k8s-pilot-cleese-chapman.sh), using the mounted `fnox-config` ConfigMap rather than host env secrets.
 
-Deferred to follow-on pilot issues:
+Deferred / blocked before production k8s promotion:
 
-- Authoritative package validation on top of this smoke flow — [#225](https://github.com/semiotic-agentium/agent-platform/issues/225).
-- Load-test baseline and performance SLOs — [#226](https://github.com/semiotic-agentium/agent-platform/issues/226).
-- Published runner image. Until then, operators build and push their own cluster-reachable image. Local k3d validation: `just verify-k8s-pilot-package` or `just up`.
+- Sandbox tier (`/dev/kvm`) support in the Helm chart — Issue `#33` (paused while the k8s pilot is dormant under `#44`).
+- Published runner image. Until then, operators build and push their own cluster-reachable image.
 - Ingress / TLS termination. Operators front the API service with their own ingress controller if needed.
 - Multi-node SurrealDB HA. The pilot ships a single SurrealDB replica.
-- Deterministic conversational smoke coverage on the pilot path. The dispatch smoke remains the stable first-run check; the Cleese/Chapman validation above is supported, but still intentionally depends on a live LLM call.

@@ -22,8 +22,7 @@ event != pull_request  OR  pull_request.head.repo == github.repository
 
 Workflows:
 
-- [`.github/workflows/rust-ci.yml`](../../.github/workflows/rust-ci.yml) — trusted vs `nextest-untrusted` / `doctor-untrusted`
-- [`.github/workflows/k8s-pilot-validation.yml`](../../.github/workflows/k8s-pilot-validation.yml) — k8s validate skipped on fork PRs; full run on `main` after merge
+- [`.github/workflows/rust-ci.yml`](../../.github/workflows/rust-ci.yml) — trusted vs `nextest-untrusted` / `doctor-untrusted` (legacy reference lane; active `$0` CI is `rust-ci-standard.yml`)
 
 Always safe on fork PRs (already on `ubuntu-latest`, no secrets):
 
@@ -69,13 +68,6 @@ Suggested required status checks:
 - `Rust CI / Nextest (workspace)` (either trusted or untrusted job satisfies the name)
 - `reuse / reuse`
 - `secret-scan / gitleaks`
-
-Optional (heavy; runs on trusted CI and on every push to `main`):
-
-- `K8s Pilot Validation / Helm install + registry-backed package validation`
-
-Fork PRs **do not** run k8s pilot validation. Rely on merge-to-`main` push
-validation or ask a maintainer to run `workflow_dispatch` on a trusted branch.
 
 ### 4. Self-hosted runners
 

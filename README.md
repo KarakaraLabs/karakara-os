@@ -106,15 +106,11 @@ Stop background demos: `just notion-demo-stop`, `just coordinator-demo-stop`, et
 
 MCP walkthrough (weather agent, no `just` wrapper): [`scripts/meteo_mcp.sh`](scripts/meteo_mcp.sh) — `runner` in one terminal, `chat` in another.
 
-### Kubernetes pilot
+### Deployment (Linux binary & container)
 
-End-to-end package validation on a local k3d cluster (Helm + registry + smoke):
+Prebuilt Linux release binaries (`karak`) are documented in [`INSTALL.md`](INSTALL.md). Container definitions live under [`operations/containers/`](operations/containers/).
 
-```bash
-just verify-k8s-pilot-package
-```
-
-Operator install path: [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md).
+An experimental/parked Kubernetes Helm chart is kept at [`operations/deployment/helm/karakara-os/`](operations/deployment/helm/karakara-os/) (dormant pilot; see [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md)).
 
 ### Develop and test
 
@@ -141,7 +137,8 @@ just otel-down
 | Audience | Start here |
 |----------|------------|
 | Agent authors | [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) |
-| Operators / K8s | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
+| Installing / running | [`INSTALL.md`](INSTALL.md) |
+| Operators / K8s (dormant pilot) | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
 | Runtime thesis | [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md) |
 | Full index | [`docs/README.md`](docs/README.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
