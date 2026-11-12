@@ -625,11 +625,11 @@ async fn shape_test_build_agent(prompt_body: &str) -> IRSignature {
              enum ReplyMediaType {{\n  IMAGE\n}}\n\
              class TextPart {{\n  type \"text\"\n  text string\n}}\n\
              class DataPart {{\n  type \"data\"\n  raw string\n  media_type ReplyMediaType\n}}\n\
-             class StructuredReply {{\n  parts (TextPart | DataPart)[]\n  citations string[]?\n}}\n\
+             class StructuredReply {{\n  parts (TextPart | DataPart)[]\n}}\n\
              class Expression {{\n  left int\n  operation MathOperation\n  right int\n}}\n\
              enum MathOperation {{\n  Add @alias(\"+\")\n  Subtract @alias(\"-\")\n  Multiply @alias(\"*\")\n  Divide @alias(\"/\")\n}}\n\
              class CalculatorInput {{\n  expression Expression\n}}\n\
-             class SupportCalculateSendStep {{\n  op \"Send\"\n  input CalculatorInput\n  citations string[]\n}}\n\
+             class SupportCalculateSendStep {{\n  op \"Send\"\n  input CalculatorInput\n}}\n\
              class SupportCalculateFinishStep {{\n  op \"Finish\"\n}}\n\
              {prompt_body}\n\
              client DefaultClient {{\n  provider openai-generic\n  options {{\n    model \"gpt-4o-mini\"\n    base_url \"https://api.openai.com/v1\"\n    api_key env.OPENAI_API_KEY\n  }}\n}}\n"

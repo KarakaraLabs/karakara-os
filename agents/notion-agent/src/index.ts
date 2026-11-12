@@ -43,7 +43,7 @@ type Candidate = {
 
 function textReply(text: string): StructuredReply {
   const parts: ReplyPart[] = [{ type: "text", text }];
-  return { parts, citations: [] };
+  return { parts };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

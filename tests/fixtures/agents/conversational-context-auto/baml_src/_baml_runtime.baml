@@ -93,7 +93,6 @@ type ReplyPart = TextPart | DataPart
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
   parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
-  citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 /// Line-filtered archive read (emit op SearchRead).
@@ -127,7 +126,7 @@ class ArchivePageReadStep {
 /// Do not emit when you need to invoke a tool — emit a Send instead (eligible one-shot tools Send directly on entry; tools needing configuration Open first).
 class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
-  reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
+  reply StructuredReply @description("User-visible answer grounded in the archived tool results read in this session.")
 }
 // Domain types generated from the canonical tool schema graph
 enum MathOperation {
@@ -180,7 +179,6 @@ class SupportCalculateSendStep {
   op "Send"
   tool_name "support/calculate" @description("Tool this Send targets")
   input CalculatorInput @description("Payload for this step.")
-  citations string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
 }
 
 class SupportCalculateSearchReadStep {
@@ -205,7 +203,6 @@ type SupportCalculateSessionStep = SupportCalculateOpenStep | SupportCalculateSe
 
 class SupportCalculateSessionPlan {
   step SupportCalculateSessionStep @description("Emit one step. Legal `op` and field shapes: this return type and the `*OpenStep` / `*SendStep` / `SearchRead` / `PageRead` / `Finish` / `Abort` classes in this file — do not paraphrase JSON field lists in the prompt. @N beside a prior Send is an archive handle for PageRead/SearchRead (archive_ref is @ only). Do not use #N as an archive handle — #N indexes transcript lines only. Access: read.")
-  citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 
@@ -222,8 +219,8 @@ function ChooseCalcTool__entry(
 ) -> ArchivePageReadStep | ArchiveSearchReadStep | ReadOnlyFinishStep | SupportCalculateSendStep {
 
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -270,8 +267,8 @@ function ChooseCalcTool__active__support_calculate(
 ) -> SupportCalculateSendStep | SupportCalculateSearchReadStep | SupportCalculatePageReadStep | SupportCalculateFinishStep | SupportCalculateAbortStep {
 
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -319,8 +316,8 @@ function ChooseCalcTool__consume__support_calculate(
 ) -> ReadOnlyFinishStep | SupportCalculatePageReadStep | SupportCalculateSearchReadStep {
 
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:

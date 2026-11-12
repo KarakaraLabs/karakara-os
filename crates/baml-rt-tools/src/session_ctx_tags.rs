@@ -17,9 +17,14 @@
 //! cannot accidentally drop the catalog prefix.
 
 /// Place at the **start** of generated step-executor `prompt` bodies. This is the stable
-/// pre-history archive/citation grammar; operation field shapes live in the IR-derived
+/// pre-history archive-addressing grammar; operation field shapes live in the IR-derived
 /// `tool_schema_prelude` vocabulary, not in this prose.
-pub const SESSION_STEP_STABLE_PREFIX_BAML: &str = "Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.\n\
+pub const SESSION_STEP_STABLE_PREFIX_BAML: &str = "Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.\n\
+History refs: `#N` numbers lines in Session history.\n\n";
+
+/// Previous [`SESSION_STEP_STABLE_PREFIX_BAML`] text (asked models to cite evidence refs).
+/// Kept so builders can strip it from sources that still carry it.
+pub const LEGACY_SESSION_STEP_STABLE_PREFIX_BAML: &str = "Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.\n\
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.\n\n";
 
 /// Alias for callers that referred to the injected-string constant by value name.

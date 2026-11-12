@@ -3,8 +3,8 @@
 
 function ArgumentReply(other_message: string) -> string {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:

@@ -1,6 +1,6 @@
 **Agent Patterns**
 
-**Onboarding:** [How to write agents](how-to-write-agents.md) — entrypoints, `ToolSessionPlan`, planning-oriented loops, and **history / citations**.
+**Onboarding:** [How to write agents](how-to-write-agents.md) — entrypoints, `ToolSessionPlan`, planning-oriented loops, and **history / refs**.
 
 This doc captures the highest‑leverage patterns for building agents in this
 codebase. It is written for coding agents and maintainers, and aims to make
@@ -17,7 +17,7 @@ layer to own UX. It avoids stringly‑typed contracts and makes tests reliable.
 
 The **single** user‑facing artifact the platform surfaces and records is the agent
 chat handler’s return value: `SessionResult.message` (typically `StructuredReply`
-with `parts` + `citations`). Do **not** duplicate that reply onto step records or
+with `parts`). Do **not** duplicate that reply onto step records or
 scrape `run.last` as a substitute—synthesize once at session completion (or emit
 streaming chunks via `ctx.emit` when the product requires mid‑turn text).
 

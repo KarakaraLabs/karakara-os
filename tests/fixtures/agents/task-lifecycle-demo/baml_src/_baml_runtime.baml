@@ -93,7 +93,6 @@ type ReplyPart = TextPart | DataPart
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
   parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
-  citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 /// Line-filtered archive read (emit op SearchRead).
@@ -127,5 +126,5 @@ class ArchivePageReadStep {
 /// Do not emit when you need to invoke a tool — emit a Send instead (eligible one-shot tools Send directly on entry; tools needing configuration Open first).
 class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
-  reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
+  reply StructuredReply @description("User-visible answer grounded in the archived tool results read in this session.")
 }

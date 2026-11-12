@@ -19,8 +19,8 @@ expression: artifacts
 // Agent prompt
 function Exploreragent(input: string) -> string {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -192,7 +192,7 @@ export interface A2aSessionClosed {
 export interface IntentSubmission {
     intentId: string;
     description: string;
-    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional: the provenance system captures LLM-produced citations automatically from BAML return types. */
+    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional. */
     citations?: string[];
     supersession?: "replaced" | "refined";
 }
@@ -230,7 +230,7 @@ export interface A2aExecutionSessionAwaitPlan {
 }
 export interface A2aExecutionSessionExecutable {
     sessionId: string;
-    /** citations are optional — LLM-produced citations are captured automatically by the provenance system from BAML return types. Only pass explicitly if the agent has out-of-band provenance to record. */
+    /** citations are optional plan-step refs recorded on the step transition. */
     startStep(stepId: string, citations?: string[]): Promise<void>;
     completeStep(stepId: string, citations?: string[]): Promise<void>;
     finish(): Promise<A2aSessionClosed>;
@@ -257,11 +257,10 @@ export interface DataPart { type: "data"; data: string; media_type: ReplyMediaTy
 export type ReplyPart = TextPart | DataPart;
 /**
  * Structured reply from a synthesis function.
- * Contains ordered reply parts and citations referencing the history entries (#N, @N) this reply was derived from.
+ * Contains ordered reply parts.
  */
 export interface StructuredReply {
   parts: ReplyPart[];
-  citations: string[];
 }
 /**
  * Result shape for session.run() callback. Return { message } on success (runtime emits message and completed);
@@ -567,7 +566,6 @@ type ReplyPart = TextPart | DataPart
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {
   parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
-  citations string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 /// Line-filtered archive read (emit op SearchRead).
@@ -601,7 +599,7 @@ class ArchivePageReadStep {
 /// Do not emit when you need to invoke a tool — emit a Send instead (eligible one-shot tools Send directly on entry; tools needing configuration Open first).
 class ReadOnlyFinishStep {
   op "ReadOnlyFinish"
-  reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
+  reply StructuredReply @description("User-visible answer grounded in the archived tool results read in this session.")
 }
 
 

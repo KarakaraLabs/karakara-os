@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Single source for repeated BAML `@description` text (citations, SearchRead/PageRead archive policy).
+//! Single source for repeated BAML `@description` text (plan refs, SearchRead/PageRead archive policy).
 //! [`render_generated_tools_prelude`] emits the shared prelude; [`tool_interfaces`] uses the same
-//! citation/send/read strings for per-tool session classes.
+//! send/read strings for per-tool session classes.
 //!
 //! ## Prompt style (generated `@description` and FSM comments)
 //!
@@ -29,14 +29,8 @@ use super::escape::escape_baml_description;
 
 // --- Citations (#N / @N / line suffixes) ---
 
-/// `StructuredReply.citations` and aligned session-plan decision citations (same ref rules).
-pub(crate) const CITATIONS_DECISION_OR_SYNTHESIS: &str = "Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.";
-
 /// `StandardStructuredPlan.citations` (optional on plans).
 pub(crate) const CITATIONS_PLAN_OPTIONAL: &str = "Optional refs (#N, @N) for observability; use @N:L when a step depends on specific tool lines; omit or [].";
-
-/// `*SendStep.citations`
-pub(crate) const CITATIONS_SEND_STEP: &str = "Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.";
 
 // --- Archive access (SearchRead = filter, PageRead = contiguous paging) ---
 
@@ -83,7 +77,6 @@ pub(crate) const PAGE_READ_STEP_INPUT_DESCRIPTION: &str = "PageRead step: archiv
 pub fn render_generated_tools_prelude() -> String {
     let esc = escape_baml_description;
     let c_plan = esc(CITATIONS_PLAN_OPTIONAL);
-    let c_reply = esc(CITATIONS_DECISION_OR_SYNTHESIS);
     let c_ar = esc(ARCHIVE_READ_ARCHIVE_REF);
     let c_lim = esc(ARCHIVE_READ_LIMIT);
     let c_sg = esc(ARCHIVE_SEARCH_READ_GREP);
@@ -185,7 +178,6 @@ type ReplyPart = TextPart | DataPart
 // Canonical synthesis + wire shape: same type in BAML and TypeScript (SessionResult.message, emitters).
 class StructuredReply {{
   parts ReplyPart[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
-  citations string[] @description("{c_reply}")
 }}
 
 /// Line-filtered archive read (emit op SearchRead).
@@ -219,11 +211,10 @@ class ArchivePageReadStep {{
 /// Do not emit when you need to invoke a tool — emit a Send instead (eligible one-shot tools Send directly on entry; tools needing configuration Open first).
 class ReadOnlyFinishStep {{
   op "ReadOnlyFinish"
-  reply StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
+  reply StructuredReply @description("User-visible answer grounded in the archived tool results read in this session.")
 }}
 "#,
         c_plan = c_plan,
-        c_reply = c_reply,
         c_ar = c_ar,
         c_lim = c_lim,
         c_sg = c_sg,

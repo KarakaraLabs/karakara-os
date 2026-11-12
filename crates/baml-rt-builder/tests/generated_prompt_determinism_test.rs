@@ -34,25 +34,25 @@ fn generated_prompt_artifacts_match_committed_hashes() {
         Fixture {
             name: "task-lifecycle-demo",
             source: root.join("tests/fixtures/agents/task-lifecycle-demo"),
-            prelude_hash: "9521155a5e82505012422527a1921f69685a6cdd8fce47932d08a66a1d163dde",
+            prelude_hash: "89d94af0d24db58f1e25f7790a88d138999c36b2b0ab6acbefb2d0117cf6882b",
             has_catalog: false,
         },
         Fixture {
             name: "coordinator-agent",
             source: root.join("agents/coordinator-agent"),
-            prelude_hash: "ff1eb4b4cd13b11afb787a052293d285a6de63acf3dc7c9d66395dd938151b51",
+            prelude_hash: "46d5e0fbc68007ecf56c392e1bfbacba5b02dff899c078fa3938f50bf58db743",
             has_catalog: true,
         },
         Fixture {
             name: "typesafe-system-one-authority",
             source: root.join("tests/fixtures/agents/typesafe-system-one-authority"),
-            prelude_hash: "3a22ab8a5dcd8ca3ed276ac5f3348468568f7563d196ef9609098a88b392b713",
+            prelude_hash: "44bfc4862e2a1bb55caf7be83f95ee92d5f922dfb97faec91ac2b329241e31e5",
             has_catalog: true,
         },
         Fixture {
             name: "unified-step-harness-demo",
             source: root.join("tests/fixtures/agents/unified-step-harness-demo"),
-            prelude_hash: "afc596a8810773901a8fdc9396cfc44e1b44ad2ea5242156bb273c3d34ecd96a",
+            prelude_hash: "28e60add6c60ff006f31980b03022429952123e730dcb5fcd4a543e88b31e0da",
             has_catalog: true,
         },
     ];

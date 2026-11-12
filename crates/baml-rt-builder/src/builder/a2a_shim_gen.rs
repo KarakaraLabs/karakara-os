@@ -82,15 +82,7 @@ pub fn render_a2a_shim() -> Result<String> {
         parts.push(wirePart);
       }
     }
-    var msg = { parts: parts };
-    var meta = {};
-    if (Array.isArray(sr.citations) && sr.citations.length > 0) {
-      meta.citations = sr.citations;
-    }
-    if (Object.keys(meta).length > 0) {
-      msg.metadata = meta;
-    }
-    return msg;
+    return { parts: parts };
   }
 
   function normalizeEmitPayload(content) {

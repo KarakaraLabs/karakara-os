@@ -164,7 +164,7 @@ export function isClickUpPriorityIntent(
 
 export function textReply(text: string): StructuredReply {
   const parts: ReplyPart[] = [{ type: "text", text }];
-  return { parts, citations: [] };
+  return { parts };
 }
 
 /** Flatten SessionResult into a short dispatch ack detail string. */
@@ -202,8 +202,6 @@ export function parseClickUpStructuredPlanFromPlanning(
   )
     return null;
   if (!Array.isArray(v.plan_steps)) return null;
-  const c = v.citations;
-  if (c != null && !Array.isArray(c)) return null;
   return v as unknown as ClickUpStructuredPlan;
 }
 

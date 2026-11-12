@@ -73,7 +73,7 @@ type MathOperation = "Variant0" | "Variant1" | "Variant2" | "Variant3"
 
 type ReadOnlyFinishStep = {
   op: "ReadOnlyFinish"
-  reply: StructuredReply @description("User-visible answer; citations must include every @N archive line evidence relied on — omitting citations when grounding on archives is invalid.")
+  reply: StructuredReply @description("User-visible answer grounded in the archived tool results read in this session.")
 }
 
 type ReplyMediaType = "TextPlain" | "TextMarkdown" | "ApplicationJson" | "TextCsv"
@@ -82,7 +82,6 @@ type ReplyPart = (TextPart | DataPart)
 
 type StructuredReply = {
   parts: (TextPart | DataPart)[] @description("Ordered user-visible or machine-readable parts. A reply may contain TextPart (type \"text\"), DataPart (type \"data\", media_type ApplicationJson) with a JSON string, or both. Set media_type TextMarkdown on TextPart for rich answers.")
-  citations: string[] @description("Cite sources this output used. History: #N (session lines: user, assistant, tool calls). Archive: @N (Send/tool output only). Line-level: @N:L or @N:L1-L2 — use when a claim depends on specific lines, not a bare @N. Counter-evidence: prefix ! (e.g. !#N, !@N). Do not use # for archives or @ for history; namespaces differ.")
 }
 
 type SupportCalculatePageReadStep = {
@@ -99,7 +98,6 @@ type SupportCalculateSendStep = {
   op: "Send"
   tool_name: "support/calculate" @description("Tool this Send targets")
   input: CalculatorInput @description("Payload for this step.")
-  citations: string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
 }
 
 type SystemDiscoverToolsAbortStep = {
@@ -130,7 +128,6 @@ type SystemDiscoverToolsSendStep = {
   op: "Send"
   tool_name: "system/discover_tools" @description("Tool this Send targets")
   input: DiscoverToolsSendInput @description("Payload for this step.")
-  citations: string[] @description("Cite what informed this Send. Two namespaces (do not mix syntax): (1) History = transcript line numbers in this session; cite as #N only. Do not use @ on history refs; do not add :line to # (#N:L is invalid for history). (2) Archive = tool-result register; cite the handle from a prior Send as @N. Bare @N names the archive only, not text inside it; cite archive line content only as @N:L or @N:L1-L2 after PageRead or SearchRead returned those lines. Prefix ! on an entry for counter-evidence.")
 }
 
 type TextPart = {

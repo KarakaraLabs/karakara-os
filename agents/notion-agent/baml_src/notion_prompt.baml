@@ -22,8 +22,8 @@ class NotionRetrieval {
 /// Decide what evidence to retrieve. This is the only model call before direct Notion API work.
 function PlanNotionRetrieval(user_message: string) -> NeedClarification | NotRelevant | NotionRetrieval {
   client OpenRouterGPT
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -118,8 +118,8 @@ function AnswerFromNotion(
   search_truncated: bool,
 ) -> StructuredReply {
   client OpenRouterGPT
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -173,7 +173,6 @@ Rules:
 {% if search_truncated %}
 - The workspace search hit its safety limit. More matches may exist, so do not present the count as complete.
 {% endif %}
-- Set citations to an empty list.
 
 Return exactly one StructuredReply JSON object. For parts, use discriminator type "text" or "data".
 

@@ -17,7 +17,7 @@
 
 use std::sync::LazyLock;
 
-use baml_rt_tools::SESSION_STEP_STABLE_PREFIX_BAML;
+use baml_rt_tools::{LEGACY_SESSION_STEP_STABLE_PREFIX_BAML, SESSION_STEP_STABLE_PREFIX_BAML};
 use regex::Regex;
 
 const AUTHORED_SELECTION_HINT: &str = "Return exactly one output matching the schema below. Do not add extra text before or after it.";
@@ -173,7 +173,10 @@ fn strip_legacy_phase_cue_lines(template: &str) -> String {
 /// stripped; authored archive prose stays intact.
 fn strip_canonical_archive_prefix_paragraph(template: &str) -> String {
     let trimmed_start = template.trim_start_matches(['\r', '\n', ' ', '\t']);
-    if let Some(rest) = trimmed_start.strip_prefix(SESSION_STEP_STABLE_PREFIX_BAML) {
+    if let Some(rest) = trimmed_start
+        .strip_prefix(SESSION_STEP_STABLE_PREFIX_BAML)
+        .or_else(|| trimmed_start.strip_prefix(LEGACY_SESSION_STEP_STABLE_PREFIX_BAML))
+    {
         rest.to_string()
     } else {
         template.to_string()

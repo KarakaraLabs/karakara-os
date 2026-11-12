@@ -249,13 +249,6 @@ fn generate_tool_baml_interface(
         output,
         &format!("  input {input_type} @description(\"{send_input_desc}\")"),
     )?;
-    write_line(
-        output,
-        &format!(
-            "  citations string[] @description(\"{}\")",
-            escape_baml_description(prompt_copy::CITATIONS_SEND_STEP)
-        ),
-    )?;
     write_line(output, "}")?;
     write_line(output, "")?;
 
@@ -305,13 +298,6 @@ fn generate_tool_baml_interface(
     write_line(
         output,
         &format!("  step {step_union_name} @description(\"{step_desc}{access_note}\")",),
-    )?;
-    write_line(
-        output,
-        &format!(
-            "  citations string[] @description(\"{}\")",
-            escape_baml_description(prompt_copy::CITATIONS_DECISION_OR_SYNTHESIS)
-        ),
     )?;
     write_line(output, "}")?;
 

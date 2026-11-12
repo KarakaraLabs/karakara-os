@@ -48,8 +48,8 @@ class ClickUpPriorityIntent {
 
 function InferClickUpIntent() -> NeedClarification | NotRelevant | ClickUpIntent | ClickUpPriorityIntent {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -185,14 +185,13 @@ class ClickUpStructuredPlan {
   intent_description string @description("One sentence: user-visible outcome (not low-level API mechanics).")
   objective string @description("One sentence: what this turn achieves (may echo intent).")
   plan_steps ClickUpPlanStep[] @description("Ordered steps: at least one clickup-execute, then exactly one clickup-format as the LAST step. Extra clickup-execute rows only when separate tool passes are needed.")
-  citations string[]? @description("Optional #N / @N line refs for observability when grounded in history; otherwise omit or [].")
 }
 
 /// Phase 2 — Plan ClickUp work. Contract is in `ClickUpStructuredPlan` / `ClickUpPlanStep` and `{{ ctx.output_format }}`.
 function PlanClickUpWork(intent: string, operation_kind: string) -> ClickUpStructuredPlan {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -235,8 +234,8 @@ You are the planner for a ClickUp workspace assistant.
       "write_confirmation" for a successful create/update/delete. Use "none" for clickup-format.
     - Respect operation_kind: read vs write vs delete in sub_messages (delete flow needs confirmation semantics in executor).
     - If the intent already names a task_id or list_id, fold that into the first execute sub_message.
-    - citations (optional): when the session transcript below is present, set citations to #N line refs; you may shorten later
-      execute sub_messages when IDs are already in history, but you MUST still include ≥1 clickup-execute before clickup-format.
+    - When the session transcript below is present, you may shorten later execute sub_messages when IDs are
+      already in history, but you MUST still include ≥1 clickup-execute before clickup-format.
 
 {{ ctx.output_format }}
 
@@ -248,15 +247,14 @@ Do not add text before or after the JSON object.
 class FinalResponse {
   message string @description("Final answer or summary when this step is complete. For the 'format' step, prefer GitHub-flavored Markdown; navigate/execute completions may stay brief plain text.")
   structured_json string? @description("Optional strict JSON for UI/tools (e.g. task ids, list ids); omit when not needed.")
-  citations string[] @description("URLs or stable refs from tool results; use [] if none.")
 }
 
 /// Formats a priority result after TypeScript has traversed ClickUp and validated Jev's typed output.
 /// It receives evidence only; it does not choose tools or re-rank tasks.
 function FormatClickUpPrioritization(intent: string, decision_json: string) -> FinalResponse {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
