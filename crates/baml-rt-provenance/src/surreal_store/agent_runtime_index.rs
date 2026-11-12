@@ -449,7 +449,9 @@ impl SurrealProvenanceStore {
         sql: &str,
         binds: &Value,
     ) -> Result<Vec<Value>> {
-        let mut q = self.db.query(sql);
+        let mut q = self
+            .db
+            .query(crate::surreal_hoist::hoist_in_subqueries(sql));
         if let Some(obj) = binds.as_object() {
             for (k, v) in obj {
                 q = q.bind((k.clone(), v.clone()));

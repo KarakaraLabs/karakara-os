@@ -223,20 +223,28 @@ impl SurrealProvenanceStore {
         if task_node_ids.is_empty() {
             return Ok(HashMap::new());
         }
+        // Driven by the task ids in bound chunks, not by every `HAS_INTENT` edge in the store.
+        let (task_edges, task_binds) = crate::surreal_hoist::chunked_id_source(
+            TBL_EDGE,
+            "from_id",
+            "task_node_ids",
+            &task_node_ids,
+        );
         let query = format!(
             "SELECT props, props.a2a_event_order AS event_order FROM {TBL_NODE} \
              WHERE node_id IN (\
-               SELECT VALUE to_id FROM {TBL_EDGE} \
-               WHERE from_id IN $task_node_ids AND rel_type = '{has_intent}'\
+               SELECT VALUE to_id FROM {task_edges} \
+               WHERE rel_type = '{has_intent}'\
              ) ORDER BY event_order DESC",
             has_intent = semantic_labels::HAS_INTENT,
         );
-        let response = self
+        let mut q = self
             .db
-            .query(&query)
-            .bind(("task_node_ids", task_node_ids))
-            .await
-            .map_err(map_surreal_error)?;
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query));
+        for bind in task_binds {
+            q = q.bind(bind);
+        }
+        let response = q.await.map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
         Ok(group_intent_rows(&rows, limit))
     }
@@ -250,20 +258,28 @@ impl SurrealProvenanceStore {
         if task_node_ids.is_empty() {
             return Ok(HashMap::new());
         }
+        // Driven by the task ids in bound chunks, not by every `HAS_PLAN` edge in the store.
+        let (task_edges, task_binds) = crate::surreal_hoist::chunked_id_source(
+            TBL_EDGE,
+            "from_id",
+            "task_node_ids",
+            &task_node_ids,
+        );
         let query = format!(
             "SELECT props, props.a2a_event_order AS event_order FROM {TBL_NODE} \
              WHERE node_id IN (\
-               SELECT VALUE to_id FROM {TBL_EDGE} \
-               WHERE from_id IN $task_node_ids AND rel_type = '{has_plan}'\
+               SELECT VALUE to_id FROM {task_edges} \
+               WHERE rel_type = '{has_plan}'\
              ) ORDER BY event_order DESC",
             has_plan = semantic_labels::HAS_PLAN,
         );
-        let response = self
+        let mut q = self
             .db
-            .query(&query)
-            .bind(("task_node_ids", task_node_ids))
-            .await
-            .map_err(map_surreal_error)?;
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query));
+        for bind in task_binds {
+            q = q.bind(bind);
+        }
+        let response = q.await.map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
 
         let mut plan_ids_by_task: HashMap<String, Vec<String>> = HashMap::new();

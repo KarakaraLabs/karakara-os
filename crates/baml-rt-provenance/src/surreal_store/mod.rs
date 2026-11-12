@@ -238,7 +238,11 @@ impl SurrealProvenanceStore {
         sql: &str,
         map_err: impl Fn(surrealdb::Error) -> E + Copy,
     ) -> std::result::Result<Vec<Value>, E> {
-        let response = self.db.query(sql).await.map_err(map_err)?;
+        let response = self
+            .db
+            .query(crate::surreal_hoist::hoist_in_subqueries(sql))
+            .await
+            .map_err(map_err)?;
         check_and_take_zero(response, map_err)
     }
 
@@ -261,7 +265,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&q)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&q))
             .bind(("ctx_node", ctx_node))
             .bind(("scoped_rel", context_scope::SCOPED_TO))
             .bind(("anchor", activity_anchor.to_string()))

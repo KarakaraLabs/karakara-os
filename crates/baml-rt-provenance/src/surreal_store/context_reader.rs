@@ -216,7 +216,7 @@ impl ProvenanceContextReader for SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("ctx_node_id", ctx_node_id))
             .await
             .map_err(map_surreal_error)?;
@@ -692,7 +692,7 @@ impl SurrealProvenanceStore {
         let agent_node_id = crate::id_semantics::agent_node_id_string(agent_id);
         let mut index_query = self
             .db
-            .query(&index_sql)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&index_sql))
             .bind(("context_id", context_id.as_str().to_string()))
             .bind(("agent_node_id", agent_node_id.clone()));
         if let Some(cursor) = cursor {
@@ -727,7 +727,7 @@ impl SurrealProvenanceStore {
             );
             let response = self
                 .db
-                .query(&node_sql)
+                .query(crate::surreal_hoist::hoist_in_subqueries(&node_sql))
                 .bind(("node_ids", node_ids))
                 .await
                 .map_err(map_surreal_error)?;
@@ -762,7 +762,7 @@ impl SurrealProvenanceStore {
         );
         let mut session_query = self
             .db
-            .query(&session_sql)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&session_sql))
             .bind(("ctx_node_id", ctx_node_id))
             .bind(("agent_nodes", vec![agent_node_id]));
         if let Some(cursor) = cursor {
@@ -800,7 +800,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("context_id", context_id.as_str().to_string()))
             .await
             .map_err(map_surreal_error)?;
@@ -862,7 +862,7 @@ impl SurrealProvenanceStore {
             );
             let mut q = self
                 .db
-                .query(&sql)
+                .query(crate::surreal_hoist::hoist_in_subqueries(&sql))
                 .bind(("ctx_node_id", ctx_node_id.clone()))
                 .bind(("agent_nodes", agent_nodes.clone()));
             if let Some(cursor) = cursor {
@@ -963,7 +963,9 @@ impl SurrealProvenanceStore {
             &[after_filter_sql, label_task_filter_sql, agent_filter_sql],
             "ORDER BY event_order ASC, node_id ASC",
         );
-        let mut q = self.db.query(&sql);
+        let mut q = self
+            .db
+            .query(crate::surreal_hoist::hoist_in_subqueries(&sql));
         q = q.bind(("ctx_node_id", ctx_node_id.to_string()));
         if let Some(instances) = agent_instance_nodes {
             let value: Vec<Value> = instances.iter().cloned().map(Value::String).collect();
@@ -1928,7 +1930,7 @@ impl SurrealProvenanceStore {
         );
         let rows: Vec<Value> = self
             .db
-            .query(&q)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&q))
             .bind(("ctx_node_id", ctx_node_id))
             .await
             .map_err(map_surreal_error)
@@ -1999,13 +2001,18 @@ impl SurrealProvenanceStore {
             .join(", ");
         let received = semantic_labels::WAS_RECEIVED_BY;
         let emitted = semantic_labels::WAS_EMITTED_BY;
-        // Received edges point at the Message, emitted edges point away from it.
-        let edge_q = format!(
+        // Received edges point at the Message, emitted edges point away from it. Two id-driven
+        // reads rather than one `OR`, which the planner cannot drive from either id list.
+        let received_q = format!(
             "SELECT from_id, to_id, rel_type FROM {TBL_EDGE} \
-             WHERE (rel_type = '{received}' AND to_label = 'Message' AND to_id IN [{id_list}]) \
-                OR (rel_type = '{emitted}' AND from_label = 'Message' AND from_id IN [{id_list}])"
+             WHERE rel_type = '{received}' AND to_label = 'Message' AND to_id IN [{id_list}]"
         );
-        let edge_rows: Vec<Value> = self.query_sql_rows(&edge_q).await?;
+        let emitted_q = format!(
+            "SELECT from_id, to_id, rel_type FROM {TBL_EDGE} \
+             WHERE rel_type = '{emitted}' AND from_label = 'Message' AND from_id IN [{id_list}]"
+        );
+        let mut edge_rows: Vec<Value> = self.query_sql_rows(&received_q).await?;
+        edge_rows.extend(self.query_sql_rows(&emitted_q).await?);
         if edge_rows.is_empty() {
             return Ok(HashMap::new());
         }
@@ -2196,7 +2203,66 @@ impl ProvenanceQueryApi for SurrealProvenanceStore {
 mod tests {
     use serde_json::json;
 
-    use super::sort_conversation_rows;
+    use super::{
+        conversation_node_scan_sql, sort_conversation_rows, task_message_filter_sql,
+        task_session_step_filter_sql, task_tool_call_filter_sql,
+    };
+    use crate::metamodel::query::{
+        conversation_call_agent_instances_clause, conversation_message_agent_instances_clause,
+        conversation_session_step_agent_instances_clause,
+    };
+
+    /// Regression guard for the store-size read stall: every conversation scan shape, once
+    /// hoisted, must evaluate its edge subqueries once (`LET`) instead of per candidate row.
+    #[test]
+    fn conversation_scans_hoist_every_in_subquery() {
+        let shapes = [
+            (
+                task_message_filter_sql(),
+                conversation_message_agent_instances_clause("a"),
+            ),
+            (
+                task_tool_call_filter_sql(),
+                conversation_call_agent_instances_clause("a"),
+            ),
+            (
+                task_session_step_filter_sql(),
+                conversation_session_step_agent_instances_clause("a"),
+            ),
+        ];
+        for (task_filter, agent_filter) in shapes {
+            for filters in [
+                vec![],
+                vec![task_filter.as_str()],
+                vec![task_filter.as_str(), agent_filter.as_str()],
+            ] {
+                let sql = conversation_node_scan_sql(
+                    "SCOPED_TO",
+                    &filters,
+                    "ORDER BY event_order DESC, node_id DESC LIMIT 10",
+                );
+                assert!(
+                    sql.contains("IN ("),
+                    "fixture must contain a subquery: {sql}"
+                );
+                let hoisted = crate::surreal_hoist::hoist_in_subqueries(&sql);
+                assert!(
+                    !hoisted.contains("IN (SELECT") && !hoisted.contains("IN ( SELECT"),
+                    "un-hoisted subquery remains: {hoisted}"
+                );
+                assert!(hoisted.starts_with("{ LET $__hoist_0 = (") && hoisted.ends_with(" }"));
+                // Node fetches must be driven by chunked id lookups, never a label or table scan.
+                let node_scans = hoisted.matches("FROM prov_node WHERE").count();
+                let chunked = hoisted
+                    .matches("FROM prov_node WHERE node_id IN $__c)")
+                    .count();
+                assert!(
+                    node_scans == chunked && chunked > 0,
+                    "prov_node read not driven by hoisted ids: {hoisted}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn sort_conversation_rows_orders_by_event_order_then_node_id() {

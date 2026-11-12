@@ -48,7 +48,7 @@ pub(crate) async fn token_summary_for_task(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("task_exec", task_exec))
         .await
         .map_err(map_surreal_error)?;
@@ -88,7 +88,7 @@ pub(crate) async fn llm_earliest_timestamp_ms(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("task_exec", task_exec))
         .await
         .map_err(map_surreal_error)?;

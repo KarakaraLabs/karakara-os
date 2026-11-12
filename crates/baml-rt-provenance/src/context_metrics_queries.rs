@@ -35,7 +35,11 @@ async fn fetch_nodes_by_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let query = build_query(in_list);
-    let response = store.db().query(&query).await.map_err(map_surreal_error)?;
+    let response = store
+        .db()
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
+        .await
+        .map_err(map_surreal_error)?;
     check_and_take_zero(response, map_surreal_error)
 }
 
@@ -61,7 +65,7 @@ pub async fn session_totals_by_context(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("ctx_node", ctx_node))
         .await
         .map_err(map_surreal_error)?;
@@ -96,7 +100,7 @@ pub async fn turn_totals_by_context(
     );
     let edge_response = store
         .db()
-        .query(&edge_query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&edge_query))
         .bind(("ctx_node", ctx_node.clone()))
         .await
         .map_err(map_surreal_error)?;
@@ -279,7 +283,7 @@ pub async fn user_prompts_by_context(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("ctx_node", ctx_node))
         .await
         .map_err(map_surreal_error)?;
@@ -331,7 +335,10 @@ pub async fn session_prompt_context_tail(
          LIMIT 1",
     );
 
-    let mut q = store.db().query(&query).bind(("ctx_node", ctx_node));
+    let mut q = store
+        .db()
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
+        .bind(("ctx_node", ctx_node));
     if let Some(tid) = task_id {
         q = q.bind(("task_exec_id", task_execution_activity_id_string(tid)));
     }
@@ -392,7 +399,7 @@ pub async fn llm_prompt_operations_for_context(
 
     let mut q = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("ctx_node", ctx_node))
         .bind(("max_eo", max_event_order));
     if let Some(after) = after_event_order_exclusive {

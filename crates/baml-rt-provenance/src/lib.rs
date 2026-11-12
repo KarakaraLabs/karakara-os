@@ -81,6 +81,7 @@ pub mod read;
 pub mod spans;
 pub mod store;
 pub mod surreal_config;
+pub(crate) mod surreal_hoist;
 pub(crate) mod surreal_sql;
 pub mod surreal_store;
 pub(crate) mod surreal_tables;

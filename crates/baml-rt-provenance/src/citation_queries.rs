@@ -67,7 +67,7 @@ pub async fn query_step_citations(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("task_exec", task_exec))
         .await
         .map_err(map_surreal_error)?;
@@ -102,7 +102,7 @@ pub async fn query_plan_citations(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("plan_node", plan_node_id))
         .await
         .map_err(map_surreal_error)?;
@@ -144,7 +144,11 @@ pub async fn query_plan_citations_for_plans(
             WHERE to_id IN [{in_list}] AND rel_type = '{derived}' AND from_label = 'PlanStep') \
           AND props.citations IS NOT NONE"
     );
-    let response = store.db().query(&query).await.map_err(map_surreal_error)?;
+    let response = store
+        .db()
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
+        .await
+        .map_err(map_surreal_error)?;
     let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
     let mut by_plan: HashMap<String, Vec<CitationEntry>> = HashMap::new();
     for v in rows {
@@ -190,7 +194,7 @@ pub async fn query_uncited_steps(
     );
     let response = store
         .db()
-        .query(&query)
+        .query(crate::surreal_hoist::hoist_in_subqueries(&query))
         .bind(("task_node", task_node))
         .await
         .map_err(map_surreal_error)?;

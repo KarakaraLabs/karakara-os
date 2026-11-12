@@ -154,7 +154,7 @@ impl GraphExporter {
         let response = self
             .store
             .db()
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .await
             .map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
@@ -200,7 +200,7 @@ impl GraphExporter {
         let node_response = self
             .store
             .db()
-            .query(&node_query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&node_query))
             .bind(("ctx_node_ids", Value::Array(ctx_node_ids)))
             .bind(("scoped_to", scoped_to.to_string()))
             .await
@@ -222,21 +222,27 @@ impl GraphExporter {
             .collect();
         let scoped_id_set: HashSet<String> = scoped_ids.iter().cloned().collect();
 
-        let edge_query =
-            "SELECT from_id, from_label, to_id, to_label, rel_type, props OMIT id FROM prov_edge \
-             WHERE from_id IN $scoped_ids AND rel_type != $scoped_to"
-                .to_string();
-        let edge_response = self
+        // Driven by the scoped ids in bound chunks: a single `from_id IN $ids` over more than 32
+        // ids is a full edge-table scan.
+        let (edge_source, edge_binds) = crate::surreal_hoist::chunked_id_source(
+            "prov_edge",
+            "from_id",
+            "scoped_ids",
+            &scoped_ids,
+        );
+        let edge_query = format!(
+            "SELECT from_id, from_label, to_id, to_label, rel_type, props OMIT id \
+             FROM {edge_source} WHERE rel_type != $scoped_to"
+        );
+        let mut edge_q = self
             .store
             .db()
-            .query(&edge_query)
-            .bind((
-                "scoped_ids",
-                Value::Array(scoped_ids.iter().cloned().map(Value::String).collect()),
-            ))
-            .bind(("scoped_to", scoped_to.to_string()))
-            .await
-            .map_err(map_surreal_error)?;
+            .query(crate::surreal_hoist::hoist_in_subqueries(&edge_query))
+            .bind(("scoped_to", scoped_to.to_string()));
+        for bind in edge_binds {
+            edge_q = edge_q.bind(bind);
+        }
+        let edge_response = edge_q.await.map_err(map_surreal_error)?;
         let edge_rows: Vec<Value> = check_and_take_zero(edge_response, map_surreal_error)?;
 
         // Collect target node IDs not in the scoped set (e.g. AgentRuntimeInstance)
@@ -321,7 +327,7 @@ impl GraphExporter {
             let response = self
                 .store
                 .db()
-                .query(&query)
+                .query(crate::surreal_hoist::hoist_in_subqueries(&query))
                 .bind(("label", ctx_label))
                 .await
                 .map_err(map_surreal_error)?;
@@ -341,7 +347,7 @@ impl GraphExporter {
                 let fb_response = self
                     .store
                     .db()
-                    .query(&fallback)
+                    .query(crate::surreal_hoist::hoist_in_subqueries(&fallback))
                     .await
                     .map_err(map_surreal_error)?;
                 let fb_rows: Vec<Value> = check_and_take_zero(fb_response, map_surreal_error)?;
@@ -375,7 +381,7 @@ impl GraphExporter {
         let response = self
             .store
             .db()
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("task_node", task_node))
             .await
             .map_err(map_surreal_error)?;
