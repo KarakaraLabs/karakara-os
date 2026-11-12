@@ -615,126 +615,18 @@ list-tools:
 list-agents:
     cargo run --release -p karakara-os -- list-agents
 
-# Run E2E k8s tests against a real k3d cluster (Argo CD + local registry).
-e2e-k8s:
-    ./scripts/e2e-k8s/run.sh
-
-# Local k3d dev stack: cluster + registry + build/push + Argo sync.
-up:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{justfile_directory()}}"
-    # shellcheck source=scripts/e2e-k8s/lib.sh
-    source "${root}/scripts/e2e-k8s/lib.sh"
-    REPO_ROOT="${root}"
-    preflight_container_runtime
-    ensure_k3d_cluster
-    ensure_image_tag_or_nonce
-    docker build --build-arg "VERSION=$(bash "${root}/scripts/release/workspace-version.sh")" \
-      -f "${root}/operations/containers/runner.Dockerfile" \
-      -t "${IMAGE_NAME}:${IMAGE_TAG}" "${root}"
-    bringup_pilot_stack
-    log_info "Pilot stack ready (tag=${IMAGE_TAG})"
-
-# Rebuild runner image and re-sync Argo after code changes.
-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    root="{{justfile_directory()}}"
-    # shellcheck source=scripts/e2e-k8s/lib.sh
-    source "${root}/scripts/e2e-k8s/lib.sh"
-    REPO_ROOT="${root}"
-    bash "${root}/scripts/e2e-k8s/image-tag-nonce.sh"
-    resolve_image_tag
-    docker build --build-arg "VERSION=$(bash "${root}/scripts/release/workspace-version.sh")" \
-      -f "${root}/operations/containers/runner.Dockerfile" \
-      -t "${IMAGE_NAME}:${IMAGE_TAG}" "${root}"
-    ensure_k3d_registry
-    connect_registry_to_cluster
-    ensure_runner_image_available
-    bash "${root}/scripts/e2e-k8s/render-values.sh"
-    bash "${root}/scripts/e2e-k8s/sync-argocd.sh"
-    resolve_chart_names
-    wait_for_runner_readyz
-
 workspace-version:
     bash scripts/release/workspace-version.sh
 
 bump-version kind:
     bash scripts/release/bump-workspace-version.sh {{kind}}
 
-image-tag-nonce:
-    bash scripts/e2e-k8s/image-tag-nonce.sh
-
-render-values:
-    bash scripts/e2e-k8s/render-values.sh
-
-sync-argocd:
-    bash scripts/e2e-k8s/sync-argocd.sh
-
-release *ARGS:
-    bash scripts/release/set-deploy-ref.sh {{ARGS}}
-
 publish-release *ARGS:
     bash scripts/release/publish-deploy-release.sh {{ARGS}}
 
-# Run the Kubernetes pilot first-run smoke against an installed release.
-# Prerequisites: a running chart install (see docs/k8s-pilot-operator-guide.md)
-# and an open port-forward, or pass `--port-forward` to have the script manage it.
-k8s-pilot-smoke *args='':
-    ./scripts/k8s-pilot-smoke.sh {{args}}
-
-# Adversarial cgroup-throttled deploy harness on a real k3d cluster.
-# Probes /readyz + /diagnose at ~100ms during a cpu-peg-agent deploy under
-# runner.resources.limits.cpu=500m and asserts three runner-readiness
-# invariants. See docs/testing/e2e-k8s.md.
-e2e-k8s-cgroup-throttle *args='':
-    ./scripts/e2e-k8s/t2-cgroup-throttle.sh {{args}}
-
-# Authoritative Kubernetes pilot package-validation flow.
-# Mirrors docs/k8s-pilot-operator-guide.md end-to-end on a local k3d cluster:
-# builds the runner image, creates the three required objects, installs the
-# Helm chart, runs scripts/k8s-pilot-smoke.sh, and verifies runners register
-# in cluster_runners. No post-install kubectl patches.
-verify-k8s-pilot-package *args='':
-    ./scripts/verify-k8s-pilot-package.sh {{args}}
-
-# Load-test harness for the Kubernetes pilot.
-# Brings up the observability stack + Helm-installed pilot (or reuses a
-# running one with --skip-bringup), runs the three canonical #226
-# scenarios (local_a2a, forwarded_a2a, split_dual_runner) at the committed
-# workload defaults, and writes machine- and human-readable results under
-# artifacts/load-test/<timestamp>/. See docs/k8s-pilot-load-testing.md.
-k8s-load-test *args='':
-    ./scripts/k8s-load-test.sh {{args}}
-
-# Cross-pod cleese/chapman conversation on a Helm-installed pilot.
-# Requires OPENROUTER_API_KEY in the mounted fnox ConfigMap.
-k8s-pilot-cleese-chapman *args='':
-    ./scripts/k8s-pilot-cleese-chapman.sh {{args}}
-
-# Pilot demo prep flow.
-# Steps chain via --keep-cluster / --keep-deployed so the cluster
-# persists across all three. cleese/chapman needs OPENROUTER_API_KEY
-# in the mounted fnox ConfigMap; use `demo-rehearsal-no-llm` to stop
-# after smoke when LLM credentials are not configured.
-demo-rehearsal: demo-rehearsal-no-llm
-    just k8s-pilot-cleese-chapman --keep-deployed
-    just demo-rehearsal-assert
-
-# verify + smoke only; no LLM required.
-demo-rehearsal-no-llm:
-    just verify-k8s-pilot-package --keep-cluster --smoke-keep-deployed
-    just demo-rehearsal-assert
-
-# Customer-facing cluster-health checks (issue #391):
-#   - placement consistency (I1/I2/I3) + heartbeat freshness (I4) via
-#     /cluster/agents on the runner API service.
-#   - no-unexpected-WARN log scan (I5) across runner + SurrealDB pods.
-# Both fail the rehearsal on regression.
-demo-rehearsal-assert:
-    ./scripts/k8s-pilot-assert-placement-consistency.sh --port-forward --local-port 18181
-    ./scripts/k8s-pilot-assert-no-warn-logs.sh
+# Cluster-free Helm template check for the parked runner probes contract.
+helm-probe-check:
+    ./scripts/test-helm-runner-probes.sh
 
 # Build the blessed `node` tool runtime image (P4.9). Push it digest-pinned and
 # register the reference with the runner; the digest is part of every tool digest.

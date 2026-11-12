@@ -56,11 +56,9 @@ Configured under **Settings → Secrets and variables → Actions → Variables*
 - **Recommendation:** Fork `https://github.com/ryan-s-roberts/baml` (preserving the `canary` branch and commit `bf2d0c33facfc46d7a4c8a3ae96369cf8395eb91`) into **`https://github.com/KarakaraLabs/baml`** and update `Cargo.toml` so `KarakaraLabs` controls the upstream source.
 
 ### 2. Container Registry Placeholders (`ghcr.io/KarakaraLabs/*`)
-- **Location:**
-  - [`operations/deployment/values/dev/images.yaml`](../../operations/deployment/values/dev/images.yaml) & [`scripts/release/set-deploy-ref.sh`](../../scripts/release/set-deploy-ref.sh) (`ghcr.io/KarakaraLabs/karakara-runner`)
-- **Guidance:** Local Kubernetes testing (`just up`, `just sync`, `just verify-k8s-pilot-package`) pushes images to a local `k3d` registry and does not require GHCR. When remote cluster deployments are needed, GHCR hosting is free for public packages under `KarakaraLabs` using `GITHUB_TOKEN` (`packages: write`).
+- **Guidance:** Remote GHCR publishing and Argo CD deploy-ref tracking were deferred/pruned under Issue `#44`. When remote container deployments are revived, GHCR hosting is free for public packages under `KarakaraLabs` using `GITHUB_TOKEN` (`packages: write`).
 
 ### 3. Git LFS Quota (`models/fastembed/`)
-- **Location:** [`models/fastembed/`](../../models/fastembed/), [`runner.Dockerfile`](../../operations/containers/runner.Dockerfile), and [`k8s-pilot-validation.yml`](../../.github/workflows/k8s-pilot-validation.yml).
-- **Guidance:** GitHub's free Git LFS plan includes 1 GB storage and 1 GB/month bandwidth. Avoid running `git lfs pull` in routine CI workflows to prevent exhausting free monthly LFS bandwidth, and evaluate removing the vendored ONNX model copy from `operations/containers/runner.Dockerfile` since [`Cargo.toml`](../../Cargo.toml) notes that citation integrity replaced ONNX drift scoring.
+- **Location:** [`runner.Dockerfile`](../../operations/containers/runner.Dockerfile) (dangling `models/fastembed` copy tracked in Issue `#29`).
+- **Guidance:** GitHub's free Git LFS plan includes 1 GB storage and 1 GB/month bandwidth. Avoid running `git lfs pull` in routine CI workflows; removing the vendored ONNX model copy from `operations/containers/runner.Dockerfile` is tracked in `#29`.
 

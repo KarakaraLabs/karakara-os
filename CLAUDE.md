@@ -10,9 +10,7 @@ just test               # CI-like nextest (workspace, all features)
 just clippy && just fmt # lint + format
 pre-commit run --all-files
 cargo test test_name    # single test
-just up                 # local k3d + Argo CD pilot stack
-just verify-k8s-pilot-package  # authoritative k8s package validation
-just e2e-k8s            # k3d scenario harness
+just helm-probe-check   # cluster-free Helm probe template check
 just publish-release vX.Y.Z   # semver git tag (see RELEASING.md)
 ```
 
@@ -35,7 +33,7 @@ API keys: `fnox.toml` in project root (via `FnoxFileSecretResolver`). LLM test m
 | Runner / HTTP API | [`docs/reference/agent-runner.md`](docs/reference/agent-runner.md) |
 | CLI (`karak`) | [`docs/reference/karakara-cli.md`](docs/reference/karakara-cli.md) |
 | Host tools / MCP | [`docs/reference/host-tool-guide.md`](docs/reference/host-tool-guide.md), [`docs/reference/karakara-mcp-support.md`](docs/reference/karakara-mcp-support.md) |
-| K8s operator | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
+| K8s operator (dormant pilot) | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
 | OTel metrics | [`docs/reference/metrics-inventory.md`](docs/reference/metrics-inventory.md) |
 | Architecture overview | [`README.md`](README.md) |
 | Contributor norms | [`AGENTS.md`](AGENTS.md) |

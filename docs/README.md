@@ -73,10 +73,8 @@ Install, test, demo, and operate.
 
 | Doc | Purpose |
 |-----|---------|
-| [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) | Supported Helm install path |
-| [e2e-k8s.md](runbooks/e2e-k8s.md) | K8s validation harness |
+| [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) | Parked Helm chart guide (dormant pilot) |
 | [ci-security.md](runbooks/ci-security.md) | Public-repo CI trust model and GitHub settings |
-| [k8s-pilot-load-testing.md](runbooks/k8s-pilot-load-testing.md) | Load-test harness contract |
 | [task-daemon.md](runbooks/task-daemon.md) | Task-daemon user guide |
 | [how-to-write-a-typescript-tool-with-the-karakara-sdk-and-karak-cli.md](runbooks/how-to-write-a-typescript-tool-with-the-karakara-sdk-and-karak-cli.md) | TypeScript SDK tool authoring from scaffold through deployment |
 | [meteo-tool README](../examples/external-tools/meteo-tool/README.md) | External tool v2: build, test, publish, deploy, chat |
@@ -105,7 +103,7 @@ Co-located with implementation; linked from reference or assertions as needed.
 | Agent author | [how-to-write-agents.md](assertions/how-to-write-agents.md) → [agent-patterns.md](assertions/agent-patterns.md) |
 | TypeScript tool author | [how-to-write-a-typescript-tool-with-the-karakara-sdk-and-karak-cli.md](runbooks/how-to-write-a-typescript-tool-with-the-karakara-sdk-and-karak-cli.md) |
 | Rust tool author | [host-tool-guide.md](reference/host-tool-guide.md) → [tool-mvp-checklist.md](assertions/tool-mvp-checklist.md) |
-| Operator / K8s | [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) → [agent-runner.md](reference/agent-runner.md) |
+| Operator / K8s (dormant) | [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) → [agent-runner.md](reference/agent-runner.md) |
 | Observability | [metrics-inventory.md](reference/metrics-inventory.md) → OTel guides |
-| Testing | [testing-handbook.md](assertions/testing-handbook.md) → [e2e-k8s.md](runbooks/e2e-k8s.md) |
+| Testing | [testing-handbook.md](assertions/testing-handbook.md) |
 | Operator UI | [`web/README.md`](../web/README.md) → provenance + chat views |
