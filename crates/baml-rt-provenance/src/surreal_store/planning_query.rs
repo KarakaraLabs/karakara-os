@@ -111,7 +111,7 @@ impl ProvenancePlanningQuery for SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("task_node_id", task_node_id))
             .bind(("limit", limit_val))
             .await
@@ -175,7 +175,7 @@ impl ProvenancePlanningQuery for SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("task_node_id", task_node_id))
             .bind(("limit", limit_val))
             .await
@@ -253,7 +253,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("node_id", node_id.to_string()))
             .await
             .map_err(map_surreal_error)?;
@@ -310,7 +310,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("node_id", node_id.to_string()))
             .await
             .map_err(map_surreal_error)?;
@@ -410,7 +410,7 @@ impl SurrealProvenanceStore {
         );
         let r1 = self
             .db
-            .query(&hop1)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&hop1))
             .bind(("task_node", task_entity_id))
             .bind(("rel_last", semantic_labels::WAS_LAST_EXECUTED_BY))
             .await
@@ -426,7 +426,7 @@ impl SurrealProvenanceStore {
         );
         let r2 = self
             .db
-            .query(&hop2)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&hop2))
             .bind(("agent_node", agent_node_id.to_string()))
             .await
             .map_err(map_surreal_error)?;
@@ -517,7 +517,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("step_node_id", step_node_id))
             .await
             .map_err(map_surreal_error)?;
@@ -538,7 +538,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("step_node_id", step_node_id))
             .await
             .map_err(map_surreal_error)?;
@@ -579,7 +579,7 @@ impl SurrealProvenanceStore {
             );
             let response = self
                 .db
-                .query(&query)
+                .query(crate::surreal_hoist::hoist_in_subqueries(&query))
                 .bind(("ctx_node", ctx_node_id.clone()))
                 .bind(("task_exec_node", task_exec_node.clone()))
                 .bind(("plan_id", plan_id.to_string()))
@@ -611,23 +611,30 @@ impl SurrealProvenanceStore {
             .iter()
             .map(|plan_id| plan_entity_id_string(task_id, plan_id))
             .collect();
+        // Driven by the plan ids in bound chunks, not by every derivation edge in the store.
+        let (plan_edges, plan_binds) = crate::surreal_hoist::chunked_id_source(
+            TBL_EDGE,
+            "to_id",
+            "plan_node_ids",
+            &plan_node_ids,
+        );
         let query = format!(
             "SELECT props, props.a2a_step_order AS step_order, props.a2a_plan_id AS plan_id \
              FROM {TBL_NODE} \
              WHERE node_id IN (\
-               SELECT VALUE from_id FROM {TBL_EDGE} \
-               WHERE to_id IN $plan_node_ids \
-                 AND rel_type = '{derived}' \
+               SELECT VALUE from_id FROM {plan_edges} \
+               WHERE rel_type = '{derived}' \
                  AND from_label = 'PlanStep'\
              ) ORDER BY step_order ASC",
             derived = crate::vocabulary::prov_relations::WAS_DERIVED_FROM,
         );
-        let response = self
+        let mut q = self
             .db
-            .query(&query)
-            .bind(("plan_node_ids", plan_node_ids))
-            .await
-            .map_err(map_surreal_error)?;
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query));
+        for bind in plan_binds {
+            q = q.bind(bind);
+        }
+        let response = q.await.map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
         for row in &rows {
             let props = match row.get("props") {

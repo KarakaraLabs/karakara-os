@@ -31,7 +31,7 @@ graph of its own.
 ## Planning and structured outcomes
 
 Agents are ReAct-capable task actors with enforced planning semantics: tasks, plans, steps,
-tool-session phases, citations, lineage, and `StructuredReply` are **runtime concepts**, not
+tool-session phases, ref-addressed history, lineage, and `StructuredReply` are **runtime concepts**, not
 informal prompt conventions. Coordinator product plans must not reuse tool-session FSM shapes at
 the top level.
 

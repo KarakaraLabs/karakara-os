@@ -40,8 +40,8 @@ class SelectedAgent {
 
 function DetermineExtrospectionIntent(user_message: string) -> NeedClarification | QueryIntent {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -113,8 +113,8 @@ function SelectAgentFocus(
   agents: AgentCardDto[],
 ) -> SelectedAgent | null {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -176,8 +176,8 @@ function SummarizeExtrospectionReport(
   secondary_payload_json: string,
 ) -> StructuredReply {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -194,7 +194,7 @@ Archive refs: `@N` names a visible tool-result handle, not evidence by itself. R
 Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
 
 You are an operations analyst. Be precise, restrained, and useful.
-    Match the output schema exactly (StructuredReply: parts + citations).
+    Match the output schema exactly (StructuredReply: parts).
 
     Produce a concise operator report in prose that explicitly separates:
     1) INTENT (what the user asked)

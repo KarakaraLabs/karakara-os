@@ -271,7 +271,7 @@ fn edge_projection_was_classified_by_uses_typed_label_constants() {
         "edge projection sources rel_type from typed SemanticEdge: {sql}"
     );
     assert!(
-        sql.contains("from_id IN $from_ids"),
+        sql.contains("from_id IN $from_ids_0"),
         "edge projection binds from_ids parametrically: {sql}"
     );
     assert!(
@@ -280,7 +280,7 @@ fn edge_projection_was_classified_by_uses_typed_label_constants() {
     );
 
     let obj = binds.as_object().expect("binds");
-    let from_ids = obj.get("from_ids").expect("from_ids bind");
+    let from_ids = obj.get("from_ids_0").expect("from_ids_0 bind");
     assert!(matches!(from_ids, Value::Array(_)));
 }
 

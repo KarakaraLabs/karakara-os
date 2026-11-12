@@ -470,16 +470,11 @@ async fn wire_provenance_subsystems(
     }
 
     // Subsystem 1: ProvenanceEffectSubscriber → effect bus.
-    // Source of truth for LLM/tool completion events including drift scoring,
-    // plan tracking, citation resolution, and deferred plan failures.
+    // Source of truth for LLM/tool completion events, plan tracking, and
+    // deferred plan failures.
     {
         let mut subscriber = ProvenanceEffectSubscriber::new(writer.clone());
-        let registry_for_citations = tool_registry.clone();
         let registry_for_describer = tool_registry.clone();
-        subscriber.set_tool_registry(registry_for_citations);
-        if let Some(store) = archive_store.clone() {
-            subscriber.set_provenance_store(store);
-        }
         subscriber.set_archive_ref_tables(archive_ref_tables.clone());
         subscriber.set_action_describer(Arc::new(
             move |tool_name: Option<&str>, content: &serde_json::Value| {

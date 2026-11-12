@@ -1,8 +1,8 @@
 # How to write agents
 
-This guide is the **primary onboarding path** for agent authors in Karakara OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **citable history / citations**. Deep dives stay in linked docs; start here, then follow "Further reading."
+This guide is the **primary onboarding path** for agent authors in Karakara OS: package layout, BAML + QuickJS entrypoints, host tools, planning-oriented ReAct loops, user-visible replies, and **ref-addressed history**. Deep dives stay in linked docs; start here, then follow "Further reading."
 
-A single **worked example** — a business reporting agent with CRM and email tools — threads through the entire document so you can follow the flow from manifest → BAML → step executor → projected history → citations → `StructuredReply`.
+A single **worked example** — a business reporting agent with CRM and email tools — threads through the entire document so you can follow the flow from manifest → BAML → step executor → projected history → `StructuredReply`.
 
 **Host tool implementers** (new Rust tools in `baml-rt-tools`) should read [host-tool-guide.md](../reference/host-tool-guide.md) for registration and contracts; this doc covers how **agents** call those tools and surface results.
 
@@ -196,7 +196,6 @@ class ExecuteStepOpenStep {
 ```baml
 class ExecuteStepSessionPlan {
   step ExecuteStepOpenStep @description("Entry hop: reuse a visible archive, ReadOnlyFinish without Open, or Open one tool. After Open, the host narrows to that tool's active phase executor.")
-  citations string[]
 }
 ```
 
@@ -273,13 +272,12 @@ Each generated phase prompt assembles, in order: the **embedded archive policy p
 { "op": "Open", "tool_name": "support/crm" }
 ```
 
-**Active hop** — typically the model **Send**s a CRM query, citing the user message (`#1`) and the plan objective (`#2`):
+**Active hop** — typically the model **Send**s a CRM query:
 
 ```json
 {
   "op": "Send",
-  "input": { "query": "Q3 revenue", "region": "EMEA", "fiscal_quarter": "Q3" },
-  "citations": ["#1", "#2"]
+  "input": { "query": "Q3 revenue", "region": "EMEA", "fiscal_quarter": "Q3" }
 }
 ```
 
@@ -512,36 +510,36 @@ Some agents **classify first** with a BAML union such as `SlackIntent | NeedClar
 
 Internal step execution (`runGeneratedStepExecutor`) resolves with a **discriminated envelope** (`outcome`: `completed` | `agent_correctable` | `fatal`). On `completed`, `last`, `steps`, and `session_context` are the same FSM telemetry as before. On `agent_correctable`, the host returns structured `recovery` (`code`, `mistake`, `invariant`, `fix_steps`) — the JS promise **still fulfilled**; branch on `recovery.code` instead of parsing `Error.message`. Malformed session-plan steps from the model (e.g. missing `archive_ref` on `PageRead`) surface here as `agent_correctable`, not as a bridge throw. For delegated user questions, keep the child A2A session open, relay its suspended prompt through `ctx.emit.awaitInput`, and send the reply back to that same child session. See `forwardDelegation` in the coordinator agent.
 
-The **single** user-facing artifact the platform surfaces for a turn is the chat handler's return: `**SessionResult.message`**, a `**StructuredReply**` with `**parts**` and `**citations**`. Synthesize that **once** at session completion (the reporting agent does this with `PresentReportingToUser`). Do not treat step telemetry as the user reply or duplicate prose onto step records.
+The **single** user-facing artifact the platform surfaces for a turn is the chat handler's return: `**SessionResult.message`**, a `**StructuredReply**` with `**parts**`. Synthesize that **once** at session completion (the reporting agent does this with `PresentReportingToUser`). Do not treat step telemetry as the user reply or duplicate prose onto step records.
 
 ---
 
-## 6. History and citations (critical)
+## 6. History and refs (critical)
 
-Understanding **citable history** and the **citation vocabulary** is necessary to write agents that plan correctly and to debug provenance/drift. This section uses the **same reporting-agent scenario** from §3 to show what the model sees and how it cites.
+Understanding **ref-addressed history** is necessary to write agents that read archives correctly and to debug provenance. This section uses the **same reporting-agent scenario** from §3 to show what the model sees.
 
 ### 6.1 Ref-table vocabulary (canonical)
 
-The stack uses a **unified citation contract** tied to a **ref table** built when projecting context; the model sees rendered lines (including `**#N**` / `**@N**`) in **`ctx.tags['conversation_transcript']`** only. Allocation is **1-based** for both namespaces: first citable history line is `**#1`**, first archive slot is `**@1**` (see `RefTable` / `insert_history` in `crates/baml-rt-tools/src/archive_refs.rs` and rendering in `prompt_projection.rs`).
+The stack builds a **ref table** when projecting context; the model sees rendered lines (including `**#N**` / `**@N**`) in **`ctx.tags['conversation_transcript']`** only. Allocation is **1-based** for both namespaces: first citable history line is `**#1`**, first archive slot is `**@1**` (see `RefTable` / `insert_history` in `crates/baml-rt-tools/src/archive_refs.rs` and rendering in `prompt_projection.rs`).
 
 
 | Form                                 | Canonical meaning                                                                                                                                                                                                                       |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `**#N**`                             | **History ref** — indexes a row in the **projected conversation history** for this prompt (user text, assistant text, tool-call summaries, session-step lines). `**#N` always refers to this history table**, never to an archive body. |
 | `**@N`**, `**@N:L**`, `**@N:L1-L2**` | **Archive ref** — points at **tool/Send output** stored as archive material. Line suffixes select rows **inside** that archive. `**@N` is not a synonym for history**; do not use `@` for ordinary chat lines.                          |
-| `**!#N`**, `**!@N**`, …              | **Negation** — counter-evidence or explicit exclusion; parsed in `ParsedCitation` (`citations.rs`).                                                                                                                                     |
+| `**!#N`**, `**!@N**`, …              | **Negation** — counter-evidence or explicit exclusion on planning refs; parsed in `ParsedCitation` (`citations.rs`).                                                                                                                   |
 
 After `@N:`, line ranges use **1-based** indices (`@N:6`, `@N:6-8`). An optional **`L` prefix on each number** (IDE-style refs such as `@N:L6-L8` or `@N:L6-6`) is accepted by the host parser — prefer plain digits in new prompts when possible.
 
-Intents, step transitions, and effects carry `**citations: string[]`** using **these exact strings** so downstream systems **parse, resolve, and check** claims against the same ref table the model saw — not parallel "evidence prose."
+`@N` handles are **operational**: the model passes them to **SearchRead** / **PageRead** to read archived tool results. Session-step outputs (`Send`, decisions) and `StructuredReply` **do not** carry model-produced citation arrays; provenance already records prompts, outputs, tools, tasks, and delegation, and operators investigate that graph directly. Planning intents and step transitions keep an optional `citations: string[]` (see §6.4).
 
-The builder centralizes long `@description` text for `**StructuredReply.citations`**, session-plan and Send **citations**, and `**ArchiveSearchReadInput` / `ArchivePageReadInput`** (SearchRead: required **grep** + paging; PageRead: contiguous lines, no grep) in `[crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs](../crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs)`; `regen_fixtures` refreshes both `_baml_runtime.baml` (compiler/IR source) and the rendered `_baml_tool_schema_catalog.txt` (model-facing schema text — §3.3.2) from that source.
+The builder centralizes long `@description` text for `**ArchiveSearchReadInput` / `ArchivePageReadInput`** (SearchRead: required **grep** + paging; PageRead: contiguous lines, no grep) in `[crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs](../crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs)`; `regen_fixtures` refreshes both `_baml_runtime.baml` (compiler/IR source) and the rendered `_baml_tool_schema_catalog.txt` (model-facing schema text — §3.3.2) from that source.
 
 When a tool result is **windowed** in the projected transcript, the host injects an imperative line (next `offset=`, **SearchRead** / **PageRead**) next to the synthetic `cat -n` block — that is the primary nudge to read more; the rendered catalog and the field `@description`s carry the static read-tactic prose, never duplicated in agent prompts. Policy for partial archives and FSM ordering is also on the session-plan `**step`** field and SearchRead/PageRead step descriptions in `prompt_copy.rs`.
 
 **SearchRead `grep` tokens:** Archive bodies render as grep-friendly lines (`fieldName:` …). Host tools publish `**grep_anchors`** on `[ToolProjectionSemantics](../crates/baml-rt-tools/src/tools.rs)` (or the host derives them from the output JSON Schema). `**ctx.tags['tool_archive_grep_anchors']**` maps qualified tool names to anchor strings for the manifest allowlist — use these when picking `**grep**` before guessing free text. See [Host tool guide §11.1](../reference/host-tool-guide.md).
 
-Full rationale vs PUD-style evidence strings: [citable-history-and-checked-citations.md](citable-history-and-checked-citations.md).
+Why model-produced citations were removed from session steps and replies: [citable-history-and-checked-citations.md](citable-history-and-checked-citations.md).
 
 #### 6.1.1 Jinja: `conversation_transcript`
 
@@ -551,7 +549,7 @@ BAML does not type-check `ctx.tags` at compile time. Inject history with **`{{ c
 
 - **Authoring default (non-phase BAML):** use the constant `BAML_CONVERSATION_HISTORY_JINJA_BLOCK` in `[crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs](../crates/baml-rt-builder/src/builder/baml_gen/prompt_copy.rs)` (`{{ ctx.tags['conversation_transcript'] }}`).
 
-- **Wire row shape** (for HTTP/API and Rust tests, not BAML tags): each projected row has `role`, `content`; message rows may add optional `citations` — see [baml-rt-conversation-spec.md](baml-rt-conversation-spec.md).
+- **Wire row shape** (for HTTP/API and Rust tests, not BAML tags): each projected row has `role`, `content`; historic message rows may still carry optional `citations` — see [baml-rt-conversation-spec.md](baml-rt-conversation-spec.md).
 
 - **Enforcement:** `[scripts/check-baml-conversation-history.sh](../scripts/check-baml-conversation-history.sh)` rejects any `ctx.tags` reference to `conversation_history` in agent/fixture BAML.
 
@@ -578,48 +576,40 @@ assistant: #4 support/crm Finish
 - `**@1`** — archive ref for the **CRM result**. This is the header; the numbered lines below it (`1|`, `2|`, `3|`) are the archive body inlined by the reader. To cite the archive as a whole: `@1`. To cite line 2 specifically: `@1:2`.
 - `**#4`** — Finish event. History ref.
 
-**How the model cited during execution:** When `ExecuteStep__active__support_crm` ran (the **Send** hop), the model's output included:
+During execution the **Send** hop emitted only the tool input:
 
 ```json
 {
   "op": "Send",
-  "input": { "query": "Q3 revenue", "region": "EMEA", "fiscal_quarter": "Q3" },
-  "citations": ["#1"]
+  "input": { "query": "Q3 revenue", "region": "EMEA", "fiscal_quarter": "Q3" }
 }
 ```
 
-It cited `**#1**` (the user's request) as the basis for the CRM query. Later, `PresentReportingToUser` sees the entire history above and produces a `StructuredReply`:
+Later, `PresentReportingToUser` sees the entire history above and produces a `StructuredReply`:
 
 ```json
 {
   "parts": [
     { "type": "text", "text": "## Q3 Revenue — EMEA\n\n| Account | Revenue |\n|---|---|\n| Acme EMEA | $1.2M |\n| Globex EMEA | $850K |\n| Initech EMEA | $2.1M |\n\n**Total: $4.15M**" }
-  ],
-  "citations": ["#1", "@1"]
+  ]
 }
 ```
 
-It cited `**#1**` (user request grounded the question) and `**@1**` (CRM archive grounded the numbers). Provenance can now **reconcile** those strings against the ref table and run drift / embedding checks on the resolved content.
+What informed that reply is recoverable from provenance: the user message, the CRM tool call with its typed arguments, the archived result, and the synthesis prompt and output are all graph nodes linked to the same task and context.
 
-### 6.3 Citation rules (canonical)
+### 6.3 Ref rules (canonical)
 
-The strings in `**citations`** arrays must be **copy-paste identical** to the refs shown in that same prompt's history. If the model invents `#99` and there is no `#99` in the history, provenance flags it.
-
-- Cite the **user message** that motivated an action → `**"citations": ["#1"]`**.
-- Cite a **prior tool archive** that informed a decision → `**"citations": ["@1"]`**, or a specific line `**"@1:2"**` (equivalently `**"@1:L2"**` — optional `L` before the line index).
-- Cite **multiple sources** → `**"citations": ["#1", "@1", "@1:3"]`**.
-- Mark **counter-evidence** (something the model explicitly overrode) → `**"citations": ["!#3"]`**.
 - **Do not use `#` for archives or `@` for history.** These are separate namespaces.
+- Pass `@N` to **SearchRead** / **PageRead** to read an archive; do not paraphrase archive contents from memory when the transcript shows the body is windowed.
+- Do **not** ask the model to emit citation arrays on Send, decision, or reply types. If a user-visible answer needs sources, put real URLs or entity identifiers in the reply parts.
 
-### 6.4 Where citations flow
+### 6.4 Planning refs
 
-1. **Prompts** — the model sees the ref table (history rows + archive bodies) and must cite `#N` / `@N` on intents and step payloads.
-2. **Planning / execution wire** — `intent.citations`, step `citations` in JS-facing APIs, `StructuredReply.citations`.
-3. **Effects & provenance** — Same strings flow into effect events (`EffectEvent::IntentResolved { citations, .. }`, `PlanStepStatusChanged { citations, .. }`) and normalized graph attributes so provenance **reconciles** with the ref table and **drift / embedding checks** run on **resolved** content.
+Planning keeps an optional `**citations: string[]`** on `intent` and on `startStep` / `completeStep`. These flow into `EffectEvent::IntentResolved { citations, .. }` and `PlanStepStatusChanged { citations, .. }`. Intents are valid without them: the host binds message lineage from the invocation scope.
 
 ### 6.5 Trust boundary (do not spoof lineage from JS)
 
-Agent / QuickJS code is treated as **potentially adversarial**. **Message UUID lineage** for planning is **not** accepted from agent JSON: the host binds lineage from the **Rust invocation scope** only. Use `**citations`** for what the model claims it relied on; do not assume you can inject parallel `derivedFromMessageIds` from the agent side.
+Agent / QuickJS code is treated as **potentially adversarial**. **Message UUID lineage** for planning is **not** accepted from agent JSON: the host binds lineage from the **Rust invocation scope** only. Do not assume you can inject `derivedFromMessageIds` from the agent side.
 
 Details: [citable-history-and-checked-citations.md](citable-history-and-checked-citations.md) ("Wire and Rust surfaces").
 
@@ -628,11 +618,10 @@ Details: [citable-history-and-checked-citations.md](citable-history-and-checked-
 - Grammar / parsing: `crates/baml-rt-tools/src/citations.rs` (`ParsedCitation`, negation, line ranges).
 - History projection: `crates/baml-rt-tools/src/prompt_projection.rs` (`project_prompt_context`, `RefTable`).
 - Planning FSM / registration: `crates/baml-rt-quickjs/src/planning.rs`, `execution_session_types.rs`, `quickjs_bridge/baml_registration.rs`.
-- Drift / scoring: provenance subscribers + `baml-rt-embedding` (see [drift-catalogue.md](drift-catalogue.md)).
 
 ### 6.7 Operator-facing replies
 
-`**StructuredReply**` carries `**citations**` consistent with the ref-table contract. The reporting agent's final reply cited `["#1", "@1"]` — the same vocabulary that appeared in the history the model saw and the same strings stored on intents/steps for **checked** provenance. See [agent-patterns.md](agent-patterns.md) and [intent-based-planning-and-session-prompting.md](intent-based-planning-and-session-prompting.md) ("Citations, not evidence strings").
+`**StructuredReply**` carries `**parts**` only. Operators investigate what informed a reply through the provenance graph (Mermaid sequence and graph export by context or task), not through citation tokens attached to the reply. See [agent-patterns.md](agent-patterns.md).
 
 ---
 
@@ -705,7 +694,7 @@ the artifact they executed.
 | [intent-based-planning-and-session-prompting.md](intent-based-planning-and-session-prompting.md)    | Plan-anchored prompting, session template order, executor vs persona prompts. |
 | [agent-patterns.md](agent-patterns.md)                                                              | Structured tools vs presentation, `StructuredReply`, checklists.              |
 | [host-tool-guide.md](../reference/host-tool-guide.md)                                                            | Adding Rust host tools, manifests, `session_plan_functions.json` / `__type`.  |
-| [citable-history-and-checked-citations.md](citable-history-and-checked-citations.md)                | Citation contract, wire surfaces, trust boundary.                             |
+| [citable-history-and-checked-citations.md](citable-history-and-checked-citations.md)                | Ref vocabulary, planning refs, why reply/step citations were removed.         |
 | [host-to-agent-event-delivery.md](host-to-agent-event-delivery.md)                                  | Dispatch, subscriptions, event sources.                                       |
 | [drift-catalogue.md](drift-catalogue.md)                                                            | Drift and injection framing.                                                  |
 | [crates/baml-rt-tools/docs/llm_json_boundary.md](../crates/baml-rt-tools/docs/llm_json_boundary.md) | LLM JSON shape vs serde enums for tool payloads.                              |

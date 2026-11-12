@@ -76,7 +76,7 @@ impl SurrealProvenanceStore {
         );
         let response = self
             .db
-            .query(&query)
+            .query(crate::surreal_hoist::hoist_in_subqueries(&query))
             .bind(("ids", node_ids.to_vec()))
             .await
             .map_err(map_surreal_error)?;

@@ -168,7 +168,7 @@ function delegatedReplyFromOutput(output: unknown): StructuredReply | null {
   // Child archive refs are local to the child context and must not be copied into the parent
   // response. This direct session has a parent-side provenance edge, but it does not expose an
   // archive ref that can safely be cited yet.
-  return { parts, citations: [] };
+  return { parts };
 }
 
 async function forwardDelegation(

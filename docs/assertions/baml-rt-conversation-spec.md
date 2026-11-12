@@ -123,7 +123,6 @@ These separate **what happened** in the graph from **how the model is guided** i
 5. **Provider** — [`ProjectingConversationContextProvider`](../crates/baml-rt-a2a/src/a2a_transport.rs) → merged rows → `ctx.tags['conversation_transcript']` in [`BamlExecutor`](../crates/baml-rt-quickjs/src/baml_execution.rs).
 6. **Intra-turn** — [`baml/intra_turn.rs`](../crates/baml-rt-quickjs/src/baml/intra_turn.rs) may merge a loop-local supplement with the provider; dedup is by full JSON line equality (stable refs make re-reads match).
 7. **Phase executors (codegen)** — [`session_from_ir/mod.rs`](../crates/baml-rt-builder/src/builder/baml_gen/session_from_ir/mod.rs) generates per-phase BAML with **`Phase: ENTRY` / `ACTIVE` / `STRUCTURED`** cues (not legacy bracket preambles); parent IR `prompt_template` is inlined after [`strip_phase_executor_ir_template`](../crates/baml-rt-builder/src/builder/baml_gen/session_from_ir/phase_prompt.rs) so duplicate transcript/`output_format`/legacy lines are dropped (error correction — see `../assertions/how-to-write-agents.md` §3.3.1).
-8. **Citation drift** — [`compute_citation_drift_section`](../crates/baml-rt-provenance/src/effect_subscriber.rs) re-runs `project_prompt_context` on the live `RefTable`; idempotent history refs keep `#N` aligned with the last build.
 
 ## Non-negotiable invariants
 
@@ -221,7 +220,7 @@ The default **projection** appends new rows; it does not rewrite earlier project
 Implemented by [`project_prompt_context`](../crates/baml-rt-tools/src/prompt_projection.rs) (formatted for BAML as **`conversation_transcript`** only):
 
 - Each element is at least `{ "role", "content" }`.
-- **Message**-sourced rows may add `"citations": string[]` when the graph provided non-empty CITED refs (wire strings: `#N`, `@K`, line ranges, negation as `!#N` / `!@K`, per `Citation`).
+- Historic **Message**-sourced rows may add `"citations": string[]` when the graph provided non-empty CITED refs (new assistant messages no longer carry them) (wire strings: `#N`, `@K`, line ranges, negation as `!#N` / `!@K`, per `Citation`).
 - **Session** steps: each graph row is projected independently except **`SendDone`**, which is **omitted** from this JSON (FSM bookkeeping only; graph rows remain). If a read view must not appear twice, fix the write path; the projector does not dedupe repeated explicit `Read` lines.
 
 ## Episode `session_history`

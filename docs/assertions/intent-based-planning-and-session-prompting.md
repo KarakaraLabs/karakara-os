@@ -1,6 +1,6 @@
 # Intent-Based Planning and Session Prompting
 
-**Start with** [How to write agents](how-to-write-agents.md) for onboarding (entrypoints, tools, plans + ReAct, citations). This document is the **deep guide** for plan-anchored prompting, session template ordering, and executor discipline—it complements that model (**ReAct with plans and revision**, not a separate “heavy” paradigm).
+**Start with** [How to write agents](how-to-write-agents.md) for onboarding (entrypoints, tools, plans + ReAct, history refs). This document is the **deep guide** for plan-anchored prompting, session template ordering, and executor discipline—it complements that model (**ReAct with plans and revision**, not a separate “heavy” paradigm).
 
 This guide defines best practices for intent-driven orchestration with host-managed session tools in this runtime.
 
@@ -13,9 +13,9 @@ It focuses on:
 
 ## Core Principles
 
-- **Citations, not evidence strings:** planning intents and step transitions carry **ref-table `citations`**
-  (`#N` history, `@N` archive) so the system has **citable history** and **checked citations** in
-  provenance/drift — see `docs/assertions/citable-history-and-checked-citations.md`.
+- **Refs, not evidence strings:** planning intents and step transitions may carry optional **ref-table `citations`**
+  (`#N` history, `@N` archive) recorded in provenance; session steps and replies do not —
+  see `docs/assertions/citable-history-and-checked-citations.md`.
 - Keep planning intent-focused, not FSM-mechanics-focused.
 - Let runtime + generated session schemas enforce step shape and allowed operations.
 - Treat **conversation context** as graph-backed, append-only projection into `ctx.tags` (see backend section below).

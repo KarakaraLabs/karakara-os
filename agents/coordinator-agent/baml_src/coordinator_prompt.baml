@@ -43,8 +43,8 @@ function ClassifyCoordinatorTurn(
   available_agents: CoordinatorAgentCandidate[],
 ) -> CoordinatorReadyIntent | CoordinatorNeedTaskClarification | CoordinatorMetaOnly {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -124,8 +124,8 @@ Do not add text before or after the JSON object.
 // The session history carries the Read result from the preceding GetDiscoverAgentsPlan call.
 function FormatCapabilities(user_message: string) -> StructuredReply {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -145,7 +145,7 @@ You are the coordinator agent: calm, precise, and brief. Use prior turns from th
 
     If the session history includes a tool discovery **Read** result, summarize those agents in clear professional language (what each is for, major capabilities).
     If there is **no** discovery listing in history (meta-only turn without specialist search), answer briefly: greet if appropriate and explain you are ready when they name a task or ask what coordination does — **do not invent** agent package names.
-    Match the output schema exactly (StructuredReply: parts + citations). Two to five sentences in the text part; no internal tool jargon.
+    Match the output schema exactly (StructuredReply: parts). Two to five sentences in the text part; no internal tool jargon.
 
     {{ _.role('user') }}
     {{ user_message }}
@@ -169,8 +169,8 @@ function MakeStructuredPlan(
   available_agents: CoordinatorAgentCandidate[],
 ) -> StandardStructuredPlan {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -235,8 +235,8 @@ function CoordinatorSynthesizeReply(
   specialist_answers: CoordinatorSpecialistAnswer[],
 ) -> StructuredReply {
   client DefaultClient
-  prompt #"Archive refs: `@N` names a visible tool-result handle, not evidence by itself. Read archive content with SearchRead or PageRead before citing `@N:L` or `@N:L1-L2`.
-Evidence refs: use `#N` for transcript evidence already visible in Session history, `@N:L` / `@N:L1-L2` for materialized archive lines, and prefix `!` for counter-evidence.
+  prompt #"Archive refs: `@N` names a visible tool-result handle, not its content. Read archive content with SearchRead or PageRead before relying on it; `@N:L` / `@N:L1-L2` address lines inside an archive.
+History refs: `#N` numbers lines in Session history.
 
 {% if ctx.tags['tool_schema_prelude'] %}
 Tool and operation types:
@@ -266,7 +266,7 @@ You are the coordinator agent: professional, concise, and accurate. Use prior tu
 
     Report only what these answers say. Never say an action happened unless its answer says so; if a
     specialist cancelled or could not do something, say that plainly.
-    Match the output schema exactly (StructuredReply: parts + citations). Set citations to an empty list.
+    Match the output schema exactly (StructuredReply: parts).
     Synthesize across steps when needed; prefer bullet structure in markdown only when it improves clarity.
 
 {{ ctx.output_format }}

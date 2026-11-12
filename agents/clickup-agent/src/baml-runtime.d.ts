@@ -97,7 +97,6 @@ statuses: string[] | null;
 export interface ClickUpStructuredPlan { intent_description: string;
 objective: string;
 plan_steps: ClickUpPlanStep[];
-citations: string[] | null;
  }
 
 export interface ClickUpTaskSummary {
@@ -150,7 +149,6 @@ export interface DeleteTaskInput {
 
 export interface FinalResponse { message: string;
 structured_json: string | null;
-citations: string[];
  }
 
 export interface GetTaskInput {
@@ -280,11 +278,9 @@ input: ArchiveSearchReadInput;
 export interface SupportClickupSendStep { op: "Send";
 tool_name: "support/clickup";
 input: ListTeamsInput | ListSpacesInput | ListListsInput | ListTasksInput | GetTaskInput | CreateTaskInput | UpdateTaskInput | DeleteTaskInput;
-citations: string[];
  }
 
 export interface SupportClickupSessionPlan { step: SupportClickupOpenStep | SupportClickupSendStep | SupportClickupSearchReadStep | SupportClickupPageReadStep | SupportClickupFinishStep | SupportClickupAbortStep;
-citations: string[];
  }
 
 export type SystemOneAnswer = ChoiceAnswer | ScoreAnswer | NoulAnswer;
@@ -442,7 +438,7 @@ export interface A2aSessionClosed {
 export interface IntentSubmission {
     intentId: string;
     description: string;
-    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional: the provenance system captures LLM-produced citations automatically from BAML return types. */
+    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional. */
     citations?: string[];
     supersession?: "replaced" | "refined";
 }
@@ -480,7 +476,7 @@ export interface A2aExecutionSessionAwaitPlan {
 }
 export interface A2aExecutionSessionExecutable {
     sessionId: string;
-    /** citations are optional — LLM-produced citations are captured automatically by the provenance system from BAML return types. Only pass explicitly if the agent has out-of-band provenance to record. */
+    /** citations are optional plan-step refs recorded on the step transition. */
     startStep(stepId: string, citations?: string[]): Promise<void>;
     completeStep(stepId: string, citations?: string[]): Promise<void>;
     finish(): Promise<A2aSessionClosed>;
@@ -507,11 +503,10 @@ export interface DataPart { type: "data"; data: string; media_type: ReplyMediaTy
 export type ReplyPart = TextPart | DataPart;
 /**
  * Structured reply from a synthesis function.
- * Contains ordered reply parts and citations referencing the history entries (#N, @N) this reply was derived from.
+ * Contains ordered reply parts.
  */
 export interface StructuredReply {
   parts: ReplyPart[];
-  citations: string[];
 }
 /**
  * Result shape for session.run() callback. Return { message } on success (runtime emits message and completed);

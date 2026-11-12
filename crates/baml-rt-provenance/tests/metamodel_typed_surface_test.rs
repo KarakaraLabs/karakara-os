@@ -136,7 +136,7 @@ fn was_last_transitioned_to_projection_is_single_edge_hop_no_sort() {
         "head-pointer projection must filter by the head-pointer rel_type: {sql}"
     );
     assert!(
-        sql.contains("from_id IN $from_ids"),
+        sql.contains("from_id IN $from_ids_0"),
         "head-pointer projection must use IN-list batching against from_id: {sql}"
     );
     assert!(
@@ -165,7 +165,7 @@ fn was_last_transitioned_to_projection_is_single_edge_hop_no_sort() {
     );
     let obj = binds.as_object().expect("binds object");
     assert!(
-        obj.contains_key("from_ids"),
+        obj.contains_key("from_ids_0"),
         "task ids must be parameterised, not interpolated: binds={obj:?}"
     );
 }
@@ -203,7 +203,7 @@ fn was_last_executed_by_projection_is_single_edge_hop_no_sort() {
          the relationship is the edge: {sql}"
     );
     let obj = binds.as_object().expect("binds object");
-    assert!(obj.contains_key("from_ids"));
+    assert!(obj.contains_key("from_ids_0"));
 }
 
 #[test]

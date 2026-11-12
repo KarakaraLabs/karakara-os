@@ -8,33 +8,20 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use baml_rt_conversation::view::{ConversationItemContent, ProvenanceConversationContextItem};
 use baml_rt_core::{
     bus::{EffectEvent, EffectSubscriber, EffectSubscriberTier},
     ids::{ActivityAnchorId, AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId},
     llm_text::{extract_response_text, llm_completion_should_materialize_assistant_message},
 };
-use baml_rt_karakara::{
-    CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus, resolve_karakara_policy,
-};
 use baml_rt_observability::metrics::{self, LlmCallMetrics};
-use baml_rt_tools::{
-    ToolRegistry,
-    archive_refs::RefTable,
-    citations::{ParsedCitation, ResolvedCitation},
-    prompt_projection::project_prompt_context,
-};
 use serde_json::Value;
 
 use crate::{
     events::{
         BAML_PROV_RESERVED_TOOL_COMPLETION_ANCHOR, CallScope, LlmUsage, PlanStepSpec, ProvEvent,
-        ProvEventData, ResolvedCitationTarget,
+        ProvEventData,
     },
-    id_semantics::{SessionStepEntityId, SessionStepEntityInput},
-    provenance_item_to_projection_item,
-    store::{ProvenanceReadPrincipal, ProvenanceWriter},
-    types::ProvEntityId,
+    store::ProvenanceWriter,
 };
 
 /// Event type for provenance event construction
@@ -51,30 +38,6 @@ impl ProvenanceEventType {
             ProvenanceEventType::LlmCall => "LLM call",
         }
     }
-}
-
-/// Extract `citations: string[]` from a BAML LLM result (top-level or under `step`).
-fn extract_citation_strings_from_llm_result(payload: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(arr) = payload.get("citations").and_then(Value::as_array) {
-        for v in arr {
-            if let Some(s) = v.as_str() {
-                out.push(s.to_string());
-            }
-        }
-    }
-    if let Some(step) = payload.get("step").and_then(Value::as_object)
-        && let Some(arr) = step.get("citations").and_then(Value::as_array)
-    {
-        for v in arr {
-            if let Some(s) = v.as_str() {
-                out.push(s.to_string());
-            }
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// Helper to build provenance events with task/global branching.
@@ -149,8 +112,6 @@ pub type ActionDescriber = dyn Fn(Option<&str>, &serde_json::Value) -> Option<St
 pub struct ProvenanceEffectSubscriber {
     writer: Arc<dyn ProvenanceWriter>,
     action_describer: Option<Arc<ActionDescriber>>,
-    tool_registry: Option<Arc<ToolRegistry>>,
-    provenance_store: Option<Arc<crate::surreal_store::SurrealProvenanceStore>>,
     archive_ref_tables: Option<Arc<baml_rt_tools::archive_refs::ContextRefTables>>,
 }
 
@@ -159,25 +120,12 @@ impl ProvenanceEffectSubscriber {
         Self {
             writer,
             action_describer: None,
-            tool_registry: None,
-            provenance_store: None,
             archive_ref_tables: None,
         }
     }
 
     pub fn set_action_describer(&mut self, describer: Arc<ActionDescriber>) {
         self.action_describer = Some(describer);
-    }
-
-    pub fn set_tool_registry(&mut self, registry: Arc<ToolRegistry>) {
-        self.tool_registry = Some(registry);
-    }
-
-    pub fn set_provenance_store(
-        &mut self,
-        store: Arc<crate::surreal_store::SurrealProvenanceStore>,
-    ) {
-        self.provenance_store = Some(store);
     }
 
     pub fn set_archive_ref_tables(
@@ -205,200 +153,6 @@ impl ProvenanceEffectSubscriber {
                 }
             }
         }
-    }
-
-    async fn ref_table_for_context(
-        &self,
-        context_id: &ContextId,
-        principal: &ProvenanceReadPrincipal,
-        conversation_items: &[ProvenanceConversationContextItem],
-    ) -> Option<Arc<RefTable>> {
-        let registry = self.tool_registry.as_ref()?;
-        let projection_items: Vec<_> = conversation_items
-            .iter()
-            .cloned()
-            .filter_map(provenance_item_to_projection_item)
-            .collect();
-        if let Some(store) = self.provenance_store.as_ref() {
-            crate::surreal_store::prepare_ref_table_for_projection(
-                store,
-                context_id,
-                principal,
-                &projection_items,
-                registry.as_ref(),
-            )
-            .await
-            .ok()
-        } else {
-            let cached = match principal {
-                ProvenanceReadPrincipal::Agent(agent_id) => {
-                    self.archive_ref_tables.as_ref().and_then(|tables| {
-                        baml_rt_tools::archive_refs::get_ref_table(
-                            tables,
-                            context_id.as_str(),
-                            agent_id.as_str(),
-                        )
-                    })
-                }
-                ProvenanceReadPrincipal::Operator => None,
-            };
-            Some(cached.unwrap_or_else(|| Arc::new(RefTable::new())))
-        }
-    }
-
-    async fn compute_citation_integrity(
-        &self,
-        context_id: &ContextId,
-        principal: &ProvenanceReadPrincipal,
-        citation_strings: &[String],
-        conversation_items: &[ProvenanceConversationContextItem],
-        strict_citation_anchors: bool,
-    ) -> Option<CitationIntegrityAssessment> {
-        if citation_strings.is_empty() {
-            return None;
-        }
-        let ref_table = self
-            .ref_table_for_context(context_id, principal, conversation_items)
-            .await?;
-        let _history = project_prompt_context(
-            conversation_items
-                .iter()
-                .cloned()
-                .filter_map(provenance_item_to_projection_item)
-                .collect(),
-            self.tool_registry.as_ref()?,
-            &ref_table,
-            None,
-        );
-
-        let mut per_citation = Vec::new();
-        let mut resolved_count = 0u32;
-        let mut unresolved_count = 0u32;
-
-        for raw in citation_strings {
-            let parsed = match ParsedCitation::parse(raw) {
-                Ok(c) => c,
-                Err(_) => {
-                    unresolved_count += 1;
-                    per_citation.push(CitationIntegrityEntry {
-                        raw: raw.clone(),
-                        n: 0,
-                        is_history: false,
-                        negated: false,
-                        status: IntegrityStatus::Unresolved,
-                        activity_anchor: None,
-                        content_preview: None,
-                    });
-                    continue;
-                }
-            };
-            let negated = matches!(
-                &parsed,
-                ParsedCitation::History { negated: true, .. }
-                    | ParsedCitation::Archive { negated: true, .. }
-            );
-            let is_history = matches!(parsed, ParsedCitation::History { .. });
-            let n = match &parsed {
-                ParsedCitation::History { n, .. } => *n,
-                ParsedCitation::Archive { local, .. } => *local,
-            };
-
-            if let Some(resolved) = ResolvedCitation::resolve(&parsed, &ref_table) {
-                let status = if negated {
-                    IntegrityStatus::Negated
-                } else {
-                    IntegrityStatus::Resolved
-                };
-                if matches!(status, IntegrityStatus::Resolved) {
-                    resolved_count += 1;
-                }
-                let content_preview = if resolved.content.len() > 400 {
-                    Some(format!("{}…", &resolved.content[..400]))
-                } else {
-                    Some(resolved.content.clone())
-                };
-                per_citation.push(CitationIntegrityEntry {
-                    raw: raw.clone(),
-                    n,
-                    is_history,
-                    negated,
-                    status,
-                    activity_anchor: Some(resolved.activity_anchor),
-                    content_preview,
-                });
-            } else {
-                unresolved_count += 1;
-                per_citation.push(CitationIntegrityEntry {
-                    raw: raw.clone(),
-                    n,
-                    is_history,
-                    negated,
-                    status: IntegrityStatus::Unresolved,
-                    activity_anchor: None,
-                    content_preview: None,
-                });
-            }
-        }
-
-        if per_citation.is_empty() {
-            return None;
-        }
-
-        Some(CitationIntegrityAssessment {
-            per_citation,
-            unresolved_count,
-            resolved_count,
-            strict_mode: strict_citation_anchors,
-            strict_violation: strict_citation_anchors && unresolved_count > 0,
-        })
-    }
-
-    fn extract_resolved_citations(
-        integrity: &Option<CitationIntegrityAssessment>,
-        conversation_items: &[ProvenanceConversationContextItem],
-    ) -> Vec<ResolvedCitationTarget> {
-        let Some(assessment) = integrity.as_ref() else {
-            return vec![];
-        };
-
-        let mut anchor_to_node_id: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        for item in conversation_items {
-            let anchor = item.activity_anchor.as_str();
-            if let ConversationItemContent::SessionStep(_) = &item.content {
-                let node_id =
-                    ProvEntityId::derived::<SessionStepEntityId>(SessionStepEntityInput {
-                        event_anchor: anchor,
-                    })
-                    .into_string();
-                anchor_to_node_id.insert(anchor.to_string(), node_id);
-            }
-        }
-
-        assessment
-            .per_citation
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c.status,
-                    IntegrityStatus::Resolved | IntegrityStatus::Negated
-                )
-            })
-            .filter_map(|c| {
-                let activity_anchor = c.activity_anchor.as_deref()?;
-                if c.is_history {
-                    return None;
-                }
-                let node_id = anchor_to_node_id.get(activity_anchor)?;
-                Some(ResolvedCitationTarget {
-                    target_node_id: node_id.clone(),
-                    raw: c.raw.clone(),
-                    line_start: None,
-                    line_end: None,
-                    negated: c.negated,
-                })
-            })
-            .collect()
     }
 }
 
@@ -628,54 +382,6 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     "error"
                 };
                 let (tokens_in, tokens_out) = usage_tokens(&prov_usage);
-                let citation_strings = result_payload
-                    .as_ref()
-                    .map(extract_citation_strings_from_llm_result)
-                    .unwrap_or_default();
-                // Single store read for citation-grounded drift + resolved-citation extraction.
-                // This avoids duplicate conversation_context_with_task reads on the LlmCompleted hot path.
-                let conv_items_for_citations = if citation_strings.is_empty() {
-                    Vec::new()
-                } else {
-                    self.writer
-                        .conversation_context_with_task(context_id, Some(320), task_id.as_ref())
-                        .await
-                        .unwrap_or_default()
-                };
-                let agent_package = metadata
-                    .metadata
-                    .get("agent_package")
-                    .and_then(Value::as_str);
-                let citation_policy = resolve_karakara_policy(agent_package);
-                let citation_principal = agent_id_from_metadata(&metadata.metadata)
-                    .map(ProvenanceReadPrincipal::Agent)
-                    .unwrap_or(ProvenanceReadPrincipal::Operator);
-                let citation_integrity = if bool::from(*outcome) && !citation_strings.is_empty() {
-                    self.compute_citation_integrity(
-                        context_id,
-                        &citation_principal,
-                        &citation_strings,
-                        &conv_items_for_citations,
-                        citation_policy.strict_citation_anchors,
-                    )
-                    .await
-                } else {
-                    None
-                };
-                if let Some(ref integrity) = citation_integrity
-                    && integrity.strict_violation
-                {
-                    tracing::warn!(
-                        context_id = %context_id,
-                        unresolved = integrity.unresolved_count,
-                        agent_package = ?agent_package,
-                        "strict citation anchors: unresolved refs in LLM output"
-                    );
-                }
-                let resolved_citations = Self::extract_resolved_citations(
-                    &citation_integrity,
-                    &conv_items_for_citations,
-                );
                 let completion_metadata = match &metadata.metadata {
                     Value::Object(map) => {
                         let mut out = map.clone();
@@ -691,7 +397,7 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     &completion_metadata,
                     ProvenanceEventType::LlmCall,
                     |ctx_id, task_id| {
-                        ProvEvent::llm_call_completed_task_with_integrity(
+                        ProvEvent::llm_call_completed_task(
                             ctx_id,
                             task_id,
                             metadata.client.clone(),
@@ -702,13 +408,10 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                             prov_usage.clone(),
                             *duration_ms,
                             *outcome,
-                            citation_integrity.clone(),
-                            citation_strings.clone(),
-                            resolved_citations.clone(),
                         )
                     },
                     |ctx_id, msg_id| {
-                        ProvEvent::llm_call_completed_global_with_integrity(
+                        ProvEvent::llm_call_completed_global(
                             ctx_id,
                             msg_id,
                             metadata.client.clone(),
@@ -719,9 +422,6 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                             prov_usage_clone,
                             *duration_ms,
                             *outcome,
-                            citation_integrity.clone(),
-                            citation_strings.clone(),
-                            resolved_citations.clone(),
                         )
                     },
                 ) else {
@@ -767,14 +467,8 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                     model_alias = model_alias,
                     context_id = %context_id,
                     task_id = ?task_id,
-                    citations_count = citation_strings.len(),
-                    has_citation_integrity = citation_integrity.is_some(),
                     "Emitting LLM completion provenance event from effect-subscriber path"
                 );
-                let citation_values = resolved_citations
-                    .iter()
-                    .filter_map(|t| baml_rt_core::Citation::try_new(&t.raw).ok())
-                    .collect::<Vec<_>>();
                 self.writer
                     .add_event_with_logging(completed_event, "effect subscriber")
                     .await;
@@ -788,7 +482,6 @@ impl EffectSubscriber for ProvenanceEffectSubscriber {
                         result_payload.as_ref(),
                         &completed_id,
                         *duration_ms,
-                        citation_values,
                     )
                     .await;
                 }
@@ -1015,7 +708,6 @@ async fn emit_llm_assistant_transcript_message<W: ProvenanceWriter + ?Sized>(
     result_payload: Option<&Value>,
     completed_anchor: &ActivityAnchorId,
     timestamp_ms: u64,
-    citations: Vec<baml_rt_core::Citation>,
 ) {
     let Some(task_id) = task_id_from_metadata(metadata) else {
         return;
@@ -1039,7 +731,7 @@ async fn emit_llm_assistant_transcript_message<W: ProvenanceWriter + ?Sized>(
         None,
         agent_id,
         timestamp_ms,
-        citations,
+        Vec::new(),
     );
     writer
         .add_event_with_logging(msg_event, "llm assistant transcript")
@@ -1086,6 +778,7 @@ mod tests {
     struct RecordingWriter {
         events: Mutex<Vec<ProvEvent>>,
         seed_messages: Vec<ProvenanceContextMessage>,
+        history_reads: std::sync::atomic::AtomicUsize,
     }
 
     impl Default for RecordingWriter {
@@ -1093,7 +786,15 @@ mod tests {
             Self {
                 events: Mutex::new(Vec::new()),
                 seed_messages: Vec::new(),
+                history_reads: std::sync::atomic::AtomicUsize::new(0),
             }
+        }
+    }
+
+    impl RecordingWriter {
+        fn note_history_read(&self) {
+            self.history_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -1104,6 +805,7 @@ mod tests {
             _context_id: &ContextId,
             _limit: Option<usize>,
         ) -> crate::error::Result<Vec<ProvenanceContextMessage>> {
+            self.note_history_read();
             Ok(self.seed_messages.clone())
         }
 
@@ -1112,6 +814,7 @@ mod tests {
             _context_id: &ContextId,
             _limit: Option<usize>,
         ) -> crate::error::Result<Vec<ProvenanceConversationContextItem>> {
+            self.note_history_read();
             Ok(Vec::new())
         }
 
@@ -1121,6 +824,7 @@ mod tests {
             _limit: Option<usize>,
             _task_id: Option<&TaskId>,
         ) -> crate::error::Result<Vec<ProvenanceConversationContextItem>> {
+            self.note_history_read();
             Ok(Vec::new())
         }
     }
@@ -1168,34 +872,105 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn llm_completed_without_citations_has_no_integrity() {
-        let writer = Arc::new(RecordingWriter::default());
-        let subscriber = ProvenanceEffectSubscriber::new(writer.clone());
-        let event = EffectEvent::LlmCompleted {
+    fn llm_completed(result_payload: serde_json::Value) -> EffectEvent {
+        EffectEvent::LlmCompleted {
             context_id: ContextId::from("ctx-1"),
             metadata: LlmEffectMetadata {
                 client: "c".into(),
                 model: "m".into(),
                 function_name: "f".into(),
                 prompt: json!({}),
-                metadata: json!({"task_id": "task-1", "message_id": "msg-1"}),
+                metadata: json!({
+                    "task_id": "task-1",
+                    "message_id": "msg-1",
+                    "agent_id": uuid::Uuid::new_v4().to_string(),
+                }),
                 tool_name: baml_rt_core::bus::ToolNameResolution::NotApplicable,
             },
             usage: None,
-            result_payload: Some(json!({"message": "hello"})),
+            result_payload: Some(result_payload),
             duration_ms: 1,
             outcome: Outcome::Success,
             rejection_reason: None,
-        };
-        subscriber.on_effect(&event).await.unwrap();
+        }
+    }
+
+    /// Regression guard for the citation stall: model output that still carries legacy
+    /// `citations` (top-level, under `step`, or nested in a reply) must not trigger any
+    /// history read or reference-table rebuild on the awaited LlmCompleted path, and must
+    /// not attach citation data to the completion event or assistant transcript.
+    #[tokio::test]
+    async fn llm_completed_with_legacy_citation_shapes_does_no_history_work() {
+        let shapes = [
+            json!({"message": "hello", "citations": ["#5"]}),
+            json!({"step": {"op": "Send", "input": {}, "citations": ["#12", "@1"]}, "citations": ["@1"]}),
+            json!({"step": {"op": "ReadOnlyFinish", "reply": {"parts": [{"type": "text", "text": "hi"}], "citations": ["@2"]}}}),
+            json!({"message": "hello"}),
+        ];
+        for shape in shapes {
+            let writer = Arc::new(RecordingWriter::default());
+            let subscriber = ProvenanceEffectSubscriber::new(writer.clone());
+            subscriber
+                .on_effect(&llm_completed(shape.clone()))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                writer
+                    .history_reads
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "LlmCompleted must not read conversation history for {shape}"
+            );
+            let events = writer.events.lock().unwrap();
+            let completed = events
+                .iter()
+                .find_map(|e| match e.data() {
+                    ProvEventData::LlmCallCompleted {
+                        citation_integrity,
+                        citations,
+                        resolved_citations,
+                        ..
+                    } => Some((
+                        citation_integrity.clone(),
+                        citations.clone(),
+                        resolved_citations.clone(),
+                    )),
+                    _ => None,
+                })
+                .expect("completion event written before the awaited subscriber returns");
+            assert!(completed.0.is_none(), "no integrity for {shape}");
+            assert!(completed.1.is_empty(), "no citations for {shape}");
+            assert!(completed.2.is_empty(), "no resolved citations for {shape}");
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_completed_writes_assistant_transcript_without_citations() {
+        let writer = Arc::new(RecordingWriter::default());
+        let subscriber = ProvenanceEffectSubscriber::new(writer.clone());
+        subscriber
+            .on_effect(&llm_completed(
+                json!({"message": "hello", "citations": ["#1"]}),
+            ))
+            .await
+            .unwrap();
         let events = writer.events.lock().unwrap();
-        assert!(events.iter().any(|e| matches!(
-            e.data(),
-            ProvEventData::LlmCallCompleted {
-                citation_integrity: None,
-                ..
-            }
-        )));
+        let completed_at = events
+            .iter()
+            .position(|e| matches!(e.data(), ProvEventData::LlmCallCompleted { .. }))
+            .expect("completion event");
+        let transcript_at = events
+            .iter()
+            .position(|e| matches!(e.data(), ProvEventData::MessageSent { .. }))
+            .expect("assistant transcript message");
+        assert!(
+            completed_at < transcript_at,
+            "completion precedes transcript"
+        );
+        match events[transcript_at].data() {
+            ProvEventData::MessageSent { citations, .. } => assert!(citations.is_empty()),
+            _ => unreachable!(),
+        }
     }
 }

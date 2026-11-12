@@ -982,18 +982,22 @@ impl EdgeProjection {
         let rel = self.edge.as_rel_str();
         let mut where_clauses = vec![format!("rel_type = '{rel}'")];
         let mut binds = serde_json::Map::new();
-        if let Some(ids) = self.from_ids {
-            where_clauses.push("from_id IN $from_ids".to_string());
-            binds.insert(
-                "from_ids".to_string(),
-                Value::Array(ids.into_iter().map(Value::String).collect()),
-            );
-        }
+        // The `from_id` list drives the read in bound chunks (`$from_ids_0`, …); the rel_type
+        // and label filters then apply to those edges only.
+        let source = match self.from_ids {
+            Some(ids) => {
+                let (source, chunk_binds) =
+                    crate::surreal_hoist::chunked_id_source(TBL_EDGE, "from_id", "from_ids", &ids);
+                binds.extend(chunk_binds);
+                source
+            }
+            None => TBL_EDGE.to_string(),
+        };
         if let Some(label) = self.to_label {
             where_clauses.push(format!("to_label = '{label}'"));
         }
         let sql = format!(
-            "SELECT from_id, to_id OMIT id FROM {TBL_EDGE} WHERE {}",
+            "SELECT from_id, to_id OMIT id FROM {source} WHERE {}",
             where_clauses.join(" AND ")
         );
         (sql, Value::Object(binds))

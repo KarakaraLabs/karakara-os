@@ -33,7 +33,7 @@ function isJsonObject(v: unknown): v is JsonObject {
 
 function textReply(text: string): StructuredReply {
   const parts: ReplyPart[] = [{ type: "text", text }];
-  return { parts, citations: [] };
+  return { parts };
 }
 
 function slugGoal(goal: string): string {
@@ -83,7 +83,7 @@ function isFinalResponse(v: unknown): v is FinalResponse {
 
 function isStructuredReply(v: unknown): v is StructuredReply {
   return (
-    isJsonObject(v) && Array.isArray(v.parts) && Array.isArray(v.citations)
+    isJsonObject(v) && Array.isArray(v.parts)
   );
 }
 
@@ -303,10 +303,7 @@ function finalResponseToStructured(fr: FinalResponse): StructuredReply {
   if (sj) {
     parts.push({ type: "data", data: sj, media_type: "application/json" });
   }
-  const citations = Array.isArray(fr.citations)
-    ? fr.citations.filter((c): c is string => typeof c === "string")
-    : [];
-  return { parts, citations };
+  return { parts };
 }
 
 function formatLineFromClickUpItem(entry: JsonValue): string {
@@ -482,14 +479,6 @@ function collectStepResultsForPriorContext(steps: unknown[]): string {
   const joined = parts.join("\n\n---\n\n");
   if (joined.trim()) return joined.slice(0, PRIOR_RESULTS_MAX_CHARS);
   return stringifyUnknown(steps.slice(-5), PRIOR_RESULTS_MAX_CHARS);
-}
-
-function filterPlanCitations(plan: ClickUpStructuredPlan): string[] {
-  const raw = plan.citations;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (c): c is string => typeof c === "string" && c.trim().length > 0,
-  );
 }
 
 const MAX_DISCOVERY_CANDIDATES = 64;
@@ -2418,12 +2407,10 @@ export async function runClickUpStructuredPlan(
       ? await openA2aExecutionSession(sessionLabel)
       : null;
   const intentId = "intent-clickup-" + intentSlug;
-  const citations = filterPlanCitations(structured);
   const intentPhase = executionSession
     ? await executionSession.submitIntent({
         intentId,
         description: structured.intent_description || goal,
-        ...(citations.length > 0 ? { citations } : {}),
       })
     : null;
   const executable = intentPhase

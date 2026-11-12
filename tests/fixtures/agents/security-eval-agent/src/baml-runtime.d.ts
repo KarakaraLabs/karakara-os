@@ -142,11 +142,9 @@ input: ArchiveSearchReadInput;
 export interface SupportCrmSendStep { op: "Send";
 tool_name: "support/crm";
 input: QueryAccountsInput | QueryOpportunitiesInput | GetContactInput | CreateNoteInput | DeleteRecordInput | ExportRecordsInput;
-citations: string[];
  }
 
 export interface SupportCrmSessionPlan { step: SupportCrmOpenStep | SupportCrmSendStep | SupportCrmSearchReadStep | SupportCrmPageReadStep | SupportCrmFinishStep | SupportCrmAbortStep;
-citations: string[];
  }
 
 export interface SupportEmailAbortStep { op: "Abort";
@@ -170,11 +168,9 @@ input: ArchiveSearchReadInput;
 export interface SupportEmailSendStep { op: "Send";
 tool_name: "support/email";
 input: SendEmailInput;
-citations: string[];
  }
 
 export interface SupportEmailSessionPlan { step: SupportEmailOpenStep | SupportEmailSendStep | SupportEmailSearchReadStep | SupportEmailPageReadStep | SupportEmailFinishStep | SupportEmailAbortStep;
-citations: string[];
  }
 
 
@@ -301,7 +297,7 @@ export interface A2aSessionClosed {
 export interface IntentSubmission {
     intentId: string;
     description: string;
-    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional: the provenance system captures LLM-produced citations automatically from BAML return types. */
+    /** Citation refs grounding this intent — pass the \`citations\` field from the BAML planning function's return value. #N = session history lines, @N = archive refs. Optional. */
     citations?: string[];
     supersession?: "replaced" | "refined";
 }
@@ -339,7 +335,7 @@ export interface A2aExecutionSessionAwaitPlan {
 }
 export interface A2aExecutionSessionExecutable {
     sessionId: string;
-    /** citations are optional — LLM-produced citations are captured automatically by the provenance system from BAML return types. Only pass explicitly if the agent has out-of-band provenance to record. */
+    /** citations are optional plan-step refs recorded on the step transition. */
     startStep(stepId: string, citations?: string[]): Promise<void>;
     completeStep(stepId: string, citations?: string[]): Promise<void>;
     finish(): Promise<A2aSessionClosed>;
@@ -366,11 +362,10 @@ export interface DataPart { type: "data"; data: string; media_type: ReplyMediaTy
 export type ReplyPart = TextPart | DataPart;
 /**
  * Structured reply from a synthesis function.
- * Contains ordered reply parts and citations referencing the history entries (#N, @N) this reply was derived from.
+ * Contains ordered reply parts.
  */
 export interface StructuredReply {
   parts: ReplyPart[];
-  citations: string[];
 }
 /**
  * Result shape for session.run() callback. Return { message } on success (runtime emits message and completed);

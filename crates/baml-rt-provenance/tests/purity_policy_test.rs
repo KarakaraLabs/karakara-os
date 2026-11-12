@@ -7,7 +7,6 @@
 const EVENTS_RS: &str = include_str!("../src/events.rs");
 const NORMALIZER_RS: &str = include_str!("../src/normalizer.rs");
 const STORE_RS: &str = include_str!("../src/store.rs");
-const EFFECT_SUBSCRIBER_RS: &str = include_str!("../src/effect_subscriber.rs");
 const PROJECTING_PROVIDER_RS: &str =
     include_str!("../../baml-rt-a2a/src/conversation_context/projecting_provider.rs");
 
@@ -42,18 +41,6 @@ fn provenance_core_identity_fields_are_not_stringly_typed() {
             "policy violated in store.rs: identity field must use a typed newtype, found `{pattern}`",
         );
     }
-}
-
-#[test]
-fn citation_drift_uses_graph_backed_ref_hydration_when_store_wired() {
-    assert!(
-        EFFECT_SUBSCRIBER_RS.contains("prepare_ref_table_for_projection"),
-        "citation drift must hydrate refs from Surreal when provenance_store is set"
-    );
-    assert!(
-        EFFECT_SUBSCRIBER_RS.contains("set_provenance_store"),
-        "effect subscriber must accept SurrealProvenanceStore for ref hydration"
-    );
 }
 
 #[test]

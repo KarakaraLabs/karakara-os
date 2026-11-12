@@ -147,7 +147,9 @@ impl SurrealProvenanceStore {
         if task_id.is_some() {
             for task_filter_sql in [task_call_filter.as_str(), task_state_filter.as_str()] {
                 let sql = base_sql.replace("{task_filter}", task_filter_sql);
-                let mut q = self.db.query(&sql);
+                let mut q = self
+                    .db
+                    .query(crate::surreal_hoist::hoist_in_subqueries(&sql));
                 q = q.bind(("ctx_node_id", ctx_node_id.clone()));
                 if let Some(tid) = task_id {
                     q = q.bind(("task_entity_id", task_entity_id_string_raw(tid.as_str())));
@@ -176,7 +178,9 @@ impl SurrealProvenanceStore {
             });
         } else {
             let sql = base_sql.replace("{task_filter}", "");
-            let mut q = self.db.query(&sql);
+            let mut q = self
+                .db
+                .query(crate::surreal_hoist::hoist_in_subqueries(&sql));
             q = q.bind(("ctx_node_id", ctx_node_id));
             if let Some(after) = after_event_order {
                 q = q.bind(("after_event_order", after.as_u64()));
