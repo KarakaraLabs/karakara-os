@@ -106,7 +106,7 @@ async fn setup_stream_agent(
     A2aAgent::builder()
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_agent_id(provenance_agent_id())
         .with_effect_emitter(bus)
         .with_llm_client_config(Arc::new(tuned_llm_config()))

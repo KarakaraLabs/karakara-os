@@ -435,8 +435,7 @@ impl AgentPackage {
 
         let runtime_manager_arc = Arc::new(tokio::sync::RwLock::new(runtime_manager));
         let store = args.provenance_config.store().clone();
-        let host_ingress_recorder =
-            Arc::new(crate::services::HostIngressRecorderImpl::new(store.clone()));
+        let host_ingress_recorder = Arc::new(crate::services::HostIngressRecorderImpl::new(store));
         let quickjs_config = QuickJSConfig::new()
             .with_stream_collector_idle_secs(args.stream_idle_secs)
             .with_host_ingress_recorder(Some(host_ingress_recorder));
@@ -453,7 +452,7 @@ impl AgentPackage {
             .with_baml_helpers(true)
             .with_agent_identity(agent_package)
             .with_boot_event_id(boot_event_id)
-            .with_surreal_store(store)
+            .with_host_store(Arc::clone(args.provenance_config.host_store()))
             .with_llm_client_config(llm_config_arc);
         if let Some(tx) = args.observation_notify.clone() {
             agent_builder = agent_builder.with_observation_notify(tx);

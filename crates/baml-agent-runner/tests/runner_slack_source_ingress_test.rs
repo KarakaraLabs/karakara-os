@@ -105,7 +105,7 @@ async fn setup_slack_source_ingress_agent_unlocked(
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
         .with_quickjs_config(quickjs_config_with_host_ingress(Arc::clone(&store)))
-        .with_surreal_store(store)
+        .with_host_store(baml_rt::HostRuntimeStore::new(store))
         .build()
         .await
         .expect("build slack-agent agent");

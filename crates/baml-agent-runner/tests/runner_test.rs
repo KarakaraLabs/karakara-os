@@ -357,7 +357,7 @@ async fn setup_stream_baml_tool_agent() -> baml_rt::A2aAgent {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(e2e_llm_stream_collector_idle_secs()),
         )
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap()
@@ -408,7 +408,7 @@ async fn setup_tool_discovery_demo_agent() -> baml_rt::A2aAgent {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(e2e_llm_stream_collector_idle_secs()),
         )
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap()
@@ -434,7 +434,7 @@ async fn setup_stream_js_tool_agent() -> baml_rt::A2aAgent {
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap()
@@ -557,7 +557,7 @@ globalThis.onChatMessage = async function(message) {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(Some(e2e_secs_ci_or_local(300, 90))),
         )
-        .with_surreal_store(responder_store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(responder_store.clone()))
         .build()
         .await
         .unwrap();
@@ -639,7 +639,7 @@ globalThis.onChatMessage = async function(message) {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(Some(e2e_secs_ci_or_local(300, 90))),
         )
-        .with_surreal_store(initiator_store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(initiator_store.clone()))
         .build()
         .await
         .unwrap();
@@ -674,7 +674,7 @@ globalThis.onChatMessage = async function(message) {
         .with_runtime_manager(responder_manager)
         .with_init_js(responder_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
-        .with_surreal_store(responder_store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(responder_store.clone()))
         .build()
         .await
         .unwrap();
@@ -775,7 +775,7 @@ globalThis.onChatMessage = async function(message) {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(Some(e2e_secs_ci_or_local(300, 120))),
         )
-        .with_surreal_store(initiator_store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(initiator_store.clone()))
         .build()
         .await
         .unwrap();
@@ -808,7 +808,7 @@ async fn setup_task_lifecycle_demo_agent() -> baml_rt::A2aAgent {
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap()
@@ -833,7 +833,7 @@ async fn setup_argument_fixture_agent(fixture: &str) -> baml_rt::A2aAgent {
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(e2e_llm_stream_collector_idle_secs()),
         )
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap()
@@ -905,7 +905,7 @@ async fn setup_packaged_stream_baml_tool_agent() -> (baml_rt::A2aAgent, std::pat
             baml_rt::QuickJSConfig::new()
                 .with_stream_collector_idle_secs(e2e_llm_stream_collector_idle_secs()),
         )
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .expect("build packaged A2A agent");

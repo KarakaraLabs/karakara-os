@@ -243,7 +243,7 @@ async fn setup_clickup_agent_with_provenance(
         .expect("clickup-agent dist/index.js");
     let agent = baml_rt::A2aAgent::builder()
         .with_agent_id(agent_id)
-        .with_surreal_store(provenance.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(provenance.clone()))
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))

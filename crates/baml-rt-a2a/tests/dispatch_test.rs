@@ -43,7 +43,9 @@ async fn setup_fixture_agent(name: &str) -> (A2aAgent, PathBuf) {
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(
+            test_surreal_store().await,
+        ))
         .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
         .build()
         .await
@@ -124,7 +126,7 @@ async fn setup_fixture_agent_with_store(
     let agent = A2aAgent::builder()
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
         .with_llm_client_config(Arc::new(tuned_llm_config()))
         .with_compaction_summarizer(Arc::new(

@@ -19,7 +19,7 @@ async fn test_sandbox_environment() {
     let store = test_support::common::test_surreal_store().await;
     let agent = A2aAgent::builder()
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
-        .with_surreal_store(store)
+        .with_host_store(baml_rt::HostRuntimeStore::new(store))
         .build()
         .await
         .unwrap();

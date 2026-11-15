@@ -1220,7 +1220,7 @@ globalThis.onChatMessage = async function(_message) {
             .with_runtime_manager(manager)
             .with_init_js(code)
             .with_effect_emitter(Arc::new(BusWithEffects::new()))
-            .with_surreal_store(store)
+            .with_host_store(baml_rt::HostRuntimeStore::new(store))
             .build()
             .await
             .expect("build test agent")

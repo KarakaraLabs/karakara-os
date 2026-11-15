@@ -91,7 +91,7 @@ async fn setup_dispatch_ingress_demo_agent(
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
         .with_quickjs_config(quickjs_config_with_host_ingress(Arc::clone(&store)))
-        .with_surreal_store(store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(store.clone()))
         .build()
         .await
         .expect("build agent");

@@ -257,6 +257,8 @@ impl Cli {
 pub(crate) enum ProvenanceConfig {
     Surreal {
         store: Arc<baml_rt_provenance::SurrealProvenanceStore>,
+        /// The runner's single runtime store over `store`, shared by every agent it boots.
+        host_store: Arc<baml_rt_a2a::HostRuntimeStore>,
         mermaid_cache: Option<Arc<baml_rt_provenance::MermaidCache>>,
         config_service: Arc<dyn baml_rt_config::ConfigService>,
         llm_secret_resolver: Arc<dyn baml_rt_llm_config::SecretResolver>,
@@ -268,6 +270,11 @@ impl ProvenanceConfig {
     pub(crate) fn store(&self) -> &Arc<baml_rt_provenance::SurrealProvenanceStore> {
         let ProvenanceConfig::Surreal { store, .. } = self;
         store
+    }
+
+    pub(crate) fn host_store(&self) -> &Arc<baml_rt_a2a::HostRuntimeStore> {
+        let ProvenanceConfig::Surreal { host_store, .. } = self;
+        host_store
     }
 
     pub(crate) fn mermaid_cache(&self) -> Option<Arc<baml_rt_provenance::MermaidCache>> {
@@ -334,6 +341,7 @@ impl ProvenanceConfigBuilder {
 
     pub(crate) fn build(self) -> ProvenanceConfig {
         ProvenanceConfig::Surreal {
+            host_store: baml_rt_a2a::HostRuntimeStore::new(Arc::clone(&self.store)),
             store: self.store,
             mermaid_cache: self.mermaid_cache,
             config_service: self.config_service,

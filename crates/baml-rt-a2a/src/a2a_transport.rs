@@ -80,43 +80,41 @@ fn is_agent_to_agent_request(request: &Value) -> bool {
         == Some("agent-to-agent")
 }
 
-/// Single concrete backing store for SurrealDB mode.
-/// One instance is built from the builder's store Arc and reused as TaskStoreBackend and
-/// ProvenanceWriter; create-stream and tasks.subscribe use this same instance (cardinality one).
-struct SurrealRuntimeStore {
-    task_store: Arc<crate::task_subgraph_store::TaskSubgraphStore>,
-    provenance: Arc<baml_rt_provenance::SurrealProvenanceStore>,
+/// One agent's handle on the host's runtime store.
+///
+/// The task store, broadcaster and provenance graph belong to the
+/// [`HostRuntimeStore`](crate::HostRuntimeStore) and are shared by every agent
+/// on the host. The view only adds who is writing: the agent id and boot
+/// recorded on messages and task bindings.
+struct AgentStoreView {
+    host: Arc<crate::HostRuntimeStore>,
     agent_id: baml_rt_core::ids::AgentId,
     boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
 }
 
-impl SurrealRuntimeStore {
-    /// Single construction point: one TaskSubgraphStore over the same provenance Arc,
-    /// so pipeline and handler share the same store/connection. agent_id is required for
-    /// message provenance (a message is always sent to/from an agent).
+impl AgentStoreView {
     fn new(
-        provenance: Arc<baml_rt_provenance::SurrealProvenanceStore>,
+        host: Arc<crate::HostRuntimeStore>,
         agent_id: baml_rt_core::ids::AgentId,
         boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     ) -> Arc<Self> {
-        // Graph-only: the store reads through `TaskGraphReader`
-        // (implemented by `SurrealProvenanceStore`) and writes via
-        // the `ProvenanceWriter` `add_event` surface — no relational
-        // `a2a_*` mirror remains.
-        let reader: Arc<dyn baml_rt_provenance::TaskGraphReader> = provenance.clone();
-        let writer: Arc<dyn baml_rt_provenance::ProvenanceWriter> = provenance.clone();
         Arc::new(Self {
-            task_store: Arc::new(crate::task_subgraph_store::TaskSubgraphStore::new(
-                reader, writer,
-            )),
-            provenance,
+            host,
             agent_id,
             boot_event_id,
         })
     }
 
+    fn task_store(&self) -> &crate::task_subgraph_store::TaskSubgraphStore {
+        self.host.task_store()
+    }
+
+    fn provenance(&self) -> &Arc<baml_rt_provenance::SurrealProvenanceStore> {
+        self.host.provenance()
+    }
+
     async fn add_provenance_event_required(&self, event: ProvEvent, context: &str) -> Result<()> {
-        self.provenance.add_event(event).await.map_err(|source| {
+        self.provenance().add_event(event).await.map_err(|source| {
             BamlRtError::InvalidArgumentWithSource {
                 message: format!("failed to record provenance event for {context}"),
                 source: Box::new(source),
@@ -162,7 +160,7 @@ impl SurrealRuntimeStore {
             )));
         }
         if let Some(ref tid) = task_id {
-            self.provenance
+            self.provenance()
                 .bind_task_executing_agent_for(
                     context_id.clone(),
                     tid.clone(),
@@ -186,7 +184,7 @@ impl SurrealRuntimeStore {
             .await?;
         if scoped.task_id.is_some() {
             let start = Instant::now();
-            self.task_store.insert_message(&scoped).await?;
+            self.task_store().insert_message(&scoped).await?;
             record_task_store_metrics("insert_message_with_scope", "success", start);
         }
         Ok(())
@@ -194,7 +192,7 @@ impl SurrealRuntimeStore {
 }
 
 #[async_trait]
-impl TaskRepository for SurrealRuntimeStore {
+impl TaskRepository for AgentStoreView {
     async fn upsert(
         &self,
         mut task: crate::a2a_types::Task,
@@ -203,7 +201,7 @@ impl TaskRepository for SurrealRuntimeStore {
         let context_id = require_context_id(task.context_id.clone(), "task upsert")?;
         ensure_agent_id_in_metadata(&mut task.metadata, &self.agent_id);
         if let Some(task_id) = task.id.clone() {
-            self.provenance
+            self.provenance()
                 .bind_task_executing_agent_for(
                     context_id,
                     task_id,
@@ -217,7 +215,7 @@ impl TaskRepository for SurrealRuntimeStore {
                     source: Box::new(source),
                 })?;
         }
-        let out = self.task_store.upsert(task).await?;
+        let out = self.task_store().upsert(task).await?;
         record_task_store_metrics("upsert", "success", start);
         Ok(out)
     }
@@ -227,7 +225,7 @@ impl TaskRepository for SurrealRuntimeStore {
         context_id: Option<&baml_rt_core::ids::ContextId>,
     ) -> Result<()> {
         let start = Instant::now();
-        self.task_store
+        self.task_store()
             .ensure_task_exists(task_id, context_id)
             .await?;
         record_task_store_metrics("ensure_task_exists", "success", start);
@@ -235,7 +233,7 @@ impl TaskRepository for SurrealRuntimeStore {
     }
     async fn get(&self, id: &str, history_length: Option<usize>) -> Option<crate::a2a_types::Task> {
         let start = Instant::now();
-        let task = self.task_store.get(id, history_length).await;
+        let task = self.task_store().get(id, history_length).await;
         record_task_store_metrics("get", "success", start);
         task
     }
@@ -244,12 +242,12 @@ impl TaskRepository for SurrealRuntimeStore {
         request: &crate::a2a_types::ListTasksRequest,
     ) -> crate::a2a_types::ListTasksResponse {
         let start = Instant::now();
-        let response = self.task_store.list(request).await;
+        let response = self.task_store().list(request).await;
         record_task_store_metrics("list", "success", start);
         response
     }
     async fn cancel(&self, id: &str) -> Option<crate::a2a_types::Task> {
-        self.task_store.cancel(id).await
+        self.task_store().cancel(id).await
     }
     async fn insert_message_for_receiver(
         &self,
@@ -267,7 +265,7 @@ impl TaskRepository for SurrealRuntimeStore {
         self.emit_message_lifecycle_event(&message, "surreal insert_message")
             .await?;
         if message.task_id.is_some() {
-            self.task_store.insert_message(&message).await?;
+            self.task_store().insert_message(&message).await?;
         }
         record_task_store_metrics("insert_message", "success", start);
         Ok(())
@@ -275,14 +273,14 @@ impl TaskRepository for SurrealRuntimeStore {
 }
 
 #[async_trait]
-impl TaskEventRecorder for SurrealRuntimeStore {
+impl TaskEventRecorder for AgentStoreView {
     async fn record_status_update(
         &self,
         task_id: baml_rt_core::ids::TaskId,
         context_id: baml_rt_core::ids::ContextId,
         status: crate::a2a_types::TaskStatus,
     ) -> Result<Option<TaskUpdateEvent>> {
-        self.task_store
+        self.task_store()
             .record_status_update(task_id, context_id, status)
             .await
     }
@@ -294,14 +292,14 @@ impl TaskEventRecorder for SurrealRuntimeStore {
         append: Option<bool>,
         last_chunk: Option<bool>,
     ) -> Result<Option<TaskUpdateEvent>> {
-        self.task_store
+        self.task_store()
             .record_artifact_update(task_id, context_id, artifact, append, last_chunk)
             .await
     }
 }
 
 #[async_trait]
-impl TaskChunkApplier for SurrealRuntimeStore {
+impl TaskChunkApplier for AgentStoreView {
     async fn apply_task_chunk(
         &self,
         chunk: crate::a2a_types::ValidatedTaskChunk,
@@ -317,10 +315,10 @@ impl TaskChunkApplier for SurrealRuntimeStore {
         let chunk = crate::a2a_types::ValidatedTaskChunk::try_from(sr)?;
         let message_for_prov = chunk.resolved_assistant_message().scoped_owned();
         let start = Instant::now();
-        let events = self.task_store.apply_task_chunk(chunk).await?;
+        let events = self.task_store().apply_task_chunk(chunk).await?;
         record_task_store_metrics("apply_task_chunk", "success", start);
         if let Some((task_id, context_id)) = new_task_prov {
-            self.provenance
+            self.provenance()
                 .bind_task_executing_agent_for(
                     context_id,
                     task_id,
@@ -343,14 +341,14 @@ impl TaskChunkApplier for SurrealRuntimeStore {
 }
 
 #[async_trait]
-impl ProvenanceContextReader for SurrealRuntimeStore {
+impl ProvenanceContextReader for AgentStoreView {
     async fn context_messages(
         &self,
         context_id: &baml_rt_core::ids::ContextId,
         limit: Option<usize>,
     ) -> std::result::Result<Vec<ProvenanceContextMessage>, baml_rt_provenance::ProvenanceError>
     {
-        self.provenance.context_messages(context_id, limit).await
+        self.provenance().context_messages(context_id, limit).await
     }
 
     async fn conversation_context(
@@ -361,7 +359,7 @@ impl ProvenanceContextReader for SurrealRuntimeStore {
         Vec<ProvenanceConversationContextItem>,
         baml_rt_provenance::ProvenanceError,
     > {
-        self.provenance
+        self.provenance()
             .conversation_context(context_id, limit)
             .await
     }
@@ -375,19 +373,19 @@ impl ProvenanceContextReader for SurrealRuntimeStore {
         Vec<ProvenanceConversationContextItem>,
         baml_rt_provenance::ProvenanceError,
     > {
-        self.provenance
+        self.provenance()
             .conversation_context_with_task(context_id, limit, task_id)
             .await
     }
 }
 
 #[async_trait]
-impl ProvenanceWriter for SurrealRuntimeStore {
+impl ProvenanceWriter for AgentStoreView {
     async fn add_event(
         &self,
         event: ProvEvent,
     ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
-        self.provenance.add_event(event).await
+        self.provenance().add_event(event).await
     }
 
     async fn add_event_fenced(
@@ -395,7 +393,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         event: ProvEvent,
         fence: baml_rt_provenance::ContextAgentFence,
     ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
-        self.provenance.add_event_fenced(event, fence).await
+        self.provenance().add_event_fenced(event, fence).await
     }
 
     async fn gate_ledger_request(
@@ -406,7 +404,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         Option<baml_rt_provenance::GateLedgerRequest>,
         baml_rt_provenance::ProvenanceError,
     > {
-        self.provenance
+        self.provenance()
             .gate_ledger_request(context_id, gate_id)
             .await
     }
@@ -419,7 +417,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         Option<baml_rt_provenance::GateLedgerDecision>,
         baml_rt_provenance::ProvenanceError,
     > {
-        self.provenance
+        self.provenance()
             .gate_ledger_decision(context_id, gate_id)
             .await
     }
@@ -429,7 +427,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         context_id: &ContextId,
     ) -> std::result::Result<baml_rt_provenance::GateFlowOrigin, baml_rt_provenance::ProvenanceError>
     {
-        self.provenance.gate_flow_origin(context_id).await
+        self.provenance().gate_flow_origin(context_id).await
     }
 
     async fn claim_gate_decision(
@@ -440,7 +438,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         Option<baml_rt_provenance::GateLedgerDecision>,
         baml_rt_provenance::ProvenanceError,
     > {
-        self.provenance
+        self.provenance()
             .claim_gate_decision(context_id, decision)
             .await
     }
@@ -449,7 +447,7 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         &self,
         gate_id: &str,
     ) -> std::result::Result<bool, baml_rt_provenance::ProvenanceError> {
-        self.provenance.claim_gate_confirmation(gate_id).await
+        self.provenance().claim_gate_confirmation(gate_id).await
     }
 }
 
@@ -1016,8 +1014,8 @@ enum TaskStoreConfig {
 /// Provenance graph configuration. A writer is **always** mounted at build time.
 enum ProvenanceWriterConfig {
     Provided(Arc<dyn ProvenanceWriter>),
-    /// Task state and provenance in the same SurrealDB store via the canonical graph-backed runtime store.
-    Surreal(Arc<baml_rt_provenance::SurrealProvenanceStore>),
+    /// The host's shared runtime store (task state, live updates, provenance).
+    Host(Arc<crate::HostRuntimeStore>),
     /// Opens a dedicated **in-memory** SurrealDB graph (tests and local defaults). Not optional: no agent without a database.
     Default,
 }
@@ -1174,12 +1172,11 @@ impl A2aAgentBuilder {
         self
     }
 
-    /// Use SurrealDB for task state and provenance (same DB).
-    pub fn with_surreal_store(
-        mut self,
-        store: Arc<baml_rt_provenance::SurrealProvenanceStore>,
-    ) -> Self {
-        self.provenance_writer = ProvenanceWriterConfig::Surreal(store);
+    /// Mount the host's runtime store: task state, live task updates and
+    /// provenance. Agents on one host must share the same `Arc` so that
+    /// `tasks.subscribe` through any of them sees the owner's live frames.
+    pub fn with_host_store(mut self, host: Arc<crate::HostRuntimeStore>) -> Self {
+        self.provenance_writer = ProvenanceWriterConfig::Host(host);
         self
     }
 
@@ -1301,12 +1298,11 @@ impl A2aAgentBuilderWithEffectEmitter {
         self
     }
 
-    /// Use SurrealDB for task state and provenance (same DB).
-    pub fn with_surreal_store(
-        mut self,
-        store: Arc<baml_rt_provenance::SurrealProvenanceStore>,
-    ) -> Self {
-        self.provenance_writer = ProvenanceWriterConfig::Surreal(store);
+    /// Mount the host's runtime store: task state, live task updates and
+    /// provenance. Agents on one host must share the same `Arc` so that
+    /// `tasks.subscribe` through any of them sees the owner's live frames.
+    pub fn with_host_store(mut self, host: Arc<crate::HostRuntimeStore>) -> Self {
+        self.provenance_writer = ProvenanceWriterConfig::Host(host);
         self
     }
 
@@ -1515,7 +1511,7 @@ impl A2aAgentBuilderWithEffectEmitter {
             (TaskStoreConfig::Provided, _) => {
                 return Err(BamlRtError::InvalidArgument(
                     "A2aAgentBuilder: custom task store backends are no longer supported. \
-                     Use the canonical graph-backed runtime store via .with_surreal_store(...) \
+                     Use the canonical graph-backed runtime store via .with_host_store(...) \
                      or the default in-memory Surreal provenance graph."
                         .into(),
                 ));
@@ -1524,29 +1520,22 @@ impl A2aAgentBuilderWithEffectEmitter {
                 return Err(BamlRtError::InvalidArgument(format!(
                     "A2aAgentBuilder: .with_provenance_writer(...) is no longer sufficient \
                          for task handling because tasks.subscribe requires graph replay. \
-                         Mount a Surreal provenance graph with .with_surreal_store(...) instead; got writer type {}",
+                         Mount the host runtime store with .with_host_store(...) instead; got writer type {}",
                     std::any::type_name_of_val(writer.as_ref())
                 )));
             }
             (TaskStoreConfig::Default, ProvenanceWriterConfig::Default) => {
-                let prov = baml_rt_provenance::SurrealStoreBuilder::in_memory_isolated()
-                        .build()
-                        .await
-                        .map_err(|e| {
-                            BamlRtError::InvalidArgument(format!(
-                                "A2aAgentBuilder: failed to open default in-memory provenance store: {e}"
-                            ))
-                        })?;
-                let archive_src = Arc::clone(&prov);
+                let host = crate::HostRuntimeStore::in_memory().await?;
+                let archive_src = Arc::clone(host.provenance());
                 let runtime_store =
-                    SurrealRuntimeStore::new(prov, agent_id.clone(), self.boot_event_id.clone());
+                    AgentStoreView::new(host, agent_id.clone(), self.boot_event_id.clone());
                 let w: Arc<dyn ProvenanceWriter> = runtime_store.clone();
                 (runtime_store, Some(w), Some(archive_src))
             }
-            (TaskStoreConfig::Default, ProvenanceWriterConfig::Surreal(store)) => {
-                let archive_src = Arc::clone(&store);
+            (TaskStoreConfig::Default, ProvenanceWriterConfig::Host(host)) => {
+                let archive_src = Arc::clone(host.provenance());
                 let runtime_store =
-                    SurrealRuntimeStore::new(store, agent_id.clone(), self.boot_event_id.clone());
+                    AgentStoreView::new(host, agent_id.clone(), self.boot_event_id.clone());
                 let provenance_writer: Arc<dyn ProvenanceWriter> = runtime_store.clone();
                 (runtime_store, Some(provenance_writer), Some(archive_src))
             }
@@ -1578,8 +1567,8 @@ impl A2aAgentBuilderWithEffectEmitter {
         let task_handler: Arc<dyn TaskHandler> = Arc::new(DefaultTaskHandler::new(
             repository,
             recorder,
-            runtime_store.provenance.clone(),
-            runtime_store.task_store.broadcaster(),
+            runtime_store.provenance().clone(),
+            runtime_store.host.broadcaster(),
             bridge_handle.bridge().clone(),
             emitter.clone(),
         ));
@@ -2890,7 +2879,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        A2aAgent, SurrealRuntimeStore, TaskRepository,
+        A2aAgent, AgentStoreView, TaskRepository,
         should_preserve_wire_task_id_for_message_send_stream, synthesized_live_task_id,
         synthetic_input_required_chunk,
     };
@@ -3032,7 +3021,7 @@ mod tests {
             .expect("test store");
         let agent = A2aAgent::builder()
             .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
-            .with_surreal_store(store)
+            .with_host_store(crate::HostRuntimeStore::new(store))
             .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
             .build()
             .await
@@ -3076,7 +3065,11 @@ mod tests {
         let agent_id = baml_rt_core::ids::AgentId::from_uuid(
             baml_rt_core::ids::UuidId::parse_str("00000000-0000-0000-0000-000000000099").unwrap(),
         );
-        let runtime_store = SurrealRuntimeStore::new(provenance.clone(), agent_id, None);
+        let runtime_store = AgentStoreView::new(
+            crate::HostRuntimeStore::new(provenance.clone()),
+            agent_id,
+            None,
+        );
         let context_id = ContextId::new(99, 1);
         let task_id = TaskId::from_external(ExternalId::new("task-ctx-99-1"));
         runtime_store
@@ -3125,7 +3118,7 @@ mod tests {
             .expect("test store");
         let agent = A2aAgent::builder()
             .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
-            .with_surreal_store(store)
+            .with_host_store(crate::HostRuntimeStore::new(store))
             .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
             .build()
             .await

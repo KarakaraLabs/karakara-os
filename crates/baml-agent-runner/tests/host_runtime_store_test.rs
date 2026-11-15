@@ -4,8 +4,8 @@
 
 //! Several agents on one host share one runtime store.
 //!
-//! Every agent here is built on the **same** `SurrealProvenanceStore`, as the
-//! runner does in production. The host is a small in-process stand-in: it fans
+//! Every agent here is built on the **same** `HostRuntimeStore`, as the runner
+//! does in production. The host is a small in-process stand-in: it fans
 //! produced events out to subscribers and routes `system/internal_a2a`, recording
 //! `DelegationLinked` the way `baml-agent-runner::routing` does.
 //!
@@ -39,7 +39,7 @@ use std::{
 use async_trait::async_trait;
 use baml_derive::BamlType;
 use baml_rt::{
-    A2aAgent, A2aRequestHandler,
+    A2aAgent, A2aRequestHandler, HostRuntimeStore,
     baml::BamlRuntimeManager,
     tools::{BamlTool, ToolSessionContext},
 };
@@ -227,8 +227,9 @@ impl<'a> AgentSpec<'a> {
         self
     }
 
-    async fn build(self, store: &Arc<SurrealProvenanceStore>) -> A2aAgent {
-        let agent_id = boot(store, self.package).await;
+    /// Build on the host's shared runtime store, as the runner does.
+    async fn build(self, host: &Arc<HostRuntimeStore>) -> A2aAgent {
+        let agent_id = boot(host.provenance(), self.package).await;
         let mut builder = A2aAgent::builder()
             .with_agent_id(agent_id)
             .with_runtime_manager(self.manager);
@@ -240,7 +241,7 @@ impl<'a> AgentSpec<'a> {
         builder
             .with_init_js(self.js)
             .with_effect_emitter(Arc::new(BusWithEffects::new()))
-            .with_surreal_store(Arc::clone(store))
+            .with_host_store(Arc::clone(host))
             .build()
             .await
             .unwrap_or_else(|err| panic!("build {}: {err}", self.package))
@@ -386,18 +387,19 @@ struct IncidentHost {
 }
 
 async fn incident_host() -> IncidentHost {
-    let store = test_surreal_store().await;
+    let runtime = HostRuntimeStore::new(test_surreal_store().await);
+    let store = Arc::clone(runtime.provenance());
     let investigator = AgentSpec::new(
         "telemetry-investigator",
         SPECIALIST_JS.replace("__NAME__", "investigator"),
     )
-    .build(&store)
+    .build(&runtime)
     .await;
     let notifier = AgentSpec::new(
         "slack-notify",
         SPECIALIST_JS.replace("__NAME__", "slack-notify"),
     )
-    .build(&store)
+    .build(&runtime)
     .await;
     let router: Arc<dyn A2aRequestHandler> = Arc::new(DelegationRouter {
         caller_name: "maintenance-coordinator".into(),
@@ -408,10 +410,10 @@ async fn incident_host() -> IncidentHost {
     });
     let coordinator = AgentSpec::new("maintenance-coordinator", COORDINATOR_JS)
         .with_router(router)
-        .build(&store)
+        .build(&runtime)
         .await;
     let watcher = AgentSpec::new("alert-watcher", WATCHER_JS)
-        .build(&store)
+        .build(&runtime)
         .await;
 
     let agent_ids = HashMap::from([
@@ -608,7 +610,8 @@ struct LiveTask {
 }
 
 async fn live_task() -> LiveTask {
-    let store = test_surreal_store().await;
+    let runtime = HostRuntimeStore::new(test_surreal_store().await);
+    let store = Arc::clone(runtime.provenance());
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let mut owner_spec = AgentSpec::new("telemetry-investigator", HOLDING_JS);
@@ -620,9 +623,9 @@ async fn live_task() -> LiveTask {
         })
         .await
         .expect("register b1/hold");
-    let owner = owner_spec.build(&store).await;
+    let owner = owner_spec.build(&runtime).await;
     let other = AgentSpec::new("maintenance-coordinator", ECHO_JS)
-        .build(&store)
+        .build(&runtime)
         .await;
 
     let context_id = ContextId::from(format!("ctx-b1-{}", uuid::Uuid::new_v4()).as_str());
@@ -844,10 +847,9 @@ async fn subscribe_through_the_owner_streams_live_frames_and_closes() {
     live.owner_run.await.expect("owner run finishes");
 }
 
-/// Each agent listens on its own broadcaster, so a subscription through a
-/// non-owner replays history, then waits on a channel the owner never writes to.
+/// Every agent listens on the host's one broadcaster, so a subscription through
+/// a non-owner receives the frames the owner commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "known defect: tasks.subscribe through a non-owner agent never sees live frames"]
 async fn subscribe_through_another_agent_streams_live_frames_and_closes() {
     let _permit = e2e_serial_gate().acquire().await.expect("e2e gate");
     let live = live_task().await;

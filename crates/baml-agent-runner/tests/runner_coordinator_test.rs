@@ -181,7 +181,7 @@ async fn setup_coordinator(
         .expect("coordinator dist/index.js");
     let agent = baml_rt::A2aAgent::builder()
         .with_agent_id(agent_id)
-        .with_surreal_store(store.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(store.clone()))
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
