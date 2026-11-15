@@ -292,7 +292,19 @@ impl ToolInterceptor for KarakaraToolInterceptor {
                 args: context.args.clone(),
                 prompt: prompt.clone(),
             };
-            return match self.authorization_resolver.resolve(&request).await? {
+            // Fail closed: the interceptor pipeline treats an interceptor error as
+            // "continue", which would run an irreversible tool when the ledger is
+            // unreadable. A resolver failure is a denial with its reason.
+            let resolution = match self.authorization_resolver.resolve(&request).await {
+                Ok(resolution) => resolution,
+                Err(error) => {
+                    tracing::warn!(error = %error, "tier-3 gate resolver failed; denying");
+                    GateAuthorizationResolution::Deny {
+                        reason: format!("gate authorization could not be resolved: {error}"),
+                    }
+                }
+            };
+            return match resolution {
                 GateAuthorizationResolution::Allow { .. } => {
                     self.record_outcome(context, &verdict, "pass_gated");
                     self.register_postconditions_if_pass(context, &verdict);

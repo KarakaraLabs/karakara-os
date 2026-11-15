@@ -3,7 +3,8 @@
 
 use baml_rt_core::ids::{AgentId, ContextId, TaskId, UuidId};
 use baml_rt_provenance::{
-    AuditDecision, GateDecisionOutcome, GateFlowOrigin, GatePrincipal, ProvEvent, ProvenanceWriter,
+    AuditDecision, GateDecisionOutcome, GateDecisionWrite, GateFlowOrigin, GatePrincipal,
+    ProvEvent, ProvenanceWriter,
 };
 use test_support::testing::provenance_fixtures::build_isolated_store;
 use uuid::Uuid;
@@ -42,9 +43,9 @@ async fn expiry_sweep_skips_closed_rows_beyond_the_batch_limit() {
             .await
             .expect("gate request");
         store
-            .add_event(ProvEvent::audit_decision(
-                context_id.clone(),
-                AuditDecision::GateDecided {
+            .decide_gate(
+                &context_id,
+                GateDecisionWrite {
                     gate_id: format!("gate-{index}"),
                     task_id: task_id(index),
                     agent_id: agent,
@@ -54,7 +55,7 @@ async fn expiry_sweep_skips_closed_rows_beyond_the_batch_limit() {
                     },
                     reason: "trusted ingress".to_string(),
                 },
-            ))
+            )
             .await
             .expect("gate decision");
     }
@@ -139,5 +140,144 @@ async fn exactly_one_concurrent_caller_claims_a_gate_confirmation() {
             .await
             .expect("independent claim"),
         "claims for different gates are independent"
+    );
+}
+
+fn decision(index: usize, agent_id: AgentId, outcome: GateDecisionOutcome) -> GateDecisionWrite {
+    GateDecisionWrite {
+        gate_id: format!("gate-{index}"),
+        task_id: task_id(index),
+        agent_id,
+        outcome,
+        principal: match outcome {
+            GateDecisionOutcome::Allow => GatePrincipal::Channel {
+                channel: "C123".to_string(),
+                actor: "U123".to_string(),
+            },
+            GateDecisionOutcome::Deny => GatePrincipal::Runtime {
+                reason: "expiry".to_string(),
+            },
+        },
+        reason: "test".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn a_late_allow_cannot_replace_a_deny() {
+    let store = build_isolated_store().await;
+    let context_id = ContextId::new(702, 1);
+    let agent = agent_id();
+
+    let first = store
+        .decide_gate(
+            &context_id,
+            decision(1, agent.clone(), GateDecisionOutcome::Deny),
+        )
+        .await
+        .expect("deny");
+    assert_eq!(first.outcome, GateDecisionOutcome::Deny);
+    let second = store
+        .decide_gate(&context_id, decision(1, agent, GateDecisionOutcome::Allow))
+        .await
+        .expect("late allow");
+    assert_eq!(
+        second.outcome,
+        GateDecisionOutcome::Deny,
+        "the late writer must get the decision that stands"
+    );
+    let stored = store
+        .gate_ledger_decision(&context_id, "gate-1")
+        .await
+        .expect("read decision")
+        .expect("decision");
+    assert_eq!(stored.outcome, GateDecisionOutcome::Deny);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_decisions_all_see_one_outcome() {
+    let store = build_isolated_store().await;
+    let context_id = ContextId::new(702, 2);
+    let agent = agent_id();
+    let attempts = (0..8).map(|attempt| {
+        let store = store.clone();
+        let context_id = context_id.clone();
+        let outcome = if attempt % 2 == 0 {
+            GateDecisionOutcome::Allow
+        } else {
+            GateDecisionOutcome::Deny
+        };
+        let write = decision(2, agent.clone(), outcome);
+        tokio::spawn(async move { store.decide_gate(&context_id, write).await })
+    });
+    let mut outcomes = Vec::new();
+    for attempt in attempts {
+        outcomes.push(attempt.await.expect("task").expect("decide").outcome);
+    }
+    let stored = store
+        .gate_ledger_decision(&context_id, "gate-2")
+        .await
+        .expect("read decision")
+        .expect("decision")
+        .outcome;
+    assert!(
+        outcomes.iter().all(|outcome| *outcome == stored),
+        "every writer must observe the stored outcome: {outcomes:?} vs {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn malformed_expired_requests_are_quarantined_and_do_not_block_the_sweep() {
+    let store = build_isolated_store().await;
+    let context_id = ContextId::new(703, 1);
+    for index in 0..101 {
+        store
+            .db()
+            .query(
+                "CREATE prov_node CONTENT { node_id: $node_id, label: 'AuditDecision', props: { \
+                   audit_decision_kind: 'gate_requested', gate_id: $gate_id, \
+                   a2a_context_id: $context_id } }",
+            )
+            .bind(("node_id", format!("malformed-gate-{index}")))
+            .bind(("gate_id", format!("gate-malformed-{index}")))
+            .bind(("context_id", context_id.as_str().to_string()))
+            .await
+            .expect("insert malformed request")
+            .check()
+            .expect("malformed request write");
+    }
+    assert!(
+        store
+            .gate_ledger_request(&context_id, "gate-malformed-0")
+            .await
+            .is_err(),
+        "a request without an expiry is corrupt ledger data, not an immediate expiry"
+    );
+    let pending_agent = agent_id();
+    store
+        .add_event(requested(&context_id, 900, pending_agent))
+        .await
+        .expect("valid request");
+
+    // The first sweep quarantines the first 100 malformed rows; the next ones reach the
+    // last malformed row and the valid gate.
+    for _ in 0..3 {
+        store.expire_pending_gate_requests(2).await.expect("sweep");
+    }
+    let quarantined = store
+        .gate_ledger_decision(&context_id, "gate-malformed-0")
+        .await
+        .expect("read quarantined")
+        .expect("quarantine decision");
+    assert_eq!(quarantined.outcome, GateDecisionOutcome::Deny);
+    let expired = store
+        .gate_ledger_decision(&context_id, "gate-900")
+        .await
+        .expect("read expired")
+        .expect("valid gate must still expire");
+    assert_eq!(expired.outcome, GateDecisionOutcome::Deny);
+    assert_eq!(
+        store.expire_pending_gate_requests(2).await.expect("sweep"),
+        0,
+        "nothing left to sweep"
     );
 }

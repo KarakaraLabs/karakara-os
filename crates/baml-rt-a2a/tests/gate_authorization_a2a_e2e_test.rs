@@ -363,3 +363,150 @@ async fn machine_ingress_auto_approves_tier3_in_the_a2a_path() {
         baml_rt_provenance::GatePrincipal::Ingress { .. }
     ));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn machine_ingress_recovers_a_request_left_without_a_decision() {
+    let _permit = test_gate().await;
+    let context_id = ContextId::new(44, 1);
+    let store = build_isolated_store().await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::host_source_poll_recorded(
+            context_id.clone(),
+            "grafana".to_string(),
+            "grafana:alert-2".to_string(),
+            "alert-2".to_string(),
+            "grafana.alert.v1".to_string(),
+            1,
+            None,
+            Vec::new(),
+        ))
+        .await
+        .expect("write Grafana ingress");
+    let store_for_assert = store.clone();
+    let agent = setup_gate_agent_with_store(Some(store.clone())).await;
+    let task_id = TaskId::from_external(ExternalId::new("live-task:ctx-44-1:msg-gate-1"));
+    let scope = baml_rt_core::context::RuntimeScope::task_scope(
+        context_id.clone(),
+        agent.agent_id().clone(),
+        MessageId::from("msg-gate-1"),
+        task_id.clone(),
+    );
+    let gate_id = GateAuthorizationRequest {
+        scope: scope.clone(),
+        tool_name: "support/gate_delete".to_string(),
+        args: serde_json::json!({
+            "expression": { "left": 1, "operation": "Add", "right": 2 }
+        }),
+        prompt: String::new(),
+    }
+    .gate_id();
+    // Simulate an earlier attempt whose request write succeeded but whose decision
+    // write failed: a channel-less request with no decision.
+    store
+        .add_event(baml_rt_provenance::ProvEvent::audit_decision(
+            context_id.clone(),
+            baml_rt_provenance::AuditDecision::GateRequested {
+                gate_id: gate_id.clone(),
+                task_id,
+                agent_id: agent.agent_id().clone(),
+                tool_name: "support/gate_delete".to_string(),
+                channel: None,
+                expires_at_ms: baml_rt_core::now_unix_ms(baml_rt_core::clock_events::KARAKARA_GATE)
+                    + 900_000,
+            },
+        ))
+        .await
+        .expect("write orphaned request");
+    submit_grounding(&scope, grounded_artifact(), None);
+
+    let request = send_stream_request_with_task(
+        "msg-gate-1",
+        "gate-e2e",
+        "corr-44-1",
+        Some(context_id.clone()),
+        None,
+    );
+    let responses = collect_stream(&agent, request).await.expect("A2A stream");
+    let response = serde_json::to_string(&responses).unwrap_or_default();
+    assert!(
+        response.contains("executed:"),
+        "a channel-less request must be decided again, not left pending: {response}"
+    );
+    let decision = store_for_assert
+        .gate_ledger_decision(&context_id, &gate_id)
+        .await
+        .expect("read decision")
+        .expect("decision");
+    assert_eq!(
+        decision.outcome,
+        baml_rt_provenance::GateDecisionOutcome::Allow
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unreadable_gate_ledger_denies_instead_of_running_the_tool() {
+    let _permit = test_gate().await;
+    let context_id = ContextId::new(45, 1);
+    let store = build_isolated_store().await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::host_source_poll_recorded(
+            context_id.clone(),
+            "grafana".to_string(),
+            "grafana:alert-3".to_string(),
+            "alert-3".to_string(),
+            "grafana.alert.v1".to_string(),
+            1,
+            None,
+            Vec::new(),
+        ))
+        .await
+        .expect("write Grafana ingress");
+    let agent = setup_gate_agent_with_store(Some(store.clone())).await;
+    let task_id = TaskId::from_external(ExternalId::new("live-task:ctx-45-1:msg-gate-1"));
+    let scope = baml_rt_core::context::RuntimeScope::task_scope(
+        context_id.clone(),
+        agent.agent_id().clone(),
+        MessageId::from("msg-gate-1"),
+        task_id.clone(),
+    );
+    let gate_id = GateAuthorizationRequest {
+        scope: scope.clone(),
+        tool_name: "support/gate_delete".to_string(),
+        args: serde_json::json!({
+            "expression": { "left": 1, "operation": "Add", "right": 2 }
+        }),
+        prompt: String::new(),
+    }
+    .gate_id();
+    // An expiry that cannot be read back makes the ledger read fail. The gate must
+    // deny, even though this flow's origin would otherwise auto-approve.
+    store
+        .add_event(baml_rt_provenance::ProvEvent::audit_decision(
+            context_id.clone(),
+            baml_rt_provenance::AuditDecision::GateRequested {
+                gate_id,
+                task_id,
+                agent_id: agent.agent_id().clone(),
+                tool_name: "support/gate_delete".to_string(),
+                channel: Some("C123".to_string()),
+                expires_at_ms: u64::MAX,
+            },
+        ))
+        .await
+        .expect("write unreadable request");
+    submit_grounding(&scope, grounded_artifact(), None);
+
+    let request = send_stream_request_with_task(
+        "msg-gate-1",
+        "gate-e2e",
+        "corr-45-1",
+        Some(context_id),
+        None,
+    );
+    let responses = collect_stream(&agent, request).await.expect("A2A stream");
+    let response = serde_json::to_string(&responses).unwrap_or_default();
+    assert!(
+        !response.contains("executed:"),
+        "a gate that cannot be resolved must not run the tool: {response}"
+    );
+}

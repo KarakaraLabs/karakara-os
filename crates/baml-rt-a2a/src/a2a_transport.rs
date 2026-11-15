@@ -432,6 +432,19 @@ impl ProvenanceWriter for SurrealRuntimeStore {
         self.provenance.gate_flow_origin(context_id).await
     }
 
+    async fn claim_gate_decision(
+        &self,
+        context_id: &ContextId,
+        decision: &baml_rt_provenance::GateDecisionWrite,
+    ) -> std::result::Result<
+        Option<baml_rt_provenance::GateLedgerDecision>,
+        baml_rt_provenance::ProvenanceError,
+    > {
+        self.provenance
+            .claim_gate_decision(context_id, decision)
+            .await
+    }
+
     async fn claim_gate_confirmation(
         &self,
         gate_id: &str,

@@ -16,6 +16,8 @@ pub(crate) const TBL_ARCHIVE_LOCAL_COUNTER: &str = "archive_local_counter";
 pub(crate) const TBL_ARCHIVE_BODY: &str = "archive_body";
 /// Create-only claim per `gate_id`: the writer that creates it posts the channel confirmation.
 pub(crate) const TBL_GATE_CONFIRMATION_CLAIM: &str = "gate_confirmation_claim";
+/// Create-only decision per `gate_id`: the first writer wins and every reader sees that outcome.
+pub(crate) const TBL_GATE_DECISION: &str = "gate_decision";
 /// Stable `#N` index per `(context_id, activity_anchor, source)`; idempotent insert.
 pub(crate) const TBL_HISTORY_REF_REGISTRY: &str = "history_ref_registry";
 /// Monotonic per-context ref counter shared by `#N` and flat `@N` (`prefix = 1`) slots.

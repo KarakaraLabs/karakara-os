@@ -255,6 +255,14 @@ impl ProvenanceWriter for SurrealProvenanceStore {
         self.read_gate_flow_origin(context_id).await
     }
 
+    async fn claim_gate_decision(
+        &self,
+        context_id: &baml_rt_core::ids::ContextId,
+        decision: &crate::store::GateDecisionWrite,
+    ) -> Result<Option<crate::store::GateLedgerDecision>> {
+        self.claim_gate_decision_record(context_id, decision).await
+    }
+
     async fn claim_gate_confirmation(&self, gate_id: &str) -> Result<bool> {
         self.create_gate_confirmation_claim(gate_id).await
     }

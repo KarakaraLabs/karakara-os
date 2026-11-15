@@ -11,8 +11,8 @@ use baml_rt_karakara::{
     GateAuthorizationRequest, GateAuthorizationResolution, GateAuthorizationResolver,
 };
 use baml_rt_provenance::{
-    AuditDecision, GateDecisionOutcome, GateFlowOrigin, GateLedgerDecision, GatePrincipal,
-    ProvEvent, ProvenanceWriter,
+    AuditDecision, GateDecisionOutcome, GateDecisionWrite, GateFlowOrigin, GateLedgerDecision,
+    GatePrincipal, ProvEvent, ProvenanceWriter,
 };
 
 const DEFAULT_GATE_TTL: Duration = Duration::from_secs(15 * 60);
@@ -88,23 +88,24 @@ impl ProvenanceGateAuthorizationResolver {
             .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
     }
 
-    async fn record_decision(
+    /// Decide the gate once and return the decision that stands. If another writer
+    /// (a click, another runner, the expiry sweep) decided first, its decision wins.
+    async fn decide(
         &self,
         request: &GateAuthorizationRequest,
         gate_id: &str,
         outcome: GateDecisionOutcome,
         principal: GatePrincipal,
         reason: impl Into<String>,
-    ) -> Result<()> {
+    ) -> Result<GateAuthorizationResolution> {
         let task_id = request.scope.task_id_opt().cloned().ok_or_else(|| {
             BamlRtError::InvalidArgument("gate decision must be task-scoped".to_string())
         })?;
-        let outcome_label = outcome_label(outcome);
-        let principal_kind = principal_kind(&principal);
-        self.writer
-            .add_event(ProvEvent::audit_decision(
-                request.scope.context_id().clone(),
-                AuditDecision::GateDecided {
+        let stands = self
+            .writer
+            .decide_gate(
+                request.scope.context_id(),
+                GateDecisionWrite {
                     gate_id: gate_id.to_string(),
                     task_id,
                     agent_id: request.scope.agent_id().clone(),
@@ -112,11 +113,10 @@ impl ProvenanceGateAuthorizationResolver {
                     principal,
                     reason: reason.into(),
                 },
-            ))
+            )
             .await
             .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))?;
-        baml_rt_observability::metrics::record_gate_outcome(outcome_label, principal_kind);
-        Ok(())
+        Ok(resolution_from_decision(stands))
     }
 
     async fn post_slack_confirmation(
@@ -169,22 +169,23 @@ impl GateAuthorizationResolver for ProvenanceGateAuthorizationResolver {
             .gate_ledger_request(request.scope.context_id(), &gate_id)
             .await
             .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))?
+            // Only a channel request waits on someone. A request without a channel
+            // means an earlier attempt recorded it but failed to write its decision;
+            // fall through and decide again from the origin, which is deterministic.
+            .filter(|pending| pending.channel.is_some())
         {
             if now_ms >= pending.expires_at_ms {
-                let reason = "gate confirmation expired";
-                self.record_decision(
-                    request,
-                    &gate_id,
-                    GateDecisionOutcome::Deny,
-                    GatePrincipal::Runtime {
-                        reason: "expiry".to_string(),
-                    },
-                    reason,
-                )
-                .await?;
-                return Ok(GateAuthorizationResolution::Deny {
-                    reason: reason.to_string(),
-                });
+                return self
+                    .decide(
+                        request,
+                        &gate_id,
+                        GateDecisionOutcome::Deny,
+                        GatePrincipal::Runtime {
+                            reason: "expiry".to_string(),
+                        },
+                        "gate confirmation expired",
+                    )
+                    .await;
             }
             return Ok(GateAuthorizationResolution::Pending {
                 prompt: request.prompt.clone(),
@@ -218,19 +219,17 @@ impl GateAuthorizationResolver for ProvenanceGateAuthorizationResolver {
                 .post_slack_confirmation(request, &gate_id, channel)
                 .await
             {
-                let reason =
-                    format!("could not post confirmation to Slack channel {channel}: {error}");
-                self.record_decision(
-                    request,
-                    &gate_id,
-                    GateDecisionOutcome::Deny,
-                    GatePrincipal::Runtime {
-                        reason: "channel_delivery_failed".to_string(),
-                    },
-                    reason.clone(),
-                )
-                .await?;
-                return Ok(GateAuthorizationResolution::Deny { reason });
+                return self
+                    .decide(
+                        request,
+                        &gate_id,
+                        GateDecisionOutcome::Deny,
+                        GatePrincipal::Runtime {
+                            reason: "channel_delivery_failed".to_string(),
+                        },
+                        format!("could not post confirmation to Slack channel {channel}: {error}"),
+                    )
+                    .await;
             }
             baml_rt_observability::metrics::record_gate_outcome("pending", "channel");
             return Ok(GateAuthorizationResolution::Pending {
@@ -241,19 +240,17 @@ impl GateAuthorizationResolver for ProvenanceGateAuthorizationResolver {
         if let GateFlowOrigin::MachineIngress { ingress_key } = &origin {
             self.record_request(request, &gate_id, None, expires_at_ms)
                 .await?;
-            self.record_decision(
-                request,
-                &gate_id,
-                GateDecisionOutcome::Allow,
-                GatePrincipal::Ingress {
-                    ingress_key: ingress_key.clone(),
-                },
-                "registered machine ingress authorized the flow",
-            )
-            .await?;
-            return Ok(GateAuthorizationResolution::Allow {
-                principal: ingress_key.clone(),
-            });
+            return self
+                .decide(
+                    request,
+                    &gate_id,
+                    GateDecisionOutcome::Allow,
+                    GatePrincipal::Ingress {
+                        ingress_key: ingress_key.clone(),
+                    },
+                    "registered machine ingress authorized the flow",
+                )
+                .await;
         }
 
         let reason = match origin {
@@ -265,7 +262,7 @@ impl GateAuthorizationResolver for ProvenanceGateAuthorizationResolver {
         };
         self.record_request(request, &gate_id, None, expires_at_ms)
             .await?;
-        self.record_decision(
+        self.decide(
             request,
             &gate_id,
             GateDecisionOutcome::Deny,
@@ -274,9 +271,6 @@ impl GateAuthorizationResolver for ProvenanceGateAuthorizationResolver {
             },
             reason,
         )
-        .await?;
-        Ok(GateAuthorizationResolution::Deny {
-            reason: reason.to_string(),
-        })
+        .await
     }
 }

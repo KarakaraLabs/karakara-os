@@ -32,15 +32,11 @@ use crate::{
 /// Writes host ingress poll/unit user messages and lineage events to Surreal provenance.
 pub struct HostIngressRecorderImpl {
     store: Arc<SurrealProvenanceStore>,
-    gate_decision_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl HostIngressRecorderImpl {
     pub fn new(store: Arc<SurrealProvenanceStore>) -> Self {
-        Self {
-            store,
-            gate_decision_lock: Arc::new(tokio::sync::Mutex::new(())),
-        }
+        Self { store }
     }
 
     async fn record_slack_gate_decision(&self, event: &ProducedEvent) -> Result<()> {
@@ -154,7 +150,8 @@ impl HostIngressRecorderImpl {
         let actor = required("actor_id")?.to_string();
         let channel = required("channel_id")?.to_string();
         let gate_id = required("gate_id")?.to_string();
-        let _decision_guard = self.gate_decision_lock.lock().await;
+        // Cheap early exit for repeat clicks; `decide_gate` below is what makes the
+        // decision atomic against other clicks, other runners and the expiry sweep.
         if self
             .store
             .gate_ledger_decision(&context_id, &gate_id)
@@ -199,9 +196,9 @@ impl HostIngressRecorderImpl {
             )
         };
         self.store
-            .add_event(ProvEvent::audit_decision(
-                context_id,
-                crate::events::AuditDecision::GateDecided {
+            .decide_gate(
+                &context_id,
+                crate::store::GateDecisionWrite {
                     gate_id,
                     task_id,
                     agent_id,
@@ -209,8 +206,9 @@ impl HostIngressRecorderImpl {
                     principal,
                     reason,
                 },
-            ))
+            )
             .await
+            .map(|_| ())
             .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
     }
 }

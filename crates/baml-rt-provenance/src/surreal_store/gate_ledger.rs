@@ -12,8 +12,8 @@ use crate::{
     error::Result,
     events::{GateDecisionOutcome, GatePrincipal},
     id_semantics::context_entity_id_string,
-    store::{GateFlowOrigin, GateLedgerDecision, GateLedgerRequest},
-    surreal_tables::{TBL_EDGE, TBL_GATE_CONFIRMATION_CLAIM, TBL_NODE},
+    store::{GateDecisionWrite, GateFlowOrigin, GateLedgerDecision, GateLedgerRequest},
+    surreal_tables::{TBL_EDGE, TBL_GATE_CONFIRMATION_CLAIM, TBL_GATE_DECISION, TBL_NODE},
     vocabulary::context_scope,
 };
 
@@ -35,13 +35,17 @@ fn parse_gate_request(props: &Value, gate_id: &str) -> Result<GateLedgerRequest>
             activity_anchor: gate_id.to_string(),
             reason: "gate request is missing agent_id".to_string(),
         })?;
+    let expires_at_ms = props
+        .get("gate_expires_at_ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| crate::error::ProvenanceError::InvalidEvent {
+            activity_anchor: gate_id.to_string(),
+            reason: "gate request is missing expires_at_ms".to_string(),
+        })?;
     Ok(GateLedgerRequest {
         task_id,
         agent_id,
-        expires_at_ms: props
-            .get("gate_expires_at_ms")
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
+        expires_at_ms,
         channel: props
             .get("gate_channel")
             .and_then(Value::as_str)
@@ -49,7 +53,117 @@ fn parse_gate_request(props: &Value, gate_id: &str) -> Result<GateLedgerRequest>
     })
 }
 
+fn outcome_label(outcome: GateDecisionOutcome) -> &'static str {
+    match outcome {
+        GateDecisionOutcome::Allow => "allow",
+        GateDecisionOutcome::Deny => "deny",
+    }
+}
+
+fn parse_gate_decision(row: &Value, gate_id: &str) -> Result<GateLedgerDecision> {
+    let invalid = |reason: String| crate::error::ProvenanceError::InvalidEvent {
+        activity_anchor: gate_id.to_string(),
+        reason,
+    };
+    let outcome = match row.get("outcome").and_then(Value::as_str) {
+        Some("allow") => GateDecisionOutcome::Allow,
+        Some("deny") => GateDecisionOutcome::Deny,
+        Some(value) => return Err(invalid(format!("unknown gate outcome: {value}"))),
+        None => return Err(invalid("gate decision is missing outcome".to_string())),
+    };
+    let principal_json = row
+        .get("principal_json")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid("gate decision is missing principal".to_string()))?;
+    let principal = serde_json::from_str::<GatePrincipal>(principal_json)
+        .map_err(|error| invalid(format!("invalid gate principal: {error}")))?;
+    let reason = row
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Ok(GateLedgerDecision {
+        outcome,
+        principal,
+        reason,
+    })
+}
+
 impl SurrealProvenanceStore {
+    /// Create-only decision record keyed by `gate_id`. `Ok(None)` means this caller's
+    /// decision now stands; `Ok(Some(existing))` is the decision that won earlier.
+    async fn create_gate_decision_record(
+        &self,
+        context_id: &ContextId,
+        gate_id: &str,
+        outcome: GateDecisionOutcome,
+        principal: &GatePrincipal,
+        reason: &str,
+    ) -> Result<Option<GateLedgerDecision>> {
+        let principal_json = serde_json::to_string(principal).map_err(|error| {
+            crate::error::ProvenanceError::InvalidEvent {
+                activity_anchor: gate_id.to_string(),
+                reason: format!("could not encode gate principal: {error}"),
+            }
+        })?;
+        let sql = format!(
+            "CREATE type::record('{TBL_GATE_DECISION}', $gate_id) CONTENT {{ \
+               gate_id: $gate_id, context_id: $context_id, outcome: $outcome, \
+               principal_json: $principal_json, reason: $reason \
+             }} RETURN NONE;"
+        );
+        for attempt in 0..super::WRITE_CONFLICT_MAX_ATTEMPTS {
+            let outcome_result = match self
+                .db()
+                .query(&sql)
+                .bind(("gate_id", gate_id.to_string()))
+                .bind(("context_id", context_id.as_str().to_string()))
+                .bind(("outcome", outcome_label(outcome)))
+                .bind(("principal_json", principal_json.clone()))
+                .bind(("reason", reason.to_string()))
+                .await
+            {
+                Ok(response) => check_and_take_zero(response, std::convert::identity).map(|_| ()),
+                Err(error) => Err(error),
+            };
+            match outcome_result {
+                Ok(()) => return Ok(None),
+                Err(error) if super::is_duplicate_record_write(&error) => {
+                    return self
+                        .read_gate_ledger_decision(context_id, gate_id)
+                        .await?
+                        .map(Some)
+                        .ok_or_else(|| crate::error::ProvenanceError::InvalidEvent {
+                            activity_anchor: gate_id.to_string(),
+                            reason: "gate decision exists in another context".to_string(),
+                        });
+                }
+                Err(error) if super::is_transaction_conflict(&error) => {
+                    tokio::time::sleep(super::jittered_backoff(attempt)).await;
+                }
+                Err(error) => return Err(map_surreal_error(error)),
+            }
+        }
+        Err(crate::error::ProvenanceError::Contention {
+            details: format!("gate decision for {gate_id} kept conflicting"),
+        })
+    }
+
+    pub(super) async fn claim_gate_decision_record(
+        &self,
+        context_id: &ContextId,
+        decision: &GateDecisionWrite,
+    ) -> Result<Option<GateLedgerDecision>> {
+        self.create_gate_decision_record(
+            context_id,
+            &decision.gate_id,
+            decision.outcome,
+            &decision.principal,
+            &decision.reason,
+        )
+        .await
+    }
+
     pub(super) async fn read_gate_flow_origin(
         &self,
         context_id: &ContextId,
@@ -154,14 +268,14 @@ impl SurrealProvenanceStore {
     }
 
     pub async fn expire_pending_gate_requests(&self, now_ms: u64) -> Result<usize> {
+        // A row whose expiry is missing compares below any number, so it is picked up
+        // here and quarantined below instead of being skipped forever.
         let sql = format!(
             "SELECT props, props.gate_expires_at_ms AS gate_expiry FROM {TBL_NODE} \
              WHERE label = 'AuditDecision' \
                AND props.audit_decision_kind = 'gate_requested' \
-               AND props.gate_expires_at_ms <= $now_ms \
-               AND props.gate_id NOT IN (SELECT VALUE props.gate_id FROM {TBL_NODE} \
-                 WHERE label = 'AuditDecision' \
-                   AND props.audit_decision_kind = 'gate_decided') \
+               AND (props.gate_expires_at_ms = NONE OR props.gate_expires_at_ms <= $now_ms) \
+               AND props.gate_id NOT IN (SELECT VALUE gate_id FROM {TBL_GATE_DECISION}) \
              ORDER BY gate_expiry ASC LIMIT 100"
         );
         let response = self
@@ -177,31 +291,45 @@ impl SurrealProvenanceStore {
                 props.get("a2a_context_id").and_then(Value::as_str),
                 props.get("gate_id").and_then(Value::as_str),
             ) else {
+                tracing::warn!("gate request without context or gate id cannot be expired");
                 continue;
             };
             let context_id = ContextId::from(context_id);
-            let Ok(request) = parse_gate_request(props, gate_id) else {
-                tracing::warn!(gate_id, "ignoring malformed expired gate request");
-                continue;
-            };
-            crate::store::ProvenanceWriter::add_event(
-                self,
-                crate::events::ProvEvent::audit_decision(
-                    context_id,
-                    crate::events::AuditDecision::GateDecided {
-                        gate_id: gate_id.to_string(),
-                        task_id: request.task_id,
-                        agent_id: request.agent_id,
-                        outcome: GateDecisionOutcome::Deny,
-                        principal: GatePrincipal::Runtime {
-                            reason: "expiry".to_string(),
+            let request = match parse_gate_request(props, gate_id) {
+                Ok(request) => request,
+                Err(error) => {
+                    // Close the malformed gate with a Deny so it stops taking sweep slots
+                    // and any reader of this gate sees a decision instead of retrying.
+                    tracing::warn!(gate_id, error = %error, "quarantining malformed gate request");
+                    self.create_gate_decision_record(
+                        &context_id,
+                        gate_id,
+                        GateDecisionOutcome::Deny,
+                        &GatePrincipal::Runtime {
+                            reason: "malformed_request".to_string(),
                         },
-                        reason: "gate confirmation expired".to_string(),
-                    },
-                ),
-            )
-            .await?;
-            expired += 1;
+                        &format!("malformed gate request: {error}"),
+                    )
+                    .await?;
+                    continue;
+                }
+            };
+            let decision = GateDecisionWrite {
+                gate_id: gate_id.to_string(),
+                task_id: request.task_id,
+                agent_id: request.agent_id,
+                outcome: GateDecisionOutcome::Deny,
+                principal: GatePrincipal::Runtime {
+                    reason: "expiry".to_string(),
+                },
+                reason: "gate confirmation expired".to_string(),
+            };
+            let stands =
+                crate::store::ProvenanceWriter::decide_gate(self, &context_id, decision.clone())
+                    .await?;
+            if stands.principal == decision.principal && stands.outcome == decision.outcome {
+                expired += 1;
+            }
         }
         Ok(expired)
     }
@@ -225,60 +353,21 @@ impl SurrealProvenanceStore {
         context_id: &ContextId,
         gate_id: &str,
     ) -> Result<Option<GateLedgerDecision>> {
-        let Some(props) = self
-            .read_gate_audit_props(context_id, gate_id, "gate_decided")
-            .await?
-        else {
-            return Ok(None);
-        };
-        let outcome = match props.get("gate_outcome").and_then(Value::as_str) {
-            Some("allow") => GateDecisionOutcome::Allow,
-            Some("deny") => GateDecisionOutcome::Deny,
-            Some(value) => {
-                return Err(crate::error::ProvenanceError::InvalidEvent {
-                    activity_anchor: gate_id.to_string(),
-                    reason: format!("unknown gate outcome: {value}"),
-                });
-            }
-            None => {
-                return Err(crate::error::ProvenanceError::InvalidEvent {
-                    activity_anchor: gate_id.to_string(),
-                    reason: "gate decision is missing outcome".to_string(),
-                });
-            }
-        };
-        let principal_value = props.get("gate_principal").cloned().ok_or_else(|| {
-            crate::error::ProvenanceError::InvalidEvent {
-                activity_anchor: gate_id.to_string(),
-                reason: "gate decision is missing principal".to_string(),
-            }
-        })?;
-        let principal_json = match principal_value {
-            Value::String(encoded) => serde_json::from_str(&encoded).map_err(|error| {
-                crate::error::ProvenanceError::InvalidEvent {
-                    activity_anchor: gate_id.to_string(),
-                    reason: format!("invalid encoded gate principal: {error}"),
-                }
-            })?,
-            value => value,
-        };
-        let principal =
-            serde_json::from_value::<GatePrincipal>(principal_json).map_err(|error| {
-                crate::error::ProvenanceError::InvalidEvent {
-                    activity_anchor: gate_id.to_string(),
-                    reason: format!("invalid gate principal: {error}"),
-                }
-            })?;
-        let reason = props
-            .get("a2a_reason")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        Ok(Some(GateLedgerDecision {
-            outcome,
-            principal,
-            reason,
-        }))
+        let sql = format!(
+            "SELECT * FROM type::record('{TBL_GATE_DECISION}', $gate_id) \
+             WHERE context_id = $context_id"
+        );
+        let response = self
+            .db()
+            .query(&sql)
+            .bind(("gate_id", gate_id.to_string()))
+            .bind(("context_id", context_id.as_str().to_string()))
+            .await
+            .map_err(map_surreal_error)?;
+        let rows = check_and_take_zero(response, map_surreal_error)?;
+        rows.first()
+            .map(|row| parse_gate_decision(row, gate_id))
+            .transpose()
     }
 
     async fn read_gate_audit_props(

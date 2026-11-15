@@ -94,6 +94,16 @@ impl ProvenanceWriter for NotifyingProvenanceWriter {
         self.inner.gate_flow_origin(context_id).await
     }
 
+    // `decide_gate` keeps its trait default here, so the winner's `GateDecided`
+    // event goes through this wrapper's `add_event` and is observed.
+    async fn claim_gate_decision(
+        &self,
+        context_id: &ContextId,
+        decision: &baml_rt_provenance::GateDecisionWrite,
+    ) -> Result<Option<baml_rt_provenance::GateLedgerDecision>> {
+        self.inner.claim_gate_decision(context_id, decision).await
+    }
+
     async fn claim_gate_confirmation(&self, gate_id: &str) -> Result<bool> {
         self.inner.claim_gate_confirmation(gate_id).await
     }

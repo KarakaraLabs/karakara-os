@@ -84,6 +84,8 @@ task-less scopes share one key (`agent_id:`).
       (`pending_auth.rs` removed).
 - [x] No channel to surface to → gate resolves `Deny` with a structured reason.
 - [x] `gate_id` includes context and task; task-less scopes are refused.
+- [x] A resolver error denies the call. The interceptor pipeline treats interceptor errors as
+      "continue", which would otherwise run the tool (`baml-rt-interceptor/src/interceptor.rs`).
 - [x] Tests: resume with arbitrary text never grants (`test_chat_text_never_grants_tier3_authorization`);
       no resolver denies with reason (`grounded_tier3_without_host_resolver_denies_with_reason`).
 
@@ -93,6 +95,10 @@ task-less scopes share one key (`agent_id:`).
       separate edge was needed. The poll write now fails the poll instead of only logging.
 - [x] Gate resolution applies the rule in design point 2 and emits `GateRequested` + `GateDecided`.
 - [x] Global `PendingGateAuthStore` replaced by the durable ledger (`surreal_store/gate_ledger.rs`).
+- [x] Decisions are a create-only `gate_decision` record per `gate_id`: the first writer (click,
+      resolver, expiry sweep, any runner) wins; `GateDecided` is the winner's audit event.
+- [x] A request without a channel is decided again rather than left pending; malformed expired
+      requests are quarantined as Deny so they cannot block the sweep; expiry is required.
 - [x] Tests: machine ingress auto-approves tier-3 over A2A and records an `Ingress` principal
       (`machine_ingress_auto_approves_tier3_in_the_a2a_path`); origin from graph-linked ingress.
 

@@ -171,12 +171,12 @@ pub use read::{
 };
 pub use store::{
     ActivityRef, ArchiveRef, ContextHistoryCursor, ContextHistoryPage, GateActivityQueryResult,
-    GateFlowOrigin, GateLedgerDecision, GateLedgerRequest, PayloadRef, PlanningIntentRecord,
-    PlanningPlanRecord, PlanningPlanStepRecord, ProvenanceArchivePayload, ProvenanceArchiveRecord,
-    ProvenanceContextReader, ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
-    ProvenanceOpsQueryResponse, ProvenanceOpsResource, ProvenanceOutcomeSegment,
-    ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceReadPrincipal,
-    ProvenanceResponseProfile, ProvenanceWriter, TaskAgentResolution,
+    GateDecisionWrite, GateFlowOrigin, GateLedgerDecision, GateLedgerRequest, PayloadRef,
+    PlanningIntentRecord, PlanningPlanRecord, PlanningPlanStepRecord, ProvenanceArchivePayload,
+    ProvenanceArchiveRecord, ProvenanceContextReader, ProvenanceOpsFilters, ProvenanceOpsQuery,
+    ProvenanceOpsQueryRequest, ProvenanceOpsQueryResponse, ProvenanceOpsResource,
+    ProvenanceOutcomeSegment, ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent,
+    ProvenanceReadPrincipal, ProvenanceResponseProfile, ProvenanceWriter, TaskAgentResolution,
 };
 pub use surreal_config::SurrealStoreConfig;
 pub use surreal_store::{
