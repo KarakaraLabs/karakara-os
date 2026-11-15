@@ -265,7 +265,7 @@ async fn grounded_tier2_passes() {
 }
 
 #[tokio::test]
-async fn grounded_tier3_requires_authorization() {
+async fn grounded_tier3_without_host_resolver_denies_with_reason() {
     let _guard = conformance_lock().lock().await;
     let store = Arc::new(GroundingStore::new());
     store.submit(&runtime_scope(), grounded_artifact(), None);
@@ -275,11 +275,11 @@ async fn grounded_tier3_requires_authorization() {
     });
     let decision = intercept(&gate, "bash", t3_cmd, ToolAccess::Delete).await;
     match decision {
-        InterceptorDecision::RequireAuthorization(prompt) => {
-            assert!(prompt.contains("authorization"));
-            assert!(prompt.contains("Postconditions"));
+        InterceptorDecision::Block(reason) => {
+            assert!(reason.contains("authorization denied"));
+            assert!(reason.contains("no registered ingress or channel"));
         }
-        other => panic!("expected RequireAuthorization, got {other:?}"),
+        other => panic!("expected fail-closed block, got {other:?}"),
     }
 }
 

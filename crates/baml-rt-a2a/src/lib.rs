@@ -18,6 +18,7 @@ pub mod error_classifier;
 pub mod error_mapping;
 pub mod event_dispatcher;
 pub mod events;
+pub(crate) mod gate_authorization;
 pub mod handlers;
 pub mod host_compaction;
 pub(crate) mod live_stream;

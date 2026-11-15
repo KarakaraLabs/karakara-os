@@ -26,6 +26,7 @@ static A2A_STREAM_CHUNK_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static A2A_STREAM_CHUNK_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
 static TOOL_INVOCATION_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static TOOL_INVOCATION_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
+static GATE_OUTCOME_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static TYPESAFE_PROVIDER_INVARIANT_DRIFT_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static PROVENANCE_WRITE_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
 static PROVENANCE_WRITE_HISTOGRAM: OnceLock<Histogram<f64>> = OnceLock::new();
@@ -133,6 +134,14 @@ fn tool_invocation_histogram() -> &'static Histogram<f64> {
     TOOL_INVOCATION_HISTOGRAM.get_or_init(|| {
         global::meter(METER_NAME)
             .f64_histogram("baml_rt.tool.invocation_duration_ms")
+            .init()
+    })
+}
+
+fn gate_outcome_counter() -> &'static Counter<u64> {
+    GATE_OUTCOME_COUNTER.get_or_init(|| {
+        global::meter(METER_NAME)
+            .u64_counter("baml_rt.gate.outcome_total")
             .init()
     })
 }
@@ -297,6 +306,15 @@ pub fn record_tool_invocation(tool_name: &str, result: &str, duration: Duration)
     ];
     tool_invocation_counter().add(1, attributes);
     tool_invocation_histogram().record(duration.as_millis() as f64, attributes);
+}
+
+/// Record a bounded gate result. Principal values are reduced to their kind.
+pub fn record_gate_outcome(outcome: &'static str, principal_kind: &'static str) {
+    let attributes = &[
+        KeyValue::new("outcome", outcome),
+        KeyValue::new("principal.kind", principal_kind),
+    ];
+    gate_outcome_counter().add(1, attributes);
 }
 
 /// Record a tolerated TypeSafe response invariant drift using the allowlisted request model.

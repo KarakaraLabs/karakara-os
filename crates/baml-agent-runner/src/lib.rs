@@ -1012,6 +1012,18 @@ async fn run_event_poll_cycle(
     dispatcher: &mut baml_rt_a2a::EventDispatcher,
     deployment_state: &deployment_state::DeploymentStateStore,
 ) {
+    match dispatcher.expire_pending_gates().await {
+        Ok(expired) if expired > 0 => {
+            for _ in 0..expired {
+                baml_rt_observability::metrics::record_gate_outcome("deny", "runtime");
+            }
+            info!(expired, "expired pending gate requests");
+        }
+        Err(error) => {
+            warn!(%error, "failed to expire pending gate requests");
+        }
+        _ => {}
+    }
     let results = dispatcher.poll_and_deliver().await;
     for (producer_key, outcome) in &results {
         match outcome {

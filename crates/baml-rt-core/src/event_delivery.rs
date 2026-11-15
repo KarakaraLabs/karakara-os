@@ -108,6 +108,13 @@ impl HostPublishService {
         }
     }
 
+    pub async fn expire_pending_gates(&self) -> Result<usize> {
+        match self.recorder.as_ref() {
+            Some(recorder) => recorder.expire_pending_gates().await,
+            None => Ok(0),
+        }
+    }
+
     /// Publish without provenance recording (tests and minimal dispatchers).
     pub fn without_provenance() -> Arc<Self> {
         Arc::new(Self::new(None, None))

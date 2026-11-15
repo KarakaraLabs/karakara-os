@@ -134,8 +134,9 @@ pub use episode::{
 pub use error::ProvenanceError;
 pub use events::{
     AgentBootedEvent, AgentStoppedEvent, AgentType, AuditDecision, CallScope, DelegationLinkedSpec,
-    GlobalEvent, LlmUsage, PlanStepSpec, ProvEvent, ProvEventData, ReservedAnchor, TaskScopedEvent,
-    ToolSessionStepOpKind, allocate_activity_anchor, serialized_prompt_utf8_len,
+    GateDecisionOutcome, GatePrincipal, GlobalEvent, LlmUsage, PlanStepSpec, ProvEvent,
+    ProvEventData, ReservedAnchor, TaskScopedEvent, ToolSessionStepOpKind,
+    allocate_activity_anchor, serialized_prompt_utf8_len,
 };
 pub use graph_export::{ExportScope, ExportedGraph, GraphExporter};
 pub use graph_model::{
@@ -170,9 +171,9 @@ pub use read::{
 };
 pub use store::{
     ActivityRef, ArchiveRef, ContextHistoryCursor, ContextHistoryPage, GateActivityQueryResult,
-    PayloadRef, PlanningIntentRecord, PlanningPlanRecord, PlanningPlanStepRecord,
-    ProvenanceArchivePayload, ProvenanceArchiveRecord, ProvenanceContextReader,
-    ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
+    GateFlowOrigin, GateLedgerDecision, GateLedgerRequest, PayloadRef, PlanningIntentRecord,
+    PlanningPlanRecord, PlanningPlanStepRecord, ProvenanceArchivePayload, ProvenanceArchiveRecord,
+    ProvenanceContextReader, ProvenanceOpsFilters, ProvenanceOpsQuery, ProvenanceOpsQueryRequest,
     ProvenanceOpsQueryResponse, ProvenanceOpsResource, ProvenanceOutcomeSegment,
     ProvenancePlanningQuery, ProvenanceQueryApi, ProvenanceReadIntent, ProvenanceReadPrincipal,
     ProvenanceResponseProfile, ProvenanceWriter, TaskAgentResolution,

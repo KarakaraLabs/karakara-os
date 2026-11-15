@@ -13,6 +13,7 @@ regex = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
+sha2 = { workspace = true }
 baml-rt-core = { path = "../baml-rt-core" }
 baml-rt-interceptor = { path = "../baml-rt-interceptor" }
 baml-rt-tools = { path = "../baml-rt-tools", default-features = false }

@@ -13,6 +13,7 @@ baml-rt-conversation = { path = "../baml-rt-conversation" }
 baml-rt-core = { path = "../baml-rt-core" }
 baml-rt-tools = { path = "../baml-rt-tools" }
 baml-tools-system = { path = "../tools/system" }
+baml-tools-slack = { path = "../tools/slack" }
 inventory = { workspace = true }
 baml-rt-llm-config = { path = "../baml-rt-llm-config" }
 baml-rt-quickjs = { path = "../baml-rt-quickjs" }

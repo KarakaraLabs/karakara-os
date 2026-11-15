@@ -142,13 +142,36 @@ impl SlackInboxEventProducer {
                     "failed to deserialize stored ingress payload: {err}"
                 ))
             })?;
-        ProducedEvent::host_source_records(
+        let gate_scope = payload
+            .get("records")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|records| records.first())
+            .filter(|record| {
+                record
+                    .get("record_kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("karakara.gate_decision")
+            })
+            .and_then(|record| {
+                Some((
+                    record.get("context_id")?.as_str()?.to_string(),
+                    record.get("task_id")?.as_str()?.to_string(),
+                ))
+            });
+        let mut event = ProducedEvent::host_source_records(
             self.source_kind.clone(),
             item.source_key.clone(),
             payload,
             Some(item.ingress_id.to_string()),
             None,
-        )
+        )?;
+        if let Some((context_id, task_id)) = gate_scope {
+            event.context_id = Some(baml_rt_core::ids::ContextId::from(context_id.as_str()));
+            event.task_id = Some(baml_rt_core::ids::TaskId::from_external(
+                baml_rt_id::ExternalId::new(task_id),
+            ));
+        }
+        Ok(event)
     }
 }
 

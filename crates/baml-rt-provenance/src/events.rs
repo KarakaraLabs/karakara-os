@@ -558,6 +558,8 @@ pub enum ProvEventData {
         record_count: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         producer_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         source_message_ts: Vec<String>,
     },
@@ -675,7 +677,23 @@ pub struct DelegationLinkedSpec {
     pub tool_session_id: String,
 }
 
-/// One operator-only execution-ownership decision.
+/// Identity that authorized or denied an irreversible action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GatePrincipal {
+    Ingress { ingress_key: String },
+    Channel { channel: String, actor: String },
+    Runtime { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateDecisionOutcome {
+    Allow,
+    Deny,
+}
+
+/// One operator-only runtime decision.
 ///
 /// The context is carried by the enclosing event. Each variant's fields are the
 /// decision's full explanation; none of them is a graph relationship the reader
@@ -683,6 +701,31 @@ pub struct DelegationLinkedSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum AuditDecision {
+    /// An irreversible action reached the host gate ledger.
+    GateRequested {
+        gate_id: String,
+        task_id: TaskId,
+        agent_id: AgentId,
+        tool_name: String,
+        channel: Option<String>,
+        expires_at_ms: u64,
+    },
+    /// A trusted ingress, channel actor, expiry, or fail-closed runtime check resolved a gate.
+    GateDecided {
+        gate_id: String,
+        task_id: TaskId,
+        agent_id: AgentId,
+        outcome: GateDecisionOutcome,
+        principal: GatePrincipal,
+        reason: String,
+    },
+    /// A channel action was rejected without changing the gate's decision.
+    GateActionRejected {
+        gate_id: String,
+        task_id: TaskId,
+        agent_id: AgentId,
+        reason: String,
+    },
     /// A boot began owning the pair where no lease row existed.
     OwnershipAcquired {
         agent_id: AgentId,
@@ -754,6 +797,9 @@ impl AuditDecision {
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::GateRequested { .. } => "gate_requested",
+            Self::GateDecided { .. } => "gate_decided",
+            Self::GateActionRejected { .. } => "gate_action_rejected",
             Self::OwnershipAcquired { .. } => "ownership_acquired",
             Self::OwnershipHandedOff { .. } => "ownership_handed_off",
             Self::OwnershipTakenOver { .. } => "ownership_taken_over",
@@ -770,7 +816,10 @@ impl AuditDecision {
     #[must_use]
     pub const fn agent_id(&self) -> &AgentId {
         match self {
-            Self::OwnershipAcquired { agent_id, .. }
+            Self::GateRequested { agent_id, .. }
+            | Self::GateDecided { agent_id, .. }
+            | Self::GateActionRejected { agent_id, .. }
+            | Self::OwnershipAcquired { agent_id, .. }
             | Self::OwnershipHandedOff { agent_id, .. }
             | Self::OwnershipTakenOver { agent_id, .. }
             | Self::PairServedElsewhere { agent_id, .. }
@@ -1995,6 +2044,34 @@ impl ProvEvent {
         producer_key: Option<String>,
         source_message_ts: Vec<String>,
     ) -> Self {
+        Self::host_source_poll_recorded_with_channel(
+            context_id,
+            source_kind,
+            source_key,
+            source_cursor,
+            schema_version,
+            record_count,
+            producer_key,
+            None,
+            source_message_ts,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "event constructor mirrors the provenance event's full field set; a params struct would only duplicate the schema"
+    )]
+    pub fn host_source_poll_recorded_with_channel(
+        context_id: ContextId,
+        source_kind: String,
+        source_key: String,
+        source_cursor: String,
+        schema_version: String,
+        record_count: usize,
+        producer_key: Option<String>,
+        channel: Option<String>,
+        source_message_ts: Vec<String>,
+    ) -> Self {
         let poll_key = HostIngressPollKey {
             context_id: context_id.clone(),
             source_kind: source_kind.clone(),
@@ -2012,6 +2089,7 @@ impl ProvEvent {
                 schema_version,
                 record_count,
                 producer_key,
+                channel,
                 source_message_ts,
             },
         })

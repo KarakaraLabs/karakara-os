@@ -23,6 +23,11 @@ pub struct IngressPollUserMessageRef {
 /// Records host ingress lineage into the provenance store (DB-first at publish/dispatch).
 #[async_trait]
 pub trait HostIngressRecorder: Send + Sync {
+    /// Resolve expired pending gates to a durable denial.
+    async fn expire_pending_gates(&self) -> Result<usize> {
+        Ok(0)
+    }
+
     /// Persist poll ingestion before subscriber fan-out.
     async fn record_source_poll(&self, event: &ProducedEvent) -> Result<()>;
 

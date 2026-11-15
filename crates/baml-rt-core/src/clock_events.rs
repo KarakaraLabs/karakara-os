@@ -28,6 +28,7 @@ pub const CONTEXT_ID_MINT: &str = "context_id_mint";
 pub const CORRELATION_ID_MINT: &str = "correlation_id_mint";
 pub const EPISODE_SNAPSHOT: &str = "episode_snapshot";
 pub const GRAFANA_INGRESS: &str = "grafana_ingress";
+pub const KARAKARA_GATE: &str = "karakara_gate";
 pub const PROVENANCE_EVENT: &str = "provenance_event";
 pub const REPOSITORY_TIMESTAMP: &str = "repository_timestamp";
 pub const RUNNER_TIMESTAMP: &str = "runner_timestamp";

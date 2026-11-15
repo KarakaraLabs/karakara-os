@@ -2564,6 +2564,7 @@ fn normalize_event_with_registry(
             schema_version,
             record_count,
             producer_key,
+            channel,
             ..
         } => {
             use crate::host_ingress_transcript::format_source_poll_summary;
@@ -2591,6 +2592,12 @@ fn normalize_event_with_registry(
                 extra.insert(
                     a2a::HOST_INGRESS_PRODUCER_KEY.to_string(),
                     Value::String(producer_key.clone()),
+                );
+            }
+            if let Some(channel) = channel {
+                extra.insert(
+                    a2a::HOST_INGRESS_CHANNEL.to_string(),
+                    Value::String(channel.clone()),
                 );
             }
             extra.insert(
@@ -2768,6 +2775,73 @@ fn normalize_event_with_registry(
                 Value::String(decision.kind().to_string()),
             );
             match decision {
+                AuditDecision::GateRequested {
+                    gate_id,
+                    task_id,
+                    tool_name,
+                    channel,
+                    expires_at_ms,
+                    ..
+                } => {
+                    attrs.insert("gate_id".to_string(), Value::String(gate_id.clone()));
+                    attrs.insert(
+                        a2a::TASK_ID.to_string(),
+                        Value::String(task_id.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::TOOL_NAME.to_string(), Value::String(tool_name.clone()));
+                    if let Some(channel) = channel {
+                        attrs.insert("gate_channel".to_string(), Value::String(channel.clone()));
+                    }
+                    attrs.insert(
+                        "gate_expires_at_ms".to_string(),
+                        Value::Number((*expires_at_ms).into()),
+                    );
+                }
+                AuditDecision::GateDecided {
+                    gate_id,
+                    task_id,
+                    outcome,
+                    principal,
+                    reason,
+                    ..
+                } => {
+                    attrs.insert("gate_id".to_string(), Value::String(gate_id.clone()));
+                    attrs.insert(
+                        a2a::TASK_ID.to_string(),
+                        Value::String(task_id.as_str().to_string()),
+                    );
+                    attrs.insert(
+                        "gate_outcome".to_string(),
+                        Value::String(
+                            match outcome {
+                                crate::events::GateDecisionOutcome::Allow => "allow",
+                                crate::events::GateDecisionOutcome::Deny => "deny",
+                            }
+                            .to_string(),
+                        ),
+                    );
+                    let principal_value = serde_json::to_value(principal).map_err(|error| {
+                        ProvenanceError::InvalidEvent {
+                            activity_anchor: event.id().as_str().to_string(),
+                            reason: format!("serialize gate principal: {error}"),
+                        }
+                    })?;
+                    attrs.insert("gate_principal".to_string(), principal_value);
+                    attrs.insert(a2a::REASON.to_string(), Value::String(reason.clone()));
+                }
+                AuditDecision::GateActionRejected {
+                    gate_id,
+                    task_id,
+                    reason,
+                    ..
+                } => {
+                    attrs.insert("gate_id".to_string(), Value::String(gate_id.clone()));
+                    attrs.insert(
+                        a2a::TASK_ID.to_string(),
+                        Value::String(task_id.as_str().to_string()),
+                    );
+                    attrs.insert(a2a::REASON.to_string(), Value::String(reason.clone()));
+                }
                 AuditDecision::OwnershipAcquired {
                     boot_event_id,
                     runner_id,

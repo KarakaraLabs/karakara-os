@@ -109,6 +109,30 @@ impl TaskAgentResolution {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateLedgerRequest {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+    pub expires_at_ms: u64,
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateLedgerDecision {
+    pub outcome: crate::events::GateDecisionOutcome,
+    pub principal: crate::events::GatePrincipal,
+    pub reason: String,
+}
+
+/// Trusted origin linked to a context through the provenance graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateFlowOrigin {
+    MachineIngress { ingress_key: String },
+    Channel { channel: String },
+    LiveChat,
+    None,
+}
+
 #[async_trait]
 pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
     async fn add_event(&self, event: ProvEvent) -> Result<()>;
@@ -126,6 +150,36 @@ pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
             self.add_event(event).await?;
         }
         Ok(())
+    }
+
+    /// Read a durable typed decision for one gate retry.
+    async fn gate_ledger_request(
+        &self,
+        _context_id: &ContextId,
+        _gate_id: &str,
+    ) -> Result<Option<GateLedgerRequest>> {
+        Ok(None)
+    }
+
+    async fn gate_ledger_decision(
+        &self,
+        _context_id: &ContextId,
+        _gate_id: &str,
+    ) -> Result<Option<GateLedgerDecision>> {
+        Ok(None)
+    }
+
+    /// Claim the right to post the channel confirmation for `gate_id`.
+    ///
+    /// Returns `true` for exactly one caller per gate, across runners sharing the
+    /// store. A writer without a shared store has no other poster, so it always wins.
+    async fn claim_gate_confirmation(&self, _gate_id: &str) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Resolve the context's ingress by traversing graph links.
+    async fn gate_flow_origin(&self, _context_id: &ContextId) -> Result<GateFlowOrigin> {
+        Ok(GateFlowOrigin::None)
     }
 
     async fn add_event_with_logging(&self, event: ProvEvent, context: &str) {

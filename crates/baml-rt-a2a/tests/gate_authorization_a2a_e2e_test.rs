@@ -11,14 +11,16 @@ use std::sync::{Arc, OnceLock};
 
 use baml_rt::{A2aAgent, A2aRequestHandler, QuickJSConfig, baml::BamlRuntimeManager};
 use baml_rt_core::{
-    A2aStreamChunk, A2aWireRequest, collect_a2a_stream_one_shot, collect_a2a_stream_until_one_shot,
+    A2aStreamChunk, A2aWireRequest, collect_a2a_stream_one_shot,
     ids::{ContextId, ExternalId, MessageId, TaskId},
 };
 use baml_rt_karakara::{
+    GateAuthorizationRequest,
     config::{KarakaraConfig, KarakaraMode, KarakaraPolicy},
     global::{global_grounding_store, set_global_karakara_config, submit_grounding},
     schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact, Postcondition},
 };
+use baml_rt_provenance::ProvenanceWriter;
 use baml_rt_tools::{
     ToolMetadataBuilder,
     tools::{
@@ -28,7 +30,9 @@ use baml_rt_tools::{
 };
 use baml_tools_calculator::{CalculatorInput, CalculatorOutput, MathOperation};
 use serde_json::Value;
-use test_support::common::{chunk_content, chunks_from_responses, send_stream_request_with_task};
+use test_support::{
+    common::send_stream_request_with_task, testing::provenance_fixtures::build_isolated_store,
+};
 
 static GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
@@ -158,64 +162,13 @@ fn grounded_artifact() -> ParseArtifact {
     }
 }
 
-fn task_state_from_chunk(chunk: &Value) -> Option<String> {
-    let state_from = |v: &Value| {
-        v.get("status")
-            .and_then(|s| s.get("state"))
-            .and_then(|s| s.as_str())
-            .map(String::from)
-    };
-    chunk
-        .get("task")
-        .and_then(|task| state_from(task))
-        .or_else(|| status_update_body(chunk).and_then(state_from))
-}
-
-fn status_update_body(chunk: &Value) -> Option<&Value> {
-    let su = chunk.get("statusUpdate")?;
-    if su.get("status").is_some() {
-        Some(su)
-    } else {
-        su.get("statusUpdate").or_else(|| su.get("status_update"))
-    }
-}
-
-fn gate_auth_metadata_from_chunks(chunks: &[&Value]) -> Option<bool> {
-    for chunk in chunks {
-        let ev = status_update_body(chunk)?;
-        let gate = ev
-            .get("status")
-            .and_then(|s| s.get("message"))
-            .and_then(|m| m.get("metadata"))
-            .and_then(|m| m.get("gateAuthorization"))
-            .and_then(|v| v.as_bool());
-        if gate == Some(true) {
-            return Some(true);
-        }
-    }
-    None
-}
-
-fn input_required_prompt_from_chunks(chunks: &[&Value]) -> Option<String> {
-    for chunk in chunks {
-        if task_state_from_chunk(chunk).as_deref() != Some("TASK_STATE_INPUT_REQUIRED") {
-            continue;
-        }
-        let ev = status_update_body(chunk)?;
-        let text = ev
-            .get("status")
-            .and_then(|s| s.get("message"))
-            .and_then(|m| m.get("parts"))
-            .and_then(|p| p.as_array())
-            .and_then(|parts| parts.first())
-            .and_then(|part| part.get("text"))
-            .and_then(|t| t.as_str())?;
-        return Some(text.to_string());
-    }
-    None
-}
-
 async fn setup_gate_agent() -> A2aAgent {
+    setup_gate_agent_with_store(None).await
+}
+
+async fn setup_gate_agent_with_store(
+    store: Option<Arc<baml_rt_provenance::SurrealProvenanceStore>>,
+) -> A2aAgent {
     set_global_karakara_config(KarakaraConfig {
         default: KarakaraPolicy {
             enabled: true,
@@ -238,6 +191,7 @@ async fn setup_gate_agent() -> A2aAgent {
         "Tier-3 gate E2E delete-class tool".to_string(),
     )
     .with_access(ToolAccess::Delete)
+    .with_tags(vec!["karakara:tier=3".to_string()])
     .build_metadata();
     let handler = create_one_shot_tool_from_async::<(), CalculatorInput, CalculatorOutput, _>(
         metadata.clone(),
@@ -271,8 +225,11 @@ async fn setup_gate_agent() -> A2aAgent {
         .register_dynamic(metadata, handler)
         .expect("register gate_delete tool");
 
-    A2aAgent::builder()
-        .with_runtime_manager(manager)
+    let mut builder = A2aAgent::builder().with_runtime_manager(manager);
+    if let Some(store) = store {
+        builder = builder.with_surreal_store(store);
+    }
+    builder
         .with_init_js(gate_invoker_js())
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(QuickJSConfig::new().with_max_attempts_ms(Some(15_000)))
@@ -298,7 +255,7 @@ async fn test_gate() -> tokio::sync::OwnedSemaphorePermit {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_gate_authorization_tier3_suspend_and_approve_resume() {
+async fn test_chat_text_never_grants_tier3_authorization() {
     let _permit = test_gate().await;
     let agent = setup_gate_agent().await;
     let context_id = ContextId::new(42, 1);
@@ -324,88 +281,85 @@ async fn test_gate_authorization_tier3_suspend_and_approve_resume() {
         Some(context_id.clone()),
         None,
     );
-    let stream = agent
-        .handle_a2a_stream(A2aWireRequest::from(turn1))
-        .await
-        .expect("open stream");
-
-    let stop_at_input_required = |r: &A2aStreamChunk| {
-        let v = r.as_ref();
-        let chunk = chunk_content(v);
-        let state = chunk.and_then(task_state_from_chunk);
-        let is_final = v
-            .get("result")
-            .and_then(|res| res.get("final"))
-            .and_then(|f| f.as_bool())
-            .unwrap_or(false);
-        is_final || state.as_deref() == Some("TASK_STATE_INPUT_REQUIRED")
-    };
-    let r1: Vec<Value> = collect_a2a_stream_until_one_shot(stream, stop_at_input_required)
-        .await
-        .into_iter()
-        .map(A2aStreamChunk::into_inner)
-        .collect();
-
-    let chunks1 = chunks_from_responses(&r1);
-    let states1: Vec<String> = chunks1
-        .iter()
-        .filter_map(|c| task_state_from_chunk(c))
-        .collect();
-    assert!(!r1.is_empty(), "turn1 produced no stream responses");
-    assert!(
-        states1.contains(&"TASK_STATE_INPUT_REQUIRED".to_string()),
-        "turn1 must suspend for tier-3 authorization; states: {states1:?}; responses: {}",
-        serde_json::to_string_pretty(&r1).unwrap_or_else(|_| "?".into())
-    );
-    assert_eq!(
-        gate_auth_metadata_from_chunks(&chunks1),
-        Some(true),
-        "INPUT_REQUIRED chunk must carry gateAuthorization metadata"
-    );
-    let prompt = input_required_prompt_from_chunks(&chunks1).expect("authorization prompt");
-    assert!(prompt.contains("Tier-3 authorization required"));
-    assert!(prompt.contains("Grounded intent"));
-    assert!(prompt.contains("Postconditions declared"));
-
-    let final_count_turn1 = r1
-        .iter()
-        .filter(|r| {
-            r.get("result")
-                .and_then(|x| x.get("final"))
-                .and_then(Value::as_bool)
-                == Some(true)
-        })
-        .count();
-    assert_eq!(
-        final_count_turn1, 0,
-        "authorization turn must not emit final: true"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
+    let r1 = collect_stream(&agent, turn1).await.expect("first stream");
+    let response1 = serde_json::to_string(&r1).unwrap_or_default();
+    assert!(response1.contains("authorization denied"));
+    assert!(!response1.contains("executed:"));
+    // A later message containing the word "approve" is just another message. It
+    // cannot change the durable denial or authorize the tool call.
     let turn2 =
         send_stream_request_with_task("msg-gate-2", "approve", "corr-42-2", Some(context_id), None);
-    let r2 = collect_stream(&agent, turn2).await.expect("approve stream");
-    let chunks2 = chunks_from_responses(&r2);
-    let states2: Vec<String> = chunks2
-        .iter()
-        .filter_map(|c| task_state_from_chunk(c))
-        .collect();
-    assert!(
-        states2.contains(&"TASK_STATE_COMPLETED".to_string()),
-        "approve resume must complete; states: {states2:?}; responses: {}",
-        serde_json::to_string_pretty(&r2).unwrap_or_else(|_| "?".into())
-    );
+    let r2 = collect_stream(&agent, turn2).await.expect("second stream");
+    let response2 = serde_json::to_string(&r2).unwrap_or_default();
+    assert!(!response2.contains("executed:"));
+}
 
-    assert!(
-        !states2.contains(&"TASK_STATE_INPUT_REQUIRED".to_string()),
-        "approve must not re-suspend for authorization; states: {states2:?}"
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn machine_ingress_auto_approves_tier3_in_the_a2a_path() {
+    let _permit = test_gate().await;
+    let context_id = ContextId::new(43, 1);
+    let store = build_isolated_store().await;
+    store
+        .add_event(baml_rt_provenance::ProvEvent::host_source_poll_recorded(
+            context_id.clone(),
+            "grafana".to_string(),
+            "grafana:alert-1".to_string(),
+            "alert-1".to_string(),
+            "grafana.alert.v1".to_string(),
+            1,
+            None,
+            Vec::new(),
+        ))
+        .await
+        .expect("write Grafana ingress");
+    let store_for_assert = store.clone();
+    let agent = setup_gate_agent_with_store(Some(store)).await;
+    let task_id = TaskId::from_external(ExternalId::new("live-task:ctx-43-1:msg-gate-1"));
+    let scope = baml_rt_core::context::RuntimeScope::task_scope(
+        context_id.clone(),
+        agent.agent_id().clone(),
+        MessageId::from("msg-gate-1"),
+        task_id,
     );
+    submit_grounding(&scope, grounded_artifact(), None);
 
-    let response_blob = serde_json::to_string(&r2).unwrap_or_default();
-    assert!(
-        response_blob.contains("executed:")
-            || states2.contains(&"TASK_STATE_COMPLETED".to_string()),
-        "tool should complete after approve; states: {states2:?}"
+    let request = send_stream_request_with_task(
+        "msg-gate-1",
+        "gate-e2e",
+        "corr-43-1",
+        Some(context_id.clone()),
+        None,
     );
+    let responses = collect_stream(&agent, request).await.expect("A2A stream");
+    let response = serde_json::to_string(&responses).unwrap_or_default();
+    assert!(
+        response.contains("executed:"),
+        "trusted ingress must run the tool: {response}"
+    );
+    assert!(!response.contains("authorization denied"));
+
+    let decision = store_for_assert
+        .gate_ledger_decision(
+            &context_id,
+            &GateAuthorizationRequest {
+                scope,
+                tool_name: "support/gate_delete".to_string(),
+                args: serde_json::json!({
+                    "expression": { "left": 1, "operation": "Add", "right": 2 }
+                }),
+                prompt: String::new(),
+            }
+            .gate_id(),
+        )
+        .await
+        .expect("read machine ingress gate decision")
+        .expect("machine ingress decision");
+    assert_eq!(
+        decision.outcome,
+        baml_rt_provenance::GateDecisionOutcome::Allow
+    );
+    assert!(matches!(
+        decision.principal,
+        baml_rt_provenance::GatePrincipal::Ingress { .. }
+    ));
 }

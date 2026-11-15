@@ -9,7 +9,6 @@ use crate::{
     config::{KarakaraConfig, KarakaraPolicy},
     denied_recent::DeniedRecentStore,
     gate_outcome::GateOutcomeStore,
-    pending_auth::PendingGateAuthStore,
     schema::ParseArtifact,
     store::GroundingStore,
 };
@@ -17,7 +16,6 @@ use crate::{
 static GLOBAL_STORE: OnceLock<Arc<GroundingStore>> = OnceLock::new();
 static GLOBAL_GATE_OUTCOMES: OnceLock<Arc<GateOutcomeStore>> = OnceLock::new();
 static GLOBAL_DENIED_RECENT: OnceLock<Arc<DeniedRecentStore>> = OnceLock::new();
-static GLOBAL_PENDING_AUTH: OnceLock<Arc<PendingGateAuthStore>> = OnceLock::new();
 static GLOBAL_CONFIG: OnceLock<Arc<RwLock<KarakaraConfig>>> = OnceLock::new();
 
 fn config_handle() -> Arc<RwLock<KarakaraConfig>> {
@@ -52,25 +50,6 @@ pub fn global_denied_recent_store() -> Arc<DeniedRecentStore> {
     GLOBAL_DENIED_RECENT
         .get_or_init(|| Arc::new(DeniedRecentStore::new()))
         .clone()
-}
-
-pub fn global_pending_gate_auth_store() -> Arc<PendingGateAuthStore> {
-    GLOBAL_PENDING_AUTH
-        .get_or_init(|| Arc::new(PendingGateAuthStore::new()))
-        .clone()
-}
-
-/// Grant or deny tier-3 gate authorization after the user resumes an `InputRequired` turn.
-pub fn resolve_pending_gate_authorization(
-    scope: &baml_rt_core::context::RuntimeScope,
-    user_text: &str,
-) -> crate::pending_auth::ResumeAction {
-    global_pending_gate_auth_store().resolve_on_resume(scope, user_text)
-}
-
-/// Grant tier-3 gate authorization after the user resumes an `InputRequired` turn.
-pub fn grant_pending_gate_authorization(scope: &baml_rt_core::context::RuntimeScope) {
-    let _ = resolve_pending_gate_authorization(scope, "approve");
 }
 
 /// Current karakara gate bundle (hot-reloaded from `PUT /config/karakara`).

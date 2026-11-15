@@ -27,7 +27,11 @@ use tracing::{debug, info, warn};
 
 use crate::{
     channel::{SlackChannelSelector, resolve_selector_channel_id},
-    normalize::{SocketModeEventContext, normalize_socket_mode_batch},
+    normalize::{
+        SlackGateDecisionRecord, SlackNormalizedBatch, SlackNormalizedRecord,
+        SlackNormalizedSource, SlackTransportAuthorization, SlackTransportKind,
+        SlackTransportMetadata, SocketModeEventContext, normalize_socket_mode_batch,
+    },
     producer::RAW_SOURCE_SCHEMA_VERSION,
 };
 
@@ -57,6 +61,11 @@ pub(crate) enum SocketEnvelope {
         retry_attempt: u32,
         #[serde(default)]
         retry_reason: Option<String>,
+    },
+    Interactive {
+        envelope_id: String,
+        #[serde(default)]
+        payload: Value,
     },
     #[serde(other)]
     Unknown,
@@ -270,6 +279,13 @@ impl SocketModeReceiver {
                 )
                 .await?;
             }
+            SocketEnvelope::Interactive {
+                envelope_id,
+                payload,
+            } => {
+                self.handle_interactive(&envelope_id, &payload, write)
+                    .await?;
+            }
             SocketEnvelope::Unknown => {
                 // NOTE: `#[serde(other)]` discards all fields from
                 // unrecognised envelope types, so we re-parse as `Value` to
@@ -413,6 +429,139 @@ impl SocketModeReceiver {
         }
 
         // 6. Ack after durable enqueue.
+        Self::ack(write, envelope_id).await
+    }
+
+    async fn handle_interactive<S>(
+        &self,
+        envelope_id: &str,
+        payload: &Value,
+        write: &mut S,
+    ) -> Result<()>
+    where
+        S: SinkExt<Message> + Unpin,
+        S::Error: std::fmt::Display,
+    {
+        let channel_id = payload
+            .pointer("/container/channel_id")
+            .or_else(|| payload.pointer("/channel/id"))
+            .and_then(Value::as_str);
+        let actor_id = payload.pointer("/user/id").and_then(Value::as_str);
+        let action = payload
+            .get("actions")
+            .and_then(Value::as_array)
+            .and_then(|actions| actions.first());
+        let action_id = action
+            .and_then(|action| action.get("action_id"))
+            .and_then(Value::as_str);
+        let outcome = match action_id {
+            Some("karakara_gate_allow") => "allow",
+            Some("karakara_gate_deny") => "deny",
+            _ => {
+                debug!(envelope_id, "ignoring non-gate Slack interaction");
+                Self::ack(write, envelope_id).await?;
+                return Ok(());
+            }
+        };
+        let (Some(channel_id), Some(actor_id)) = (channel_id, actor_id) else {
+            warn!(
+                envelope_id,
+                "Slack gate interaction missing channel or actor"
+            );
+            Self::ack(write, envelope_id).await?;
+            return Ok(());
+        };
+        let Some(channel_meta) = self.channels.get(channel_id) else {
+            warn!(
+                envelope_id,
+                channel_id, "Slack gate interaction came from an unconfigured channel"
+            );
+            Self::ack(write, envelope_id).await?;
+            return Ok(());
+        };
+        let value = action
+            .and_then(|action| action.get("value"))
+            .and_then(Value::as_str)
+            .and_then(|value| serde_json::from_str::<Value>(value).ok());
+        let Some(value) = value else {
+            warn!(
+                envelope_id,
+                "Slack gate interaction has an invalid action value"
+            );
+            Self::ack(write, envelope_id).await?;
+            return Ok(());
+        };
+        let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_string);
+        let (Some(gate_id), Some(context_id), Some(task_id), Some(agent_id)) = (
+            field("gate_id"),
+            field("context_id"),
+            field("task_id"),
+            field("agent_id"),
+        ) else {
+            warn!(
+                envelope_id,
+                "Slack gate interaction action value is incomplete"
+            );
+            Self::ack(write, envelope_id).await?;
+            return Ok(());
+        };
+        let emitted_at_unix = now_unix_secs(clock_events::SOCKET_MODE_NORMALIZE);
+        let batch = SlackNormalizedBatch {
+            schema_version: RAW_SOURCE_SCHEMA_VERSION.to_string(),
+            emitted_at_unix,
+            source: SlackNormalizedSource {
+                source_kind: "slack".to_string(),
+                source_key: channel_meta.source_key.clone(),
+                source_label: channel_meta.source_label.clone(),
+            },
+            transport: Some(SlackTransportMetadata {
+                kind: SlackTransportKind::SocketMode,
+                delivery_id: Some(envelope_id.to_string()),
+                received_at_unix: Some(emitted_at_unix),
+                team_id: payload
+                    .get("team")
+                    .and_then(|team| team.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                api_app_id: payload
+                    .get("api_app_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                event_context: None,
+                retry_num: None,
+                retry_reason: None,
+                authorizations: Vec::<SlackTransportAuthorization>::new(),
+            }),
+            records: vec![SlackNormalizedRecord::GateDecision(
+                SlackGateDecisionRecord {
+                    gate_id,
+                    context_id,
+                    task_id,
+                    agent_id,
+                    channel_id: channel_id.to_string(),
+                    actor_id: actor_id.to_string(),
+                    outcome: outcome.to_string(),
+                },
+            )],
+        };
+        let ingress_id =
+            IngressId::parse(format!("support/slack:gate:{envelope_id}")).ok_or_else(|| {
+                BamlRtError::InvalidArgument("empty Slack gate ingress id".to_string())
+            })?;
+        let payload_json = serde_json::to_string(&batch).map_err(|error| {
+            BamlRtError::InvalidArgument(format!(
+                "failed to serialize Slack gate decision: {error}"
+            ))
+        })?;
+        self.store
+            .enqueue(&IngressItem {
+                ingress_id,
+                source_kind: EventSourceKind::parse("slack").expect("valid slack source kind"),
+                source_key: channel_meta.source_key.clone(),
+                payload_json,
+                enqueued_at_unix_ms: now_unix_ms(clock_events::SOCKET_MODE_ENQUEUE),
+            })
+            .await?;
         Self::ack(write, envelope_id).await
     }
 
@@ -603,10 +752,10 @@ mod tests {
     }
 
     #[test]
-    fn unknown_envelope_type_deserializes() {
+    fn interactive_envelope_deserializes() {
         let raw = r#"{"type":"interactive","envelope_id":"xyz"}"#;
         let env: SocketEnvelope = serde_json::from_str(raw).unwrap();
-        assert!(matches!(env, SocketEnvelope::Unknown));
+        assert!(matches!(env, SocketEnvelope::Interactive { .. }));
     }
 
     #[test]

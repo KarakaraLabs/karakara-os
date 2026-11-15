@@ -71,6 +71,33 @@ impl ProvenanceWriter for NotifyingProvenanceWriter {
         Ok(())
     }
 
+    async fn gate_ledger_request(
+        &self,
+        context_id: &ContextId,
+        gate_id: &str,
+    ) -> Result<Option<baml_rt_provenance::GateLedgerRequest>> {
+        self.inner.gate_ledger_request(context_id, gate_id).await
+    }
+
+    async fn gate_ledger_decision(
+        &self,
+        context_id: &ContextId,
+        gate_id: &str,
+    ) -> Result<Option<baml_rt_provenance::GateLedgerDecision>> {
+        self.inner.gate_ledger_decision(context_id, gate_id).await
+    }
+
+    async fn gate_flow_origin(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<baml_rt_provenance::GateFlowOrigin> {
+        self.inner.gate_flow_origin(context_id).await
+    }
+
+    async fn claim_gate_confirmation(&self, gate_id: &str) -> Result<bool> {
+        self.inner.claim_gate_confirmation(gate_id).await
+    }
+
     async fn add_event_fenced(
         &self,
         event: ProvEvent,

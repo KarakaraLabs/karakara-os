@@ -76,6 +76,7 @@ mod context_planning_index;
 mod context_reader;
 mod conversation_context_pipeline;
 mod gate_activity_query;
+mod gate_ledger;
 mod helpers;
 mod history_ref;
 mod llm_call_scope;

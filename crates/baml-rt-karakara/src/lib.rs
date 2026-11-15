@@ -9,12 +9,12 @@ pub mod config;
 pub mod covers;
 pub mod denied_recent;
 pub mod gate;
+pub mod gate_authorization;
 pub mod gate_outcome;
 pub mod global;
 pub mod integrity;
 pub mod interceptor;
 pub mod lint;
-pub mod pending_auth;
 pub mod postcondition;
 pub mod schema;
 pub mod schema_export;
@@ -29,16 +29,17 @@ pub use config::{
     KarakaraMode, KarakaraOverrides, KarakaraPolicy, KarakaraPosture,
 };
 pub use gate::{AmbiguityAwareGate, GateAction, GateDecision, GatePolicy};
+pub use gate_authorization::{
+    DenyGateAuthorizationResolver, GateAuthorizationRequest, GateAuthorizationResolution,
+    GateAuthorizationResolver, deny_gate_authorization_resolver,
+};
 pub use gate_outcome::{GateOutcome, GateOutcomeStore};
 pub use global::{
     global_denied_recent_store, global_gate_outcome_store, global_grounding_store,
-    global_karakara_config, global_pending_gate_auth_store, grant_pending_gate_authorization,
-    resolve_karakara_policy, resolve_pending_gate_authorization, set_global_karakara_config,
-    submit_grounding,
+    global_karakara_config, resolve_karakara_policy, set_global_karakara_config, submit_grounding,
 };
 pub use integrity::{CitationIntegrityAssessment, CitationIntegrityEntry, IntegrityStatus};
 pub use interceptor::{KarakaraToolInterceptor, TrojanLintLLMInterceptor};
-pub use pending_auth::ResumeAction;
 pub use postcondition::{PostconditionKind, PostconditionRun};
 pub use schema::{Anchor, AnchorSign, EnvSignals, Node, ParseArtifact, Template};
 pub use schema_export::karakara_bundle_schema;
