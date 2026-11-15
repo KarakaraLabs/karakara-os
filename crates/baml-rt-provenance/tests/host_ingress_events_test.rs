@@ -13,7 +13,7 @@ use baml_rt_core::{
     dispatch_ingress::dispatch_unit_task_id,
     event_subscription::EventSourceKey,
     host_source_records_body::format_source_records_unit_body,
-    ids::{ActivityAnchorId, AgentId, ContextId, CorrelationId, MessageId, UuidId},
+    ids::{ActivityAnchorId, AgentId, ContextId, CorrelationId, MessageId, TaskId, UuidId},
 };
 use baml_rt_provenance::{
     AgentType, GraphExporter, HostIngressRecorderImpl, ProvEvent, ProvenanceContextReader,
@@ -174,6 +174,115 @@ async fn host_ingress_lineage_events_project_operational_transcript_rows() {
     assert!(
         items[0].timestamp_ms <= items[1].timestamp_ms,
         "poll must precede dispatch accepted: {items:?}"
+    );
+}
+
+#[tokio::test]
+async fn slack_gate_action_records_channel_actor_and_allows_retry() {
+    let store = Arc::new(build_isolated_store().await);
+    let recorder = HostIngressRecorderImpl::new(Arc::clone(&store));
+    let context_id = ContextId::new(12, 36);
+    let agent_id = test_agent_id();
+    let task_id = TaskId::from_external(baml_rt_id::ExternalId::new("slack-task-allow"));
+    store
+        .add_event(ProvEvent::audit_decision(
+            context_id.clone(),
+            baml_rt_provenance::AuditDecision::GateRequested {
+                gate_id: "gate-slack-allow".to_string(),
+                task_id: task_id.clone(),
+                agent_id: agent_id.clone(),
+                tool_name: "support/delete".to_string(),
+                channel: Some("C123".to_string()),
+                expires_at_ms: baml_rt_core::now_unix_ms(baml_rt_core::clock_events::KARAKARA_GATE)
+                    + 900_000,
+            },
+        ))
+        .await
+        .expect("gate request");
+    let event = ProducedEvent {
+        routing_key: AgentDispatchRoutingKey::parse("slack:events").expect("routing"),
+        schema_version: EventSchemaVersion::parse("host.source-records.v1").expect("schema"),
+        source_kind: EventSourceKind::parse("slack").expect("kind"),
+        source_key: EventSourceKey::parse("slack:C123").expect("key"),
+        messages: vec![json!({
+            "records": [{
+                "record_kind": "karakara.gate_decision",
+                "gate_id": "gate-slack-allow",
+                "agent_id": agent_id.as_str(),
+                "outcome": "allow",
+                "actor_id": "U123",
+                "channel_id": "C123"
+            }]
+        })],
+        context_id: Some(context_id.clone()),
+        task_id: Some(task_id),
+        message_id: Some("slack:event:allow".into()),
+        producer_key: None,
+        metadata: None,
+    };
+    recorder
+        .record_source_poll(&event)
+        .await
+        .expect("record action");
+    let decision = store
+        .gate_ledger_decision(&context_id, "gate-slack-allow")
+        .await
+        .expect("read decision")
+        .expect("decision");
+    assert_eq!(
+        decision.outcome,
+        baml_rt_provenance::GateDecisionOutcome::Allow
+    );
+    assert_eq!(
+        decision.principal,
+        baml_rt_provenance::GatePrincipal::Channel {
+            channel: "C123".to_string(),
+            actor: "U123".to_string()
+        }
+    );
+}
+
+#[tokio::test]
+async fn invalid_slack_gate_action_does_not_block_source_checkpoint() {
+    let store = Arc::new(build_isolated_store().await);
+    let recorder = HostIngressRecorderImpl::new(Arc::clone(&store));
+    let context_id = ContextId::new(12, 35);
+    let event = ProducedEvent {
+        routing_key: AgentDispatchRoutingKey::parse("slack:events").expect("routing"),
+        schema_version: EventSchemaVersion::parse("host.source-records.v1").expect("schema"),
+        source_kind: EventSourceKind::parse("slack").expect("kind"),
+        source_key: EventSourceKey::parse("slack:C123").expect("key"),
+        messages: vec![json!({
+            "records": [{
+                "record_kind": "karakara.gate_decision",
+                "gate_id": "unknown-gate",
+                "agent_id": Uuid::new_v4().to_string(),
+                "outcome": "allow",
+                "actor_id": "U123",
+                "channel_id": "C123"
+            }]
+        })],
+        context_id: Some(context_id.clone()),
+        task_id: Some(TaskId::from_external(baml_rt_id::ExternalId::new(
+            "slack-task",
+        ))),
+        message_id: Some("slack:event:1".into()),
+        producer_key: None,
+        metadata: None,
+    };
+
+    recorder
+        .record_source_poll(&event)
+        .await
+        .expect("invalid action should be rejected without retrying the poll");
+    let rows = store
+        .conversation_context(&context_id, None)
+        .await
+        .expect("read source poll");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the source checkpoint should still be recorded"
     );
 }
 

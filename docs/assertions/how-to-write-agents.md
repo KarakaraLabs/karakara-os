@@ -332,7 +332,15 @@ The model ends the turn with a **`ReadOnlyFinish`** (its reply) or by emitting a
 
 **`MultiSend` / `Streaming` tools are excluded** from auto-finish: `MultiSend` keeps the session open to accumulate sends; `Streaming` needs multiple reads. Those still open explicitly (or auto-open but stay open across the turn).
 
-**Provenance/projection.** The graph records the session steps (`Open`, `SendDone`, any reads); teardown is session lifecycle, not a separate step node. The model-facing conversation shows a **single Send result** — the auto-open/finish never appear as history lines.
+**Provenance/projection.** The graph records the session steps (`Open`, `SendDone`, any reads); teardown is session lifecycle, not a separate step node. The model-facing conversation shows a **single Send result**. The auto-open/finish never appear as history lines.
+
+### 3.4b Tier-3 confirmation follows the flow ingress
+
+The host resolves irreversible tool gates from provenance. Agent code must not ask for approval in free text or interpret a later chat message as approval.
+
+A registered machine ingress authorizes a flow when the context has no chat channel. The host records `GateRequested` and `GateDecided` audit decisions with the ingress key, then runs the tool. A Slack-originated flow gets an interactive confirmation in its channel. Slack Socket Mode must be enabled so the host can receive the `block_actions` response. The response records the channel and actor before the task continues. A context with neither a registered ingress nor a channel fails closed. Unconfirmed requests expire and deny.
+
+Keep the same `context_id` when delegating work. The gate resolver follows the context graph, so a child task in the incident inherits the ingress decision without copying trust fields into A2A metadata. Plain A2A resume text never resolves a gate.
 
 ### 3.5 Map the BAML function to session plans (packaging)
 

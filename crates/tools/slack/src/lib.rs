@@ -15,6 +15,7 @@
 
 pub mod channel;
 mod event_source_type;
+mod gate_confirmation;
 pub mod message_shapes;
 pub mod normalize;
 pub mod poll;
@@ -31,6 +32,7 @@ use baml_rt_tools::{
     BamlTool, ClassifiedToolError, ToolSessionContext, baml_tool, bundles::Support,
 };
 pub use channel::{SlackChannelSelector, resolve_channel_name, resolve_selector_channel_id};
+pub use gate_confirmation::{SlackGateConfirmation, post_gate_confirmation};
 use integrations_slack_read::{self as slack_read, SlackReadClient, SlackReadError};
 pub use normalize::{
     SlackNormalizedBatch, SlackNormalizedMessageRecord, SlackNormalizedRecord,

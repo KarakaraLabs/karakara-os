@@ -397,6 +397,60 @@ impl ProvenanceWriter for SurrealRuntimeStore {
     ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
         self.provenance.add_event_fenced(event, fence).await
     }
+
+    async fn gate_ledger_request(
+        &self,
+        context_id: &ContextId,
+        gate_id: &str,
+    ) -> std::result::Result<
+        Option<baml_rt_provenance::GateLedgerRequest>,
+        baml_rt_provenance::ProvenanceError,
+    > {
+        self.provenance
+            .gate_ledger_request(context_id, gate_id)
+            .await
+    }
+
+    async fn gate_ledger_decision(
+        &self,
+        context_id: &ContextId,
+        gate_id: &str,
+    ) -> std::result::Result<
+        Option<baml_rt_provenance::GateLedgerDecision>,
+        baml_rt_provenance::ProvenanceError,
+    > {
+        self.provenance
+            .gate_ledger_decision(context_id, gate_id)
+            .await
+    }
+
+    async fn gate_flow_origin(
+        &self,
+        context_id: &ContextId,
+    ) -> std::result::Result<baml_rt_provenance::GateFlowOrigin, baml_rt_provenance::ProvenanceError>
+    {
+        self.provenance.gate_flow_origin(context_id).await
+    }
+
+    async fn claim_gate_decision(
+        &self,
+        context_id: &ContextId,
+        decision: &baml_rt_provenance::GateDecisionWrite,
+    ) -> std::result::Result<
+        Option<baml_rt_provenance::GateLedgerDecision>,
+        baml_rt_provenance::ProvenanceError,
+    > {
+        self.provenance
+            .claim_gate_decision(context_id, decision)
+            .await
+    }
+
+    async fn claim_gate_confirmation(
+        &self,
+        gate_id: &str,
+    ) -> std::result::Result<bool, baml_rt_provenance::ProvenanceError> {
+        self.provenance.claim_gate_confirmation(gate_id).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -509,7 +563,13 @@ async fn wire_provenance_subsystems(
         };
         let mut registry = interceptor_registry.lock().await;
         registry.register_tool_interceptor(ProvenanceInterceptor::new(writer.clone()));
-        registry.register_tool_interceptor(KarakaraToolInterceptor::new(global_grounding_store()));
+        let gate_resolver = Arc::new(
+            crate::gate_authorization::ProvenanceGateAuthorizationResolver::new(writer.clone()),
+        );
+        registry.register_tool_interceptor(
+            KarakaraToolInterceptor::new(global_grounding_store())
+                .with_authorization_resolver(gate_resolver),
+        );
         registry.register_llm_interceptor(TrojanLintLLMInterceptor);
     }
 
@@ -1764,18 +1824,6 @@ impl A2aRequestHandler for A2aAgent {
 
 impl A2aJsChatHost for A2aAgent {}
 
-fn resume_user_message_text(parsed: &a2a::A2aRequest) -> Option<String> {
-    let a2a::A2aParams::MessageSendStream(params) = &parsed.params else {
-        return None;
-    };
-    params
-        .message
-        .parts
-        .iter()
-        .find_map(|p| p.text.as_ref().map(|t| t.trim().to_string()))
-        .filter(|t| !t.is_empty())
-}
-
 /// Wire chunk when the collector signals `InputRequired` completion with a null payload.
 /// Not wire-final (`final: false`); both `task.status` and `statusUpdate.status` carry
 /// `TASK_STATE_INPUT_REQUIRED` so clients (e.g. `getStateFromChunk`) stay aligned.
@@ -2029,26 +2077,6 @@ impl A2aAgent {
                         drop(abort_tx);
                         return TurnAction::Break;
                     }
-                }
-
-                if let Some(task_id) = session_task_id.as_ref() {
-                    let scope = baml_rt_core::context::RuntimeScope::task_scope(
-                        session_context_id.clone(),
-                        self.agent_id.clone(),
-                        baml_rt_core::ids::MessageId::from("gate-auth-resume"),
-                        task_id.clone(),
-                    );
-                    let user_text = parsed_resume
-                        .as_ref()
-                        .and_then(resume_user_message_text);
-                    let action = baml_rt_karakara::resolve_pending_gate_authorization(
-                        &scope,
-                        user_text.as_deref().unwrap_or("approve"),
-                    );
-                    tracing::debug!(
-                        ?action,
-                        "live stream resume: gate authorization resolved"
-                    );
                 }
 
                 if resume_tx.send(turn.request).await.is_err() {

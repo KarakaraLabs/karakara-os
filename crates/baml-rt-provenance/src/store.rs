@@ -109,6 +109,41 @@ impl TaskAgentResolution {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateLedgerRequest {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+    pub expires_at_ms: u64,
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateLedgerDecision {
+    pub outcome: crate::events::GateDecisionOutcome,
+    pub principal: crate::events::GatePrincipal,
+    pub reason: String,
+}
+
+/// One gate decision a writer wants to record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateDecisionWrite {
+    pub gate_id: String,
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+    pub outcome: crate::events::GateDecisionOutcome,
+    pub principal: crate::events::GatePrincipal,
+    pub reason: String,
+}
+
+/// Trusted origin linked to a context through the provenance graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateFlowOrigin {
+    MachineIngress { ingress_key: String },
+    Channel { channel: String },
+    LiveChat,
+    None,
+}
+
 #[async_trait]
 pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
     async fn add_event(&self, event: ProvEvent) -> Result<()>;
@@ -126,6 +161,81 @@ pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
             self.add_event(event).await?;
         }
         Ok(())
+    }
+
+    /// Read a durable typed decision for one gate retry.
+    async fn gate_ledger_request(
+        &self,
+        _context_id: &ContextId,
+        _gate_id: &str,
+    ) -> Result<Option<GateLedgerRequest>> {
+        Ok(None)
+    }
+
+    async fn gate_ledger_decision(
+        &self,
+        _context_id: &ContextId,
+        _gate_id: &str,
+    ) -> Result<Option<GateLedgerDecision>> {
+        Ok(None)
+    }
+
+    /// Create the decision for `gate_id` unless one exists.
+    ///
+    /// Returns `None` when this caller's decision was recorded, or the decision that
+    /// already won. A writer without a shared store has no competing writer.
+    async fn claim_gate_decision(
+        &self,
+        _context_id: &ContextId,
+        _decision: &GateDecisionWrite,
+    ) -> Result<Option<GateLedgerDecision>> {
+        Ok(None)
+    }
+
+    /// Decide a gate exactly once and return the decision that stands.
+    ///
+    /// Click handlers, the resolver and the expiry sweep all go through here, so a
+    /// late Allow can never replace a Deny (or the reverse). Only the winner writes
+    /// the `GateDecided` audit event.
+    async fn decide_gate(
+        &self,
+        context_id: &ContextId,
+        decision: GateDecisionWrite,
+    ) -> Result<GateLedgerDecision> {
+        if let Some(existing) = self.claim_gate_decision(context_id, &decision).await? {
+            return Ok(existing);
+        }
+        let recorded = GateLedgerDecision {
+            outcome: decision.outcome,
+            principal: decision.principal.clone(),
+            reason: decision.reason.clone(),
+        };
+        self.add_event(ProvEvent::audit_decision(
+            context_id.clone(),
+            crate::events::AuditDecision::GateDecided {
+                gate_id: decision.gate_id,
+                task_id: decision.task_id,
+                agent_id: decision.agent_id,
+                outcome: decision.outcome,
+                principal: decision.principal,
+                reason: decision.reason,
+            },
+        ))
+        .await?;
+        Ok(recorded)
+    }
+
+    /// Claim the right to post the channel confirmation for `gate_id`.
+    ///
+    /// Returns `true` for exactly one caller per gate, across runners sharing the
+    /// store. A writer without a shared store has no other poster, so it always wins.
+    async fn claim_gate_confirmation(&self, _gate_id: &str) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Resolve the context's ingress by traversing graph links.
+    async fn gate_flow_origin(&self, _context_id: &ContextId) -> Result<GateFlowOrigin> {
+        Ok(GateFlowOrigin::None)
     }
 
     async fn add_event_with_logging(&self, event: ProvEvent, context: &str) {

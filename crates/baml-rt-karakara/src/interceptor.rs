@@ -17,10 +17,14 @@ use crate::{
     config::KarakaraPolicy,
     covers::covers_match,
     gate::{AmbiguityAwareGate, GateAction, GatePolicy},
+    gate_authorization::{
+        GateAuthorizationRequest, GateAuthorizationResolution, GateAuthorizationResolver,
+        deny_gate_authorization_resolver,
+    },
     gate_outcome::GateOutcome,
     global::{
         global_denied_recent_store, global_gate_outcome_store, global_grounding_store,
-        global_pending_gate_auth_store, resolve_karakara_policy,
+        resolve_karakara_policy,
     },
     lint::lint,
     postcondition::run_postconditions,
@@ -37,6 +41,7 @@ const UNKNOWN_AGENT_PACKAGE: &str = "unknown";
 pub struct KarakaraToolInterceptor {
     pub store: Arc<GroundingStore>,
     gate: AmbiguityAwareGate,
+    authorization_resolver: Arc<dyn GateAuthorizationResolver>,
 }
 
 struct GateVerdict {
@@ -50,7 +55,17 @@ impl KarakaraToolInterceptor {
         Self {
             store,
             gate: AmbiguityAwareGate::default(),
+            authorization_resolver: deny_gate_authorization_resolver(),
         }
+    }
+
+    #[must_use]
+    pub fn with_authorization_resolver(
+        mut self,
+        authorization_resolver: Arc<dyn GateAuthorizationResolver>,
+    ) -> Self {
+        self.authorization_resolver = authorization_resolver;
+        self
     }
 
     fn config_for(&self, context: &ToolCallContext) -> KarakaraPolicy {
@@ -164,15 +179,6 @@ impl KarakaraToolInterceptor {
         ctx: &ToolCallContext,
     ) -> InterceptorDecision {
         if verdict.reason == GateReasonCode::RequirementsMet {
-            if verdict.tier == Tier::Irreversible && policy.should_enforce(verdict.tier.as_u8()) {
-                let prompt = Self::authorization_prompt(ctx, verdict.tier.as_u8());
-                global_pending_gate_auth_store().set_pending(
-                    &ctx.runtime_scope,
-                    &ctx.tool_name,
-                    &ctx.args,
-                );
-                return InterceptorDecision::RequireAuthorization(prompt);
-            }
             if !policy.should_enforce(verdict.tier.as_u8()) {
                 tracing::debug!(tier = verdict.tier.as_u8(), "karakara gate dry-run pass");
             }
@@ -213,7 +219,7 @@ impl KarakaraToolInterceptor {
             .map(|a| a.postconditions.len())
             .unwrap_or(0);
         format!(
-            "Tier-{tier} authorization required.\n\nGrounded intent: {summary}\nPostconditions declared: {post_count}\n\nReply to approve and continue execution."
+            "Tier-{tier} authorization required.\n\nGrounded intent: {summary}\nPostconditions declared: {post_count}\n\nUse the confirmation control in the flow's channel. Chat text does not decide this gate."
         )
     }
 
@@ -262,21 +268,6 @@ impl ToolInterceptor for KarakaraToolInterceptor {
             return Ok(InterceptorDecision::Allow);
         }
 
-        if global_pending_gate_auth_store().is_granted(
-            &context.runtime_scope,
-            &context.tool_name,
-            &context.args,
-        ) {
-            let verdict = GateVerdict {
-                tier: Tier::Irreversible,
-                reason: GateReasonCode::RequirementsMet,
-                block_msg: None,
-            };
-            self.record_outcome(context, &verdict, "pass_gated");
-            self.register_postconditions_if_pass(context, &verdict);
-            return Ok(InterceptorDecision::Allow);
-        }
-
         let meta = tool_meta_from_context(context);
         let verdict = self.evaluate(context, &meta, &config);
 
@@ -289,6 +280,59 @@ impl ToolInterceptor for KarakaraToolInterceptor {
             .get_live(&context.runtime_scope, ARTIFACT_TTL)
             .is_some_and(|a| !a.postconditions.is_empty());
         let decision_label = Self::decision_label(&verdict, artifact_has_postconditions);
+
+        if verdict.reason == GateReasonCode::RequirementsMet
+            && verdict.tier == Tier::Irreversible
+            && config.should_enforce(verdict.tier.as_u8())
+        {
+            let prompt = Self::authorization_prompt(context, verdict.tier.as_u8());
+            let request = GateAuthorizationRequest {
+                scope: context.runtime_scope.clone(),
+                tool_name: context.tool_name.clone(),
+                args: context.args.clone(),
+                prompt: prompt.clone(),
+            };
+            // Fail closed: the interceptor pipeline treats an interceptor error as
+            // "continue", which would run an irreversible tool when the ledger is
+            // unreadable. A resolver failure is a denial with its reason.
+            let resolution = match self.authorization_resolver.resolve(&request).await {
+                Ok(resolution) => resolution,
+                Err(error) => {
+                    tracing::warn!(error = %error, "tier-3 gate resolver failed; denying");
+                    GateAuthorizationResolution::Deny {
+                        reason: format!("gate authorization could not be resolved: {error}"),
+                    }
+                }
+            };
+            return match resolution {
+                GateAuthorizationResolution::Allow { .. } => {
+                    self.record_outcome(context, &verdict, "pass_gated");
+                    self.register_postconditions_if_pass(context, &verdict);
+                    Ok(InterceptorDecision::Allow)
+                }
+                GateAuthorizationResolution::Pending { prompt } => {
+                    self.record_outcome(context, &verdict, "ask");
+                    Ok(InterceptorDecision::RequireAuthorization(prompt))
+                }
+                GateAuthorizationResolution::Deny { reason } => {
+                    let denied = GateVerdict {
+                        tier: verdict.tier,
+                        reason: GateReasonCode::Tier3Authorization,
+                        block_msg: Some(format!("Tier-3 authorization denied: {reason}")),
+                    };
+                    self.record_outcome(context, &denied, "deny");
+                    global_denied_recent_store().record_denied(
+                        &context.runtime_scope,
+                        &context.tool_name,
+                        &context.args,
+                        verdict.tier.as_u8(),
+                    );
+                    Ok(InterceptorDecision::Block(
+                        denied.block_msg.expect("gate denial has a reason"),
+                    ))
+                }
+            };
+        }
 
         self.record_outcome(context, &verdict, decision_label);
 

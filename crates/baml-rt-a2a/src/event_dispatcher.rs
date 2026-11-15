@@ -62,6 +62,10 @@ impl EventDispatcher {
         self.producers.checkpoint(producer_key)
     }
 
+    pub async fn expire_pending_gates(&self) -> Result<usize> {
+        self.publish_service.expire_pending_gates().await
+    }
+
     /// Deliver a single [`ProducedEvent`] to all matched subscribers.
     ///
     /// Returns a zero-match outcome when no subscribers match.

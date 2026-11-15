@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     ProvEvent, ProvenanceWriter, SurrealProvenanceStore,
-    events::ProvEventData,
+    events::{GateDecisionOutcome, GatePrincipal, ProvEventData},
     host_ingress_identity::{
         activity_anchor_for_ingress_poll_user, activity_anchor_for_ingress_unit_user,
     },
@@ -37,6 +37,179 @@ pub struct HostIngressRecorderImpl {
 impl HostIngressRecorderImpl {
     pub fn new(store: Arc<SurrealProvenanceStore>) -> Self {
         Self { store }
+    }
+
+    async fn record_slack_gate_decision(&self, event: &ProducedEvent) -> Result<()> {
+        match self.record_slack_gate_decision_inner(event).await {
+            Err(BamlRtError::InvalidArgument(reason)) => {
+                if let Err(error) = self.record_rejected_slack_action(event, &reason).await {
+                    tracing::warn!(error = %error, "could not persist rejected Slack gate action");
+                }
+                tracing::warn!(reason = %reason, "rejected invalid Slack gate action");
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
+    async fn record_rejected_slack_action(
+        &self,
+        event: &ProducedEvent,
+        reason: &str,
+    ) -> Result<()> {
+        let Some(context_id) = event.context_id.clone() else {
+            return Ok(());
+        };
+        let Some(task_id) = event.task_id.clone() else {
+            return Ok(());
+        };
+        let Some(record) = event
+            .messages
+            .first()
+            .and_then(|message| message.get("records"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|records| records.first())
+            .filter(|record| {
+                record
+                    .get("record_kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("karakara.gate_decision")
+            })
+        else {
+            return Ok(());
+        };
+        let gate_id = record
+            .get("gate_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let agent_id = record
+            .get("agent_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| UuidId::parse_str(value).ok())
+            .map(AgentId::from_uuid)
+            .unwrap_or_else(|| AgentId::from_uuid(UuidId::new(Uuid::nil())));
+        self.store
+            .add_event(ProvEvent::audit_decision(
+                context_id,
+                crate::events::AuditDecision::GateActionRejected {
+                    gate_id,
+                    task_id,
+                    agent_id,
+                    reason: reason.to_string(),
+                },
+            ))
+            .await
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
+    }
+
+    async fn record_slack_gate_decision_inner(&self, event: &ProducedEvent) -> Result<()> {
+        let Some(record) = event
+            .messages
+            .first()
+            .and_then(|message| message.get("records"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|records| records.first())
+            .filter(|record| {
+                record
+                    .get("record_kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("karakara.gate_decision")
+            })
+        else {
+            return Ok(());
+        };
+        let required = |field: &str| {
+            record
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    BamlRtError::InvalidArgument(format!("Slack gate decision missing {field}"))
+                })
+        };
+        let context_id = event.context_id.clone().ok_or_else(|| {
+            BamlRtError::InvalidArgument("Slack gate decision missing context_id".to_string())
+        })?;
+        let task_id = event.task_id.clone().ok_or_else(|| {
+            BamlRtError::InvalidArgument("Slack gate decision missing task_id".to_string())
+        })?;
+        let agent_id =
+            AgentId::from_uuid(UuidId::parse_str(required("agent_id")?).map_err(|error| {
+                BamlRtError::InvalidArgument(format!("invalid gate agent_id: {error}"))
+            })?);
+        let outcome = match required("outcome")? {
+            "allow" => GateDecisionOutcome::Allow,
+            "deny" => GateDecisionOutcome::Deny,
+            other => {
+                return Err(BamlRtError::InvalidArgument(format!(
+                    "invalid Slack gate outcome {other}"
+                )));
+            }
+        };
+        let actor = required("actor_id")?.to_string();
+        let channel = required("channel_id")?.to_string();
+        let gate_id = required("gate_id")?.to_string();
+        // Cheap early exit for repeat clicks; `decide_gate` below is what makes the
+        // decision atomic against other clicks, other runners and the expiry sweep.
+        if self
+            .store
+            .gate_ledger_decision(&context_id, &gate_id)
+            .await
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let request = self
+            .store
+            .gate_ledger_request(&context_id, &gate_id)
+            .await
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))?
+            .ok_or_else(|| {
+                BamlRtError::InvalidArgument("Slack action references an unknown gate".to_string())
+            })?;
+        if request.task_id != task_id || request.agent_id != agent_id {
+            return Err(BamlRtError::InvalidArgument(
+                "Slack action scope does not match its gate request".to_string(),
+            ));
+        }
+        if request.channel.as_deref() != Some(channel.as_str()) {
+            return Err(BamlRtError::InvalidArgument(
+                "Slack action channel does not match its gate request".to_string(),
+            ));
+        }
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::KARAKARA_GATE);
+        let (outcome, principal, reason) = if now_ms >= request.expires_at_ms {
+            (
+                GateDecisionOutcome::Deny,
+                GatePrincipal::Runtime {
+                    reason: "expiry".to_string(),
+                },
+                "gate confirmation expired".to_string(),
+            )
+        } else {
+            (
+                outcome,
+                GatePrincipal::Channel { channel, actor },
+                "Slack channel action resolved the gate".to_string(),
+            )
+        };
+        self.store
+            .decide_gate(
+                &context_id,
+                crate::store::GateDecisionWrite {
+                    gate_id,
+                    task_id,
+                    agent_id,
+                    outcome,
+                    principal,
+                    reason,
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
     }
 }
 
@@ -130,7 +303,16 @@ fn build_unit_user_message_event(
 
 #[async_trait::async_trait]
 impl HostIngressRecorder for HostIngressRecorderImpl {
+    async fn expire_pending_gates(&self) -> Result<usize> {
+        let now_ms = baml_rt_core::now_unix_ms(baml_rt_core::clock_events::KARAKARA_GATE);
+        self.store
+            .expire_pending_gate_requests(now_ms)
+            .await
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
+    }
+
     async fn record_source_poll(&self, event: &ProducedEvent) -> Result<()> {
+        self.record_slack_gate_decision(event).await?;
         let context_id = event.context_id.clone().ok_or_else(|| {
             BamlRtError::InvalidArgument("ProducedEvent missing context_id".into())
         })?;
@@ -150,7 +332,24 @@ impl HostIngressRecorder for HostIngressRecorderImpl {
             .filter_map(|m| m.get("message_ts").and_then(|v| v.as_str()))
             .map(str::to_string)
             .collect();
-        let prov_event = ProvEvent::host_source_poll_recorded(
+        let channel = event
+            .messages
+            .iter()
+            .flat_map(|message| {
+                message
+                    .get("records")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .find_map(|record| {
+                record
+                    .get("channel_id")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+            });
+        let prov_event = ProvEvent::host_source_poll_recorded_with_channel(
             context_id,
             source_kind,
             source_key,
@@ -158,12 +357,16 @@ impl HostIngressRecorder for HostIngressRecorderImpl {
             event.schema_version.as_str().to_string(),
             record_count,
             event.producer_key.clone(),
+            channel,
             source_message_ts,
         );
+        // Gates resolve the flow's origin from this row, so a lost write would
+        // later deny the flow with no trace. Fail the poll so the event is retried;
+        // the row's id comes from (context, source, cursor), so a retry overwrites it.
         self.store
-            .add_event_with_logging(prov_event, "host source poll recorded")
-            .await;
-        Ok(())
+            .add_event(prov_event)
+            .await
+            .map_err(|error| BamlRtError::BamlRuntime(error.to_string()))
     }
 
     async fn record_ingress_poll_user_message(

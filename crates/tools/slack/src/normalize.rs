@@ -94,21 +94,35 @@ pub struct SlackNormalizedMessageRecord {
     pub raw: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct SlackGateDecisionRecord {
+    pub gate_id: String,
+    pub context_id: String,
+    pub task_id: String,
+    pub agent_id: String,
+    pub channel_id: String,
+    pub actor_id: String,
+    pub outcome: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "record_kind")]
 pub enum SlackNormalizedRecord {
     #[serde(rename = "slack.message")]
-    Message(SlackNormalizedMessageRecord),
+    Message(Box<SlackNormalizedMessageRecord>),
+    #[serde(rename = "karakara.gate_decision")]
+    GateDecision(SlackGateDecisionRecord),
 }
 
 impl SlackNormalizedRecord {
     pub fn message(record: SlackNormalizedMessageRecord) -> Self {
-        Self::Message(record)
+        Self::Message(Box::new(record))
     }
 
     pub fn as_message(&self) -> Option<&SlackNormalizedMessageRecord> {
         match self {
             Self::Message(record) => Some(record),
+            Self::GateDecision(_) => None,
         }
     }
 
@@ -128,6 +142,7 @@ impl SlackNormalizedRecord {
     pub fn raw(&self) -> &Value {
         match self {
             Self::Message(record) => &record.raw,
+            Self::GateDecision(_) => &Value::Null,
         }
     }
 }
