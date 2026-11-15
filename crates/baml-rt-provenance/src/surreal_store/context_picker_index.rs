@@ -6,9 +6,12 @@
 
 use serde_json::Value;
 
-use super::{SurrealProvenanceStore, helpers::map_surreal_error};
+use super::{
+    SurrealProvenanceStore, WRITE_CONFLICT_MAX_ATTEMPTS, helpers::map_surreal_error,
+    is_transaction_conflict, jittered_backoff,
+};
 use crate::{
-    error::Result,
+    error::{ProvenanceError, Result},
     events::{ProvEvent, ProvEventData},
     surreal_tables::TBL_CONTEXT_PICKER_INDEX,
 };
@@ -36,17 +39,9 @@ impl SurrealProvenanceStore {
             _ => return Ok(()),
         };
 
+        // One row per context, so agents writing into the same context update it
+        // concurrently. A conflict loser re-reads the winner's row and merges again.
         let ctx = context_id.as_str().to_string();
-        let existing = self.load_context_picker_row(&ctx).await?;
-        let mut merged = merge_picker_row(
-            existing.as_ref(),
-            timestamp_ms,
-            &preview,
-            role_user,
-            has_host_ingress,
-        );
-        merged.context_id = ctx;
-
         let sql = format!(
             "UPSERT {TBL_CONTEXT_PICKER_INDEX} SET \
                context_id = $context_id, \
@@ -57,19 +52,40 @@ impl SurrealProvenanceStore {
                has_host_ingress = $has_host_ingress \
              WHERE context_id = $context_id"
         );
-        self.db
-            .query(&sql)
-            .bind(("context_id", merged.context_id))
-            .bind(("latest_timestamp_ms", merged.latest_timestamp_ms))
-            .bind(("latest_preview", merged.latest_preview))
-            .bind(("first_user_timestamp_ms", merged.first_user_timestamp_ms))
-            .bind(("first_user_message", merged.first_user_message))
-            .bind(("has_host_ingress", merged.has_host_ingress))
-            .await
-            .map_err(map_surreal_error)?
-            .check()
-            .map_err(map_surreal_error)?;
-        Ok(())
+        for attempt in 0..WRITE_CONFLICT_MAX_ATTEMPTS {
+            let existing = self.load_context_picker_row(&ctx).await?;
+            let merged = merge_picker_row(
+                existing.as_ref(),
+                timestamp_ms,
+                &preview,
+                role_user,
+                has_host_ingress,
+            );
+            let outcome = self
+                .db
+                .query(&sql)
+                .bind(("context_id", ctx.clone()))
+                .bind(("latest_timestamp_ms", merged.latest_timestamp_ms))
+                .bind(("latest_preview", merged.latest_preview))
+                .bind(("first_user_timestamp_ms", merged.first_user_timestamp_ms))
+                .bind(("first_user_message", merged.first_user_message))
+                .bind(("has_host_ingress", merged.has_host_ingress))
+                .await
+                .and_then(surrealdb::IndexedResults::check);
+            match outcome {
+                Ok(_) => return Ok(()),
+                Err(e) if is_transaction_conflict(&e) => {
+                    if attempt + 1 >= WRITE_CONFLICT_MAX_ATTEMPTS {
+                        return Err(ProvenanceError::Contention {
+                            details: e.message().to_string(),
+                        });
+                    }
+                    tokio::time::sleep(jittered_backoff(attempt)).await;
+                }
+                Err(e) => return Err(map_surreal_error(e)),
+            }
+        }
+        unreachable!("retry loop returns on every iteration");
     }
 
     async fn load_context_picker_row(&self, context_id: &str) -> Result<Option<ContextPickerRow>> {
