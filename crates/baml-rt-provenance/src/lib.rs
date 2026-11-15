@@ -185,7 +185,7 @@ pub use surreal_store::{
     prepare_ref_table_for_projection,
 };
 pub use task_agent_binding::{
-    TaskAgentBinding, TaskAgentBindingSource, event_local_executing_agent_id,
+    ExecutionPrincipal, TaskAgentBinding, TaskAgentBindingSource, event_local_executing_agent_id,
     is_unassigned_executing_agent,
 };
 pub use task_graph_reader::{

@@ -55,6 +55,10 @@ pub(crate) fn map_archive_provenance_err(e: ProvenanceError) -> BamlRtError {
         | ProvenanceError::EpisodeAgentResolutionTimedOut { .. } => {
             BamlRtError::InvalidArgument(format!("archive ref provenance episode gate: {e}"))
         }
+        ProvenanceError::TaskOwnedByAnotherAgent { .. }
+        | ProvenanceError::TaskOwnerResolutionTimedOut { .. } => {
+            BamlRtError::Conflict(format!("archive ref provenance task ownership: {e}"))
+        }
         ProvenanceError::StaleContextAgentLease { .. } => {
             BamlRtError::Conflict(format!("archive ref provenance stale lease fence: {e}"))
         }

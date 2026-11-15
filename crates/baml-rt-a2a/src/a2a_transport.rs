@@ -1210,12 +1210,14 @@ impl A2aAgentBuilder {
         self
     }
 
-    /// Bind this runtime to the event-owned `AgentBooted` activity that created it.
-    pub fn with_boot_event_id(
+    /// Run as the agent and boot established by a committed `AgentBooted` event.
+    /// Sets the agent id; hosted agents use this instead of `with_agent_id`.
+    pub fn with_execution_principal(
         mut self,
-        boot_event_id: baml_rt_core::ids::ActivityAnchorId,
+        principal: baml_rt_provenance::ExecutionPrincipal,
     ) -> Self {
-        self.boot_event_id = Some(boot_event_id);
+        self.agent_id = AgentIdConfig::Provided(principal.agent_id().clone());
+        self.boot_event_id = Some(principal.boot_event_id().clone());
         self
     }
 

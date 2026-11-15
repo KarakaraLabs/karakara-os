@@ -224,6 +224,34 @@ impl ProvenanceWriter for SurrealProvenanceStore {
         self.write_event(event, None).await
     }
 
+    /// Bind a task to its executing agent once.
+    ///
+    /// A task belongs to the first agent bound to it. Binding it again for the
+    /// same agent is a no-op; binding it for another agent is refused, so other
+    /// agents contribute through tasks of their own.
+    async fn bind_task_executing_agent(
+        &self,
+        binding: crate::task_agent_binding::TaskAgentBinding,
+    ) -> Result<()> {
+        match self.get_task_agent_id(&binding.task_id).await? {
+            TaskAgentResolution::Resolved(owner) if owner == binding.executing_agent_id => Ok(()),
+            TaskAgentResolution::Resolved(owner) => Err(ProvenanceError::TaskOwnedByAnotherAgent {
+                task_id: binding.task_id,
+                owner,
+                writer: binding.executing_agent_id,
+            }),
+            TaskAgentResolution::TimedOut => Err(ProvenanceError::TaskOwnerResolutionTimedOut {
+                task_id: binding.task_id,
+            }),
+            TaskAgentResolution::NotLinked => {
+                for event in binding.into_events() {
+                    self.write_event(event, None).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     async fn add_event_fenced(
         &self,
         event: crate::events::ProvEvent,

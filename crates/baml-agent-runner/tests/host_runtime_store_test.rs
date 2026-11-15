@@ -20,12 +20,6 @@
 //! - **I-FOREIGN-TASK-WRITE:** A write to a task by an agent other than its owner
 //!   is rejected. Writing into the shared context creates the writer's own task.
 //!
-//! Tests marked `#[ignore]` fail on purpose today and record the defect that a
-//! later PR fixes. Run them with:
-//!
-//! ```bash
-//! cargo nextest run -p baml-agent-runner --test host_runtime_store_test --run-ignored all
-//! ```
 
 #[allow(dead_code, unused_imports)]
 mod common;
@@ -900,11 +894,9 @@ async fn context_write_by_another_agent_creates_its_own_task() {
     live.owner_run.await.expect("owner run finishes");
 }
 
-/// Bindings are appended without a conflict check. Today a foreign write is
-/// accepted, records the writer as a second executing agent, and leaves the task
-/// with no owner pointer at all.
+/// A task belongs to the agent first bound to it. Another agent's write is
+/// rejected and leaves the owner's binding as it was.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "known defect: a write to another agent's task is accepted and re-binds the task"]
 async fn task_write_by_another_agent_is_rejected() {
     let _permit = e2e_serial_gate().acquire().await.expect("e2e gate");
     let live = live_task().await;

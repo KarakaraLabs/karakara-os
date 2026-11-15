@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use baml_rt_core::ids::TaskId;
+use baml_rt_core::ids::{AgentId, TaskId};
 use thiserror::Error;
 
 /// A turn resolved to a different agent and artifact than the context pinned.
@@ -73,6 +73,16 @@ pub enum ProvenanceError {
     /// Head-pointer lookup timed out during episode assembly.
     #[error("task {task_id} executing-agent resolution timed out during episode assembly")]
     EpisodeAgentResolutionTimedOut { task_id: TaskId },
+    /// A task is written by one agent only: the agent it was first bound to.
+    #[error("task {task_id} belongs to agent {owner}; agent {writer} may not write to it")]
+    TaskOwnedByAnotherAgent {
+        task_id: TaskId,
+        owner: AgentId,
+        writer: AgentId,
+    },
+    /// The task's owner could not be read in time, so a write to it is refused.
+    #[error("task {task_id} owner could not be resolved; write refused")]
+    TaskOwnerResolutionTimedOut { task_id: TaskId },
     /// A write presented a fence older than the pair's current lease.
     #[error(
         "stale context-agent lease fence for context {context_id}, agent {agent_id} \

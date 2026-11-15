@@ -2540,13 +2540,12 @@ globalThis.onChatMessage = async function(_message) {
         assert_eq!(name, "boot-order-agent");
     }
 
-    /// An agent whose `AgentBooted` write fails must not boot. Today the failure is
-    /// only logged and the agent serves traffic under a boot the graph never recorded.
+    /// An agent whose `AgentBooted` write fails must not boot: it would serve
+    /// traffic under a boot the graph never recorded.
     ///
     /// The store rejects the write for a real reason: this agent id is already
     /// registered with a different identity digest.
     #[tokio::test]
-    #[ignore = "known defect: AgentBooted write failure is logged and boot continues"]
     async fn boot_fails_when_the_agent_booted_write_fails() {
         use baml_rt_provenance::{AgentType, ProvEvent, ProvenanceWriter};
 
@@ -2576,9 +2575,15 @@ globalThis.onChatMessage = async function(_message) {
         let err = result
             .err()
             .expect("boot must fail when AgentBooted cannot be written");
+        let mut chain = vec![err.to_string()];
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            chain.push(cause.to_string());
+            source = cause.source();
+        }
         assert!(
-            err.to_string().contains("registration mismatch"),
-            "boot must fail with the AgentBooted write error, got: {err}"
+            chain.iter().any(|m| m.contains("registration mismatch")),
+            "boot must fail with the AgentBooted write error, got: {chain:?}"
         );
     }
 }
