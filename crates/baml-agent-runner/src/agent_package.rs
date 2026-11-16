@@ -28,7 +28,7 @@ use baml_rt_mcp::{
     resolver::default_mcp_resolver_for_agent, service::McpServiceClient,
 };
 use baml_rt_observability::spans;
-use baml_rt_provenance::{AgentType, ProvEvent, ProvenanceWriter, index_tools};
+use baml_rt_provenance::{AgentType, ExecutionPrincipal, ProvEvent, ProvenanceWriter, index_tools};
 use baml_rt_quickjs::{BamlRuntimeManager, QuickJSBridge, SecretResolverToLlmAdapter};
 #[cfg(any(feature = "sandbox-provider", test))]
 use baml_rt_tools::external_tools::host::{DnsResolver, PoolPolicy, VmPool};
@@ -70,7 +70,7 @@ impl McpSecretResolver for LlmSecretResolverToMcpAdapter {
 }
 use baml_tools_system::SystemBundle;
 use serde_json::Value;
-use tracing::{Instrument, error, info, warn};
+use tracing::{Instrument, info, warn};
 
 use crate::config::ProvenanceConfig;
 
@@ -116,8 +116,6 @@ pub(crate) struct AgentPackageBootArgs<'a> {
     pub(crate) stream_idle_secs: Option<u64>,
     /// Meter to register the agent's JS-event-loop progress probe with.
     pub(crate) runtime_progress: Arc<RuntimeProgressMeter>,
-    pub(crate) observation_notify:
-        Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
     pub(crate) compaction_summarizer: Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>,
 }
 
@@ -350,7 +348,7 @@ impl AgentPackage {
     async fn build_agent_phase(
         &self,
         registered: ToolsRegistered,
-        boot_event_id: baml_rt_core::ids::ActivityAnchorId,
+        principal: ExecutionPrincipal,
         args: &AgentPackageBootArgs<'_>,
     ) -> Result<JsInitialized> {
         use baml_rt_quickjs::QuickJSConfig;
@@ -435,8 +433,7 @@ impl AgentPackage {
 
         let runtime_manager_arc = Arc::new(tokio::sync::RwLock::new(runtime_manager));
         let store = args.provenance_config.store().clone();
-        let host_ingress_recorder =
-            Arc::new(crate::services::HostIngressRecorderImpl::new(store.clone()));
+        let host_ingress_recorder = Arc::new(crate::services::HostIngressRecorderImpl::new(store));
         let quickjs_config = QuickJSConfig::new()
             .with_stream_collector_idle_secs(args.stream_idle_secs)
             .with_host_ingress_recorder(Some(host_ingress_recorder));
@@ -446,18 +443,14 @@ impl AgentPackage {
                 name = self.manifest.name
             ))
         })?;
-        let mut agent_builder = A2aAgent::builder()
-            .with_agent_id(args.agent_id.clone())
+        let agent_builder = A2aAgent::builder()
+            .with_execution_principal(principal)
             .with_runtime_handle(runtime_manager_arc.clone())
             .with_quickjs_config(quickjs_config)
             .with_baml_helpers(true)
             .with_agent_identity(agent_package)
-            .with_boot_event_id(boot_event_id)
-            .with_surreal_store(store)
+            .with_host_store(Arc::clone(args.provenance_config.host_store()))
             .with_llm_client_config(llm_config_arc);
-        if let Some(tx) = args.observation_notify.clone() {
-            agent_builder = agent_builder.with_observation_notify(tx);
-        }
         let agent_builder =
             agent_builder.with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()));
         let agent_builder =
@@ -536,13 +529,25 @@ impl AgentPackage {
                 args.deployment_content_hash.as_str().to_string(),
                 baml_rt_observability::service_instance_id().to_string(),
             );
-            let boot_event_id = boot_event.id().clone();
             let loaded = self
                 .load_schema_phase(
                     args.shared_context_ref_store.clone(),
                     args.provenance_config,
                 )
                 .await?;
+            // Commit the boot before anything can bind a task or write as this
+            // agent. An agent whose boot the graph does not hold must not run.
+            let principal = ExecutionPrincipal::commit_boot(
+                args.provenance_config.store().as_ref(),
+                boot_event,
+            )
+            .await
+            .map_err(|source| BamlRtError::InvalidArgumentWithSource {
+                message: format!("failed to record AgentBooted for {}", args.agent_id),
+                source: Box::new(source),
+            })?;
+            info!(agent_id = %args.agent_id, "AgentBooted event written to provenance store");
+            let boot_event_id = principal.boot_event_id().clone();
             let registered = self
                 .register_tools_phase(
                     &args.agent_id,
@@ -554,9 +559,7 @@ impl AgentPackage {
                     args.provenance_config.llm_secret_resolver(),
                 )
                 .await?;
-            let built = self
-                .build_agent_phase(registered, boot_event_id.clone(), &args)
-                .await?;
+            let built = self.build_agent_phase(registered, principal, &args).await?;
             // Register before `initialize_js_phase`: a CPU-bound JS top-level
             // is the worst-case peg the meter must observe, and it runs inside
             // that phase. The block scope is load-bearing: it drops
@@ -594,13 +597,6 @@ impl AgentPackage {
                     args.agent_id, agent_id
                 )));
             }
-            let writer = args.provenance_config.store().clone() as Arc<dyn ProvenanceWriter>;
-            if let Err(e) = writer.add_event(boot_event).await {
-                error!(error = ?e, agent_id = %agent_id, "Failed to write AgentBooted event");
-            } else {
-                info!(agent_id = %agent_id, "AgentBooted event written to provenance store");
-            }
-
             Ok((agent, agent_id, boot_event_id, tool_host))
         }
         .instrument(spans::load_agent_package(&self.extract_dir))

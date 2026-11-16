@@ -76,7 +76,7 @@ async fn test_resume_message_visible_after_insert() {
                 .expect("runtime manager"),
         )
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
-        .with_surreal_store(prov.clone())
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(prov.clone()))
         .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
         .build()
         .await

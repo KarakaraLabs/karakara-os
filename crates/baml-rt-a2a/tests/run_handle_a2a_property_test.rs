@@ -225,7 +225,7 @@ async fn setup_interleaving_agent() -> A2aAgent {
                 .with_max_attempts_ms(Some(45_000))
                 .with_stream_collector_idle_secs(Some(stream_collector_idle_secs())),
         )
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
         .build()
         .await
@@ -352,7 +352,7 @@ proptest! {
             let store = common::provenance::build_surreal_test_store().await;
             let agent = A2aAgent::builder()
                 .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
-                .with_surreal_store(store)
+                .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
                 .with_compaction_summarizer(
                     baml_rt_provenance::FixedCompactionSummarizer::test_stub(),
                 )

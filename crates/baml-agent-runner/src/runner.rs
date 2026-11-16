@@ -20,7 +20,7 @@ use baml_rt_core::{
     A2aStreamChunk, A2aWireRequest, AgentCard, AgentDiscoveryEntry, AgentDispatchAck,
     AgentDispatchRequest, AgentLister, AgentPackageName, AgentRouteKey, ArtifactHash, BamlRtError,
     DeployedAgentLookup, DeploymentContentHash, DeploymentManager, DeploymentRecord,
-    DeploymentStatus, DispatchTarget, ObservationUpdate, Result, UndeployResult,
+    DeploymentStatus, DispatchTarget, Result, UndeployResult,
     bus::BusStream,
     callback_scheduling_scopes_differ_from_dispatch, context, ensure_dispatch_task_scope,
     ids::{AgentId, ContextId, TaskId},
@@ -35,7 +35,7 @@ use baml_rt_provenance::{
 use baml_rt_repository::{ContentHash, RepositoryService, manifest_package_name_from_tar_gz};
 use baml_rt_tools::{SharedContextRefStore, ToolAccessPolicy};
 use serde_json::Value;
-use tokio::{io::AsyncWriteExt, sync::broadcast};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     agent_package::{
@@ -101,7 +101,6 @@ pub(crate) struct AgentRunnerConfig {
     pub(crate) repository_url: String,
     pub(crate) embedded_repository: Option<Arc<RepositoryService>>,
     pub(crate) runtime_progress: Arc<RuntimeProgressMeter>,
-    pub(crate) observation_notify: Option<broadcast::Sender<ObservationUpdate>>,
     pub(crate) compaction_summarizer: Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>,
 }
 
@@ -126,8 +125,6 @@ pub(crate) struct AgentRunner {
     /// reflects CPU pegs on the QuickJS thread (each booted agent registers a
     /// JS-event-loop probe), not just on the tokio runtime.
     pub(crate) runtime_progress: Arc<RuntimeProgressMeter>,
-    /// When set, wrapped provenance writes notify the operator `/conversation-history` stream after commit.
-    pub(crate) observation_notify: Option<broadcast::Sender<ObservationUpdate>>,
     pub(crate) host_ingress_recorder: Arc<dyn baml_rt_core::HostIngressRecorder>,
     pub(crate) compaction_summarizer: Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>,
 }
@@ -151,7 +148,6 @@ impl AgentRunner {
             cluster_manager: std::sync::OnceLock::new(),
             shared_context_ref_store: SharedContextRefStore::new(),
             runtime_progress: config.runtime_progress,
-            observation_notify: config.observation_notify,
             host_ingress_recorder: Arc::new(crate::services::HostIngressRecorderImpl::new(
                 provenance_store,
             )),
@@ -161,10 +157,6 @@ impl AgentRunner {
 
     pub(crate) fn host_ingress_recorder(&self) -> Arc<dyn baml_rt_core::HostIngressRecorder> {
         self.host_ingress_recorder.clone()
-    }
-
-    pub(crate) fn observation_notify_tx(&self) -> Option<broadcast::Sender<ObservationUpdate>> {
-        self.observation_notify.clone()
     }
 
     pub(crate) fn deployment_state(&self) -> &Arc<crate::deployment_state::DeploymentStateStore> {
@@ -688,7 +680,6 @@ impl AgentRunner {
                 a2a_handler: scoped_router,
                 stream_idle_secs: self.stream_idle_secs(),
                 runtime_progress: self.runtime_progress.clone(),
-                observation_notify: self.observation_notify_tx(),
                 compaction_summarizer: Arc::clone(&self.compaction_summarizer),
             })
             .await?;
@@ -793,16 +784,6 @@ impl AgentRunner {
                     agent_card,
                 }
             })
-            .collect()
-    }
-
-    pub(crate) fn subscribe_task_update_receivers(
-        &self,
-    ) -> Vec<broadcast::Receiver<baml_rt_a2a::a2a_store::TaskUpdateEvent>> {
-        let routed_agents = self.routed_agents.read().expect("RwLock poison");
-        routed_agents
-            .values()
-            .map(|agent| agent.subscribe_task_updates())
             .collect()
     }
 

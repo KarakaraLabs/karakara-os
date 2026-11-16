@@ -68,7 +68,7 @@ async fn test_js_stream_baml_function() {
         .with_runtime_manager(baml_manager)
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(QuickJSConfig::new().with_max_attempts_ms(Some(45_000)))
-        .with_surreal_store(store)
+        .with_host_store(baml_rt::HostRuntimeStore::new(store))
         .build()
         .await
         .unwrap();

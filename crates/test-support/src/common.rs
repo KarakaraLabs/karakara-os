@@ -723,7 +723,7 @@ pub async fn build_minimal_a2a_agent(init_js: &str) -> A2aAgent {
         .with_init_js(init_js)
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(QuickJSConfig::new().with_max_attempts_ms(Some(15_000)))
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub())
         .build()
         .await
@@ -770,7 +770,7 @@ pub async fn setup_stream_baml_tool_agent_for_contract(init_js: Option<&str>) ->
         .with_runtime_manager(baml_manager)
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(config)
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .with_compaction_summarizer(baml_rt_provenance::FixedCompactionSummarizer::test_stub());
     if let Some(js) = init_js {
         builder = builder.with_init_js(js);

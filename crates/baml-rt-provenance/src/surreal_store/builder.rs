@@ -318,6 +318,7 @@ async fn init_store_in_namespace(
         shared_write_lanes: (0..super::SHARED_WRITE_LANES)
             .map(|_| Arc::new(tokio::sync::Mutex::new(())))
             .collect(),
+        observation_tx: tokio::sync::broadcast::channel(super::OBSERVATION_CHANNEL_CAPACITY).0,
     };
     Ok(Arc::new(store))
 }

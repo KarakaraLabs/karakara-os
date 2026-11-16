@@ -214,7 +214,26 @@ impl SurrealProvenanceStore {
                 }
             }
         }
+        self.notify_observers(&event);
         Ok(())
+    }
+
+    /// Tell operator views a context changed. Runs only after a commit, so every
+    /// writer (agents, ingress, task store, runner) is covered by this one call.
+    fn notify_observers(&self, event: &crate::events::ProvEvent) {
+        let kinds = crate::observation::observation_kinds_for_event(event);
+        let Some(context_id) = event.context_id_opt() else {
+            return;
+        };
+        if kinds == 0 {
+            return;
+        }
+        // No receivers is normal (no operator watching); the write already succeeded.
+        let _ = self.observation_tx.send(baml_rt_core::ObservationUpdate {
+            context_id: context_id.as_str().to_string(),
+            task_id: event.task_id().map(|t| t.as_str().to_string()),
+            kinds,
+        });
     }
 }
 
@@ -222,6 +241,34 @@ impl SurrealProvenanceStore {
 impl ProvenanceWriter for SurrealProvenanceStore {
     async fn add_event(&self, event: crate::events::ProvEvent) -> Result<()> {
         self.write_event(event, None).await
+    }
+
+    /// Bind a task to its executing agent once.
+    ///
+    /// A task belongs to the first agent bound to it. Binding it again for the
+    /// same agent is a no-op; binding it for another agent is refused, so other
+    /// agents contribute through tasks of their own.
+    async fn bind_task_executing_agent(
+        &self,
+        binding: crate::task_agent_binding::TaskAgentBinding,
+    ) -> Result<()> {
+        match self.get_task_agent_id(&binding.task_id).await? {
+            TaskAgentResolution::Resolved(owner) if owner == binding.executing_agent_id => Ok(()),
+            TaskAgentResolution::Resolved(owner) => Err(ProvenanceError::TaskOwnedByAnotherAgent {
+                task_id: binding.task_id,
+                owner,
+                writer: binding.executing_agent_id,
+            }),
+            TaskAgentResolution::TimedOut => Err(ProvenanceError::TaskOwnerResolutionTimedOut {
+                task_id: binding.task_id,
+            }),
+            TaskAgentResolution::NotLinked => {
+                for event in binding.into_events() {
+                    self.write_event(event, None).await?;
+                }
+                Ok(())
+            }
+        }
     }
 
     async fn add_event_fenced(

@@ -105,7 +105,7 @@ async fn setup_coordinator_agent() -> (baml_rt::A2aAgent, Arc<SurrealProvenanceS
         fs::read_to_string(built.join("dist").join("index.js")).expect("dist/index.js");
     let agent = baml_rt::A2aAgent::builder()
         .with_agent_id(agent_id)
-        .with_surreal_store(provenance.clone())
+        .with_host_store(baml_rt::HostRuntimeStore::new(provenance.clone()))
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))

@@ -369,7 +369,6 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         repository_url: config.repository_url.clone(),
         embedded_repository: Some(repository_service.clone()),
         runtime_progress: runtime_progress.clone(),
-        observation_notify: None,
         compaction_summarizer,
     })
     .map_err(|e| anyhow::anyhow!("runner builder init: {e}"))?;
@@ -591,10 +590,9 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
             runner.provenance_config().store().clone(),
         ))
             as Arc<dyn baml_rt_api::ConversationHistoryService>);
-        let observation_events = Some(Arc::new(ObservationEventServiceImpl::new(
-            runner.clone(),
-            ready.observation_tx(),
-        )) as Arc<dyn baml_rt_api::ObservationEventService>);
+        let observation_events = Some(Arc::new(ObservationEventServiceImpl::new(Arc::clone(
+            runner.provenance_config().store(),
+        ))) as Arc<dyn baml_rt_api::ObservationEventService>);
         let context_index = Some(Arc::new(ContextIndexServiceImpl::new(
             runner.provenance_config().store().clone(),
         )) as Arc<dyn baml_rt_api::ContextIndexService>);
@@ -1220,7 +1218,7 @@ globalThis.onChatMessage = async function(_message) {
             .with_runtime_manager(manager)
             .with_init_js(code)
             .with_effect_emitter(Arc::new(BusWithEffects::new()))
-            .with_surreal_store(store)
+            .with_host_store(baml_rt::HostRuntimeStore::new(store))
             .build()
             .await
             .expect("build test agent")
@@ -1262,7 +1260,6 @@ globalThis.onChatMessage = async function(_message) {
                 repository_url: "http://127.0.0.1:18080/repository".to_string(),
                 embedded_repository: None,
                 runtime_progress: baml_rt_api::RuntimeProgressMeter::new_without_ticker(),
-                observation_notify: None,
                 compaction_summarizer: baml_rt_provenance::FixedCompactionSummarizer::test_stub(),
             })
             .expect("test runner construction"),
@@ -2478,5 +2475,112 @@ globalThis.onChatMessage = async function(_message) {
         .err()
         .expect("unknown activation must fail boot");
         assert!(err.to_string().contains("did not match"), "{err:#}");
+    }
+
+    // ── Boot ordering ──
+
+    /// Minimal deployable package: manifest, source, compiled entry point, BAML dir.
+    fn boot_fixture_tar_gz(name: &str) -> Vec<u8> {
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let manifest = json!({ "name": name, "version": "1", "entry_point": "dist/index.js" });
+        let js =
+            "globalThis.onChatMessage = async function(_m) { __chat_yield({ final: true }); };\n";
+        let files: [(&str, Vec<u8>); 4] = [
+            ("manifest.json", manifest.to_string().into_bytes()),
+            ("src/index.ts", js.as_bytes().to_vec()),
+            ("dist/index.js", js.as_bytes().to_vec()),
+            ("baml_src/agent.baml", b"// no BAML functions\n".to_vec()),
+        ];
+        for (path, body) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, path, body.as_slice())
+                .expect("append package entry");
+        }
+        builder
+            .into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish gzip")
+    }
+
+    async fn boot_fixture(
+        runner: &AgentRunner,
+        bytes: &[u8],
+    ) -> baml_rt_core::Result<(String, baml_rt_core::AgentRouteKey, BootedAgent)> {
+        let artifact_hash =
+            baml_rt_repository::artifact_hash_from_tar_gz(bytes).expect("artifact hash");
+        let content_hash =
+            baml_rt_core::DeploymentContentHash::new("ab".repeat(32)).expect("content hash");
+        runner
+            .boot_from_blob_bytes(bytes, &content_hash, &artifact_hash, 1, None)
+            .await
+    }
+
+    /// Control: the fixture package boots, so the failure below is the boot write.
+    #[tokio::test]
+    async fn boot_fixture_boots_on_a_clean_store() {
+        let runner = make_runner(
+            test_provenance_config().await,
+            test_deployment_state().await,
+        );
+        let bytes = boot_fixture_tar_gz("boot-order-agent");
+        let (name, _, _) = boot_fixture(&runner, &bytes)
+            .await
+            .expect("fixture package boots");
+        assert_eq!(name, "boot-order-agent");
+    }
+
+    /// An agent whose `AgentBooted` write fails must not boot: it would serve
+    /// traffic under a boot the graph never recorded.
+    ///
+    /// The store rejects the write for a real reason: this agent id is already
+    /// registered with a different identity digest.
+    #[tokio::test]
+    async fn boot_fails_when_the_agent_booted_write_fails() {
+        use baml_rt_provenance::{AgentType, ProvEvent, ProvenanceWriter};
+
+        let prov = test_provenance_config().await;
+        let store = prov.store().clone();
+        let runner = make_runner(prov, test_deployment_state().await);
+        let bytes = boot_fixture_tar_gz("boot-order-agent");
+
+        let package_path = tempfile::NamedTempFile::new().expect("package file");
+        std::fs::write(package_path.path(), &bytes).expect("write package");
+        let agent_id = crate::agent_package::AgentPackage::load_from_file(package_path.path())
+            .await
+            .expect("load package")
+            .derived_agent_id()
+            .expect("derive agent id");
+        store
+            .add_event(ProvEvent::agent_booted(
+                agent_id.clone(),
+                AgentType::new("boot-order-agent").expect("agent type"),
+                "1".to_string(),
+                "conflicting-registration".to_string(),
+            ))
+            .await
+            .expect("pre-register a conflicting identity");
+
+        let result = boot_fixture(&runner, &bytes).await;
+        let err = result
+            .err()
+            .expect("boot must fail when AgentBooted cannot be written");
+        let mut chain = vec![err.to_string()];
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            chain.push(cause.to_string());
+            source = cause.source();
+        }
+        assert!(
+            chain.iter().any(|m| m.contains("registration mismatch")),
+            "boot must fail with the AgentBooted write error, got: {chain:?}"
+        );
     }
 }

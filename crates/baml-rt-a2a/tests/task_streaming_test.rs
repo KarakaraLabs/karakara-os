@@ -155,7 +155,7 @@ async fn setup_agent() -> A2aAgent {
     let store = common::provenance::build_surreal_test_store().await;
     A2aAgent::builder()
         .with_runtime_manager(manager)
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_init_js(fixture_js_code())
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(QuickJSConfig::new().with_max_attempts_ms(Some(15_000)))
@@ -171,7 +171,7 @@ async fn setup_agent_with_stream_idle_5s() -> A2aAgent {
     let store = common::provenance::build_surreal_test_store().await;
     A2aAgent::builder()
         .with_runtime_manager(manager)
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_init_js(fixture_js_code())
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(
@@ -193,7 +193,7 @@ async fn setup_agent_with_a2a_session_tool() -> A2aAgent {
     let store = common::provenance::build_surreal_test_store().await;
     let agent = A2aAgent::builder()
         .with_runtime_manager(manager)
-        .with_surreal_store(store)
+        .with_host_store(baml_rt_a2a::HostRuntimeStore::new(store))
         .with_init_js(fixture_js_code())
         .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
         .with_quickjs_config(QuickJSConfig::new().with_max_attempts_ms(Some(15_000)))

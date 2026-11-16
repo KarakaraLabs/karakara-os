@@ -227,7 +227,7 @@ async fn setup_gate_agent_with_store(
 
     let mut builder = A2aAgent::builder().with_runtime_manager(manager);
     if let Some(store) = store {
-        builder = builder.with_surreal_store(store);
+        builder = builder.with_host_store(baml_rt_a2a::HostRuntimeStore::new(store));
     }
     builder
         .with_init_js(gate_invoker_js())

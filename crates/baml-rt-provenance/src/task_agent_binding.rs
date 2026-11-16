@@ -89,6 +89,46 @@ impl TaskAgentBinding {
     }
 }
 
+/// The agent and boot that a running agent writes as.
+///
+/// It can only be obtained by committing the agent's `AgentBooted` event, so
+/// every binding and message an agent writes refers to a boot the graph holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionPrincipal {
+    agent_id: AgentId,
+    boot_event_id: ActivityAnchorId,
+}
+
+impl ExecutionPrincipal {
+    /// Write `boot` and return the principal it establishes. Fails, writing
+    /// nothing, unless `boot` is an `AgentBooted` event; fails when the write does.
+    pub async fn commit_boot(
+        writer: &dyn crate::store::ProvenanceWriter,
+        boot: ProvEvent,
+    ) -> Result<Self> {
+        let ProvEventData::AgentBooted { agent_id, .. } = boot.data() else {
+            return Err(ProvenanceError::InvalidEvent {
+                activity_anchor: boot.id().as_str().to_string(),
+                reason: "an execution principal requires an AgentBooted event".to_string(),
+            });
+        };
+        let principal = Self {
+            agent_id: agent_id.clone(),
+            boot_event_id: boot.id().clone(),
+        };
+        writer.add_event(boot).await?;
+        Ok(principal)
+    }
+
+    pub fn agent_id(&self) -> &AgentId {
+        &self.agent_id
+    }
+
+    pub fn boot_event_id(&self) -> &ActivityAnchorId {
+        &self.boot_event_id
+    }
+}
+
 /// Agent id carried on this event when graph head pointer is not yet visible to the writer.
 pub fn event_local_executing_agent_id(event: &ProvEvent) -> Option<AgentId> {
     if let Some(agent_id) = event.message_agent_id()

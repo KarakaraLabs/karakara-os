@@ -844,6 +844,14 @@ mod tests {
             self.events.lock().unwrap().push(event);
             Ok(())
         }
+
+        async fn bind_task_executing_agent(
+            &self,
+            binding: crate::TaskAgentBinding,
+        ) -> crate::error::Result<()> {
+            self.events.lock().unwrap().extend(binding.into_events());
+            Ok(())
+        }
     }
 
     #[tokio::test]

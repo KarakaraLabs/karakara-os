@@ -3,67 +3,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Observation event service: SSE subscribers for unified operator bundles.
+//!
+//! The host's provenance store emits one update for each context-scoped event it
+//! commits, whichever agent or host component wrote it. This service only hands
+//! out receivers, so it covers agents deployed after it was built and has no
+//! lifetime of its own.
 
 use std::sync::Arc;
 
-use baml_rt_core::{ObservationUpdate, observation::kinds};
-use tokio::{sync::broadcast, task::JoinHandle};
-
-use crate::runner::AgentRunner;
+use baml_rt_core::ObservationUpdate;
+use baml_rt_provenance::SurrealProvenanceStore;
+use tokio::sync::broadcast;
 
 pub(crate) struct ObservationEventServiceImpl {
-    tx: broadcast::Sender<ObservationUpdate>,
-    _tasks: Vec<JoinHandle<()>>,
+    store: Arc<SurrealProvenanceStore>,
 }
 
 impl ObservationEventServiceImpl {
-    pub(crate) fn new(runner: Arc<AgentRunner>, tx: broadcast::Sender<ObservationUpdate>) -> Self {
-        let mut handles = Vec::new();
-        for mut updates in runner.subscribe_task_update_receivers() {
-            let tx_clone = tx.clone();
-            handles.push(tokio::spawn(async move {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(620);
-                loop {
-                    if std::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    match updates.recv().await {
-                        Ok(event) => {
-                            let context_id = event
-                                .context_id()
-                                .map(|id| id.as_str().to_string())
-                                .unwrap_or_default();
-                            if context_id.is_empty() {
-                                continue;
-                            }
-                            let update = ObservationUpdate {
-                                context_id,
-                                task_id: event.task_id().map(|id| id.to_string()),
-                                kinds: kinds::TRANSCRIPT | kinds::OPS,
-                            };
-                            if let Err(e) = tx_clone.send(update.clone()) {
-                                tracing::warn!(
-                                    error = ?e,
-                                    context_id = %update.context_id,
-                                    "observation notify send failed"
-                                );
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }));
-        }
-        Self {
-            tx,
-            _tasks: handles,
-        }
+    pub(crate) fn new(store: Arc<SurrealProvenanceStore>) -> Self {
+        Self { store }
     }
 }
 
 impl baml_rt_api::ObservationEventService for ObservationEventServiceImpl {
     fn subscribe_updates(&self) -> broadcast::Receiver<ObservationUpdate> {
-        self.tx.subscribe()
+        self.store.subscribe_observations()
     }
 }

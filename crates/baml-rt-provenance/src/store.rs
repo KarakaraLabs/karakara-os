@@ -244,19 +244,14 @@ pub trait ProvenanceWriter: ProvenanceContextReader + Send + Sync {
         }
     }
 
-    /// Idempotent: ensures `TaskExists` + `TaskExecutionStarted` → `WAS_LAST_EXECUTED_BY`.
-    async fn bind_task_executing_agent(&self, binding: TaskAgentBinding) -> Result<()> {
-        tracing::debug!(
-            task_id = binding.task_id.as_str(),
-            agent_id = binding.executing_agent_id.as_str(),
-            source = ?binding.source,
-            "bind_task_executing_agent"
-        );
-        for event in binding.into_events() {
-            self.add_event(event).await?;
-        }
-        Ok(())
-    }
+    /// Bind a task to its executing agent: `TaskExists` + `TaskExecutionStarted`
+    /// → `WAS_LAST_EXECUTED_BY`.
+    ///
+    /// Required, with no default: a task belongs to the first agent bound to it,
+    /// and only the store can check that. A default that wrote the binding
+    /// events through `add_event` would let any wrapping writer skip the check,
+    /// so wrappers must forward this to the writer they wrap.
+    async fn bind_task_executing_agent(&self, binding: TaskAgentBinding) -> Result<()>;
 
     /// Convenience wrapper for A2A chat bootstrap paths.
     async fn bind_task_executing_agent_for(

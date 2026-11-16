@@ -106,7 +106,7 @@ async fn test_baml_function_returns_actual_result() {
         .with_runtime_manager(baml_manager)
         .with_effect_emitter(effect_bus.clone() as Arc<dyn EffectEmitter>)
         .with_quickjs_config(test_quickjs_config())
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn test_js_function_invocation_returns_actual_result() {
         .with_init_js(agent_code)
         .with_effect_emitter(effect_bus.clone() as Arc<dyn EffectEmitter>)
         .with_quickjs_config(test_quickjs_config())
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap();
@@ -296,7 +296,7 @@ async fn test_invoke_function_api_contract() {
         .with_init_js(agent_code)
         .with_effect_emitter(effect_bus.clone() as Arc<dyn EffectEmitter>)
         .with_quickjs_config(test_quickjs_config())
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap();
@@ -405,7 +405,7 @@ async fn test_loaded_agent_invoke_function_contract() {
         .with_init_js(agent_code)
         .with_effect_emitter(effect_bus.clone() as Arc<dyn EffectEmitter>)
         .with_quickjs_config(test_quickjs_config())
-        .with_surreal_store(test_surreal_store().await)
+        .with_host_store(baml_rt::HostRuntimeStore::new(test_surreal_store().await))
         .build()
         .await
         .unwrap();

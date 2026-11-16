@@ -165,7 +165,7 @@ async fn setup_clickup_ingress_agent(
     let agent = baml_rt::A2aAgent::builder()
         .with_agent_id(agent_id)
         .with_quickjs_config(quickjs_config_with_host_ingress(Arc::clone(&store)))
-        .with_surreal_store(store)
+        .with_host_store(baml_rt::HostRuntimeStore::new(store))
         .with_runtime_manager(manager)
         .with_init_js(agent_code)
         .with_effect_emitter(Arc::new(BusWithEffects::new()))
