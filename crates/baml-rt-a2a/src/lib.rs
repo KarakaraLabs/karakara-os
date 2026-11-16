@@ -24,7 +24,6 @@ pub mod host_compaction;
 pub mod host_runtime_store;
 pub(crate) mod live_stream;
 pub(crate) mod live_stream_working_relay;
-pub(crate) mod provenance_notify_writer;
 pub mod request_router;
 pub mod response;
 pub mod result_deduplicator;

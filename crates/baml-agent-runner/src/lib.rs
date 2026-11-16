@@ -369,7 +369,6 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         repository_url: config.repository_url.clone(),
         embedded_repository: Some(repository_service.clone()),
         runtime_progress: runtime_progress.clone(),
-        observation_notify: None,
         compaction_summarizer,
     })
     .map_err(|e| anyhow::anyhow!("runner builder init: {e}"))?;
@@ -591,10 +590,9 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
             runner.provenance_config().store().clone(),
         ))
             as Arc<dyn baml_rt_api::ConversationHistoryService>);
-        let observation_events = Some(Arc::new(ObservationEventServiceImpl::new(
-            runner.clone(),
-            ready.observation_tx(),
-        )) as Arc<dyn baml_rt_api::ObservationEventService>);
+        let observation_events = Some(Arc::new(ObservationEventServiceImpl::new(Arc::clone(
+            runner.provenance_config().store(),
+        ))) as Arc<dyn baml_rt_api::ObservationEventService>);
         let context_index = Some(Arc::new(ContextIndexServiceImpl::new(
             runner.provenance_config().store().clone(),
         )) as Arc<dyn baml_rt_api::ContextIndexService>);
@@ -1262,7 +1260,6 @@ globalThis.onChatMessage = async function(_message) {
                 repository_url: "http://127.0.0.1:18080/repository".to_string(),
                 embedded_repository: None,
                 runtime_progress: baml_rt_api::RuntimeProgressMeter::new_without_ticker(),
-                observation_notify: None,
                 compaction_summarizer: baml_rt_provenance::FixedCompactionSummarizer::test_stub(),
             })
             .expect("test runner construction"),

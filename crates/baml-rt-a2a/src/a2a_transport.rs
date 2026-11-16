@@ -652,7 +652,6 @@ pub struct A2aAgent {
     request_router: Arc<dyn RequestRouter>,
     error_classifier: Arc<dyn ErrorClassifier>,
     effect_emitter: Arc<dyn EffectEmitter>,
-    update_tx: broadcast::Sender<TaskUpdateEvent>,
     stream_sessions: Arc<Mutex<HashMap<LiveStreamSessionKey, LiveStreamSession>>>,
 }
 
@@ -762,11 +761,6 @@ impl A2aAgent {
         // Also check for open host tool sessions (e.g. system or integration tools).
         let runtime = self.runtime.read().await;
         runtime.has_any_open_tool_sessions()
-    }
-
-    /// Subscribe to task update events for this agent instance.
-    pub fn subscribe_task_updates(&self) -> broadcast::Receiver<TaskUpdateEvent> {
-        self.update_tx.subscribe()
     }
 
     /// Single-source-of-truth: persist an inbound `message.sendStream` user `Message`
@@ -974,8 +968,6 @@ pub struct A2aAgentBuilder {
     boot_event_id: Option<baml_rt_core::ids::ActivityAnchorId>,
     register_a2a_session_tool: RegistrationMode,
     a2a_session_route_mode: A2aSessionRouteMode,
-    /// When set, provenance commits notify this channel so transcript consumers refresh after graph writes.
-    observation_notify: Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
     compaction_summarizer: Option<Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>>,
     llm_client_config: Option<Arc<LlmClientConfig>>,
 }
@@ -994,7 +986,6 @@ pub struct A2aAgentBuilderWithEffectEmitter {
     register_a2a_session_tool: RegistrationMode,
     a2a_session_route_mode: A2aSessionRouteMode,
     effect_emitter: Arc<dyn EffectEmitter>, // REQUIRED - enforced by typestate
-    observation_notify: Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
     compaction_summarizer: Option<Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>>,
     llm_client_config: Option<Arc<LlmClientConfig>>,
 }
@@ -1100,19 +1091,9 @@ impl A2aAgentBuilder {
             boot_event_id: None,
             register_a2a_session_tool: RegistrationMode::Skip,
             a2a_session_route_mode: A2aSessionRouteMode::SelfAgent,
-            observation_notify: None,
             compaction_summarizer: None,
             llm_client_config: None,
         }
-    }
-
-    /// Notify this channel after each successful context-scoped provenance write (operator transcript SSE).
-    pub fn with_observation_notify(
-        mut self,
-        tx: tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>,
-    ) -> Self {
-        self.observation_notify = Some(tx);
-        self
     }
 
     /// Host context compaction summarizer (LLM or test fixed prose).
@@ -1250,7 +1231,6 @@ impl A2aAgentBuilder {
             register_a2a_session_tool: self.register_a2a_session_tool,
             a2a_session_route_mode: self.a2a_session_route_mode,
             effect_emitter: emitter,
-            observation_notify: self.observation_notify,
             compaction_summarizer: self.compaction_summarizer,
             llm_client_config: self.llm_client_config,
         }
@@ -1312,15 +1292,6 @@ impl A2aAgentBuilderWithEffectEmitter {
     /// `tasks.subscribe` through any of them sees the owner's live frames.
     pub fn with_host_store(mut self, host: Arc<crate::HostRuntimeStore>) -> Self {
         self.provenance_writer = ProvenanceWriterConfig::Host(host);
-        self
-    }
-
-    /// Notify this channel after each successful context-scoped provenance write (operator transcript SSE).
-    pub fn with_observation_notify(
-        mut self,
-        tx: tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>,
-    ) -> Self {
-        self.observation_notify = Some(tx);
         self
     }
 
@@ -1550,13 +1521,10 @@ impl A2aAgentBuilderWithEffectEmitter {
             }
         };
 
-        let base_writer = provenance_writer.expect("build always mounts a ProvenanceWriter");
-        let writer: Arc<dyn ProvenanceWriter> = match self.observation_notify.clone() {
-            Some(tx) => Arc::new(
-                crate::provenance_notify_writer::NotifyingProvenanceWriter::new(base_writer, tx),
-            ),
-            None => base_writer,
-        };
+        // Operator observation updates are emitted by the store itself after each
+        // commit, so the agent writes straight through its store view.
+        let writer: Arc<dyn ProvenanceWriter> =
+            provenance_writer.expect("build always mounts a ProvenanceWriter");
         let archive_store: Option<Arc<SurrealProvenanceStore>> = surreal_for_archive;
 
         let emitter: Arc<dyn EventEmitter> =
@@ -1638,7 +1606,6 @@ impl A2aAgentBuilderWithEffectEmitter {
             request_router,
             error_classifier,
             effect_emitter,
-            update_tx,
             stream_sessions,
         };
 
@@ -2898,9 +2865,8 @@ mod tests {
         baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(uuid::Uuid::new_v4()))
     }
 
-    /// An agent binds tasks through its writer, which in a hosted runner is the
-    /// observation wrapper around the agent's store view. The task-owner check
-    /// lives in the store, so both layers must forward the binding to it.
+    /// An agent binds tasks through its writer, its view of the host store. The
+    /// task-owner check lives in the store, so the view must forward the binding.
     #[tokio::test]
     async fn binding_through_the_agent_writer_rejects_another_agents_task() {
         use baml_rt_provenance::{
@@ -2944,11 +2910,8 @@ mod tests {
             .await
             .expect("first binding claims the task");
 
-        let (tx, _rx) = tokio::sync::broadcast::channel(16);
-        let intruder_view: Arc<dyn ProvenanceWriter> =
+        let intruder_writer: Arc<dyn ProvenanceWriter> =
             AgentStoreView::new(Arc::clone(&host), intruder.clone(), None);
-        let intruder_writer =
-            crate::provenance_notify_writer::NotifyingProvenanceWriter::new(intruder_view, tx);
         let err = intruder_writer
             .bind_task_executing_agent(binding(intruder.clone()))
             .await

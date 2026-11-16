@@ -19,6 +19,9 @@
 //!   streams the task's live frames and closes when the task finishes.
 //! - **I-FOREIGN-TASK-WRITE:** A write to a task by an agent other than its owner
 //!   is rejected. Writing into the shared context creates the writer's own task.
+//! - **I-OBSERVE-INCIDENT:** An operator subscribed to the host store's
+//!   observation stream sees every task in the incident, including tasks of
+//!   agents built after it subscribed.
 //!
 
 #[allow(dead_code, unused_imports)]
@@ -378,11 +381,14 @@ struct IncidentHost {
     store: Arc<SurrealProvenanceStore>,
     dispatcher: EventDispatcher,
     agent_ids: HashMap<&'static str, AgentId>,
+    /// Operator observation stream, subscribed before any agent existed.
+    observations: tokio::sync::broadcast::Receiver<baml_rt_core::ObservationUpdate>,
 }
 
 async fn incident_host() -> IncidentHost {
     let runtime = HostRuntimeStore::new(test_surreal_store().await);
     let store = Arc::clone(runtime.provenance());
+    let observations = store.subscribe_observations();
     let investigator = AgentSpec::new(
         "telemetry-investigator",
         SPECIALIST_JS.replace("__NAME__", "investigator"),
@@ -426,6 +432,7 @@ async fn incident_host() -> IncidentHost {
         store,
         dispatcher: EventDispatcher::new(Arc::new(host), HostPublishService::without_provenance()),
         agent_ids,
+        observations,
     }
 }
 
@@ -772,6 +779,70 @@ async fn one_alert_produces_a_task_forest_with_one_owner_per_task() {
         let child = TaskId::from_external(ExternalId::new(row.child_task_id.clone()));
         let owner = &host.agent_ids[row.target_name.as_str()];
         assert_single_owner(&host.store, &child, owner).await;
+    }
+}
+
+/// The operator stream covers the whole incident: every root and delegated task,
+/// whichever agent wrote it, though every agent was built after the subscription.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn operator_stream_sees_every_task_in_the_incident() {
+    let _permit = e2e_serial_gate().acquire().await.expect("e2e gate");
+    let mut host = incident_host().await;
+    let context_id = ContextId::from(format!("ctx-b1-{}", uuid::Uuid::new_v4()).as_str());
+    let alert = grafana_alert(&context_id, "alert-observed");
+
+    timeout(STEP_TIMEOUT, host.dispatcher.deliver_event(alert.clone()))
+        .await
+        .expect("delivery finishes")
+        .expect("delivery succeeds");
+
+    let mut updates = Vec::new();
+    loop {
+        match host.observations.try_recv() {
+            Ok(update) => updates.push(update),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(other) => panic!("observation stream must keep up with one incident: {other:?}"),
+        }
+    }
+    let incident: Vec<_> = updates
+        .iter()
+        .filter(|update| update.context_id == context_id.as_str())
+        .collect();
+    assert!(
+        incident.iter().all(|update| update.kinds != 0),
+        "{incident:#?}"
+    );
+
+    let observed_tasks: BTreeSet<&str> = incident
+        .iter()
+        .filter_map(|update| update.task_id.as_deref())
+        .collect();
+    let coordinator_root = dispatch_root_task(&alert, "maintenance-coordinator");
+    let watcher_root = dispatch_root_task(&alert, "alert-watcher");
+    let mut forest = BTreeSet::from([coordinator_root.to_string(), watcher_root.to_string()]);
+    forest.extend(
+        delegation_rows(&host.store)
+            .await
+            .into_iter()
+            .map(|row| row.child_task_id),
+    );
+    assert_eq!(forest.len(), 4, "two roots and two delegated children");
+    for task in &forest {
+        assert!(
+            observed_tasks.contains(task.as_str()),
+            "no observation update for task {task}; observed {observed_tasks:#?}"
+        );
+    }
+
+    // The alert reaching each root task is a transcript change.
+    for root in [&coordinator_root, &watcher_root] {
+        assert!(
+            incident.iter().any(|update| {
+                update.task_id.as_deref() == Some(root.as_str())
+                    && update.kinds & baml_rt_core::observation::kinds::TRANSCRIPT != 0
+            }),
+            "no transcript update for root {root}"
+        );
     }
 }
 

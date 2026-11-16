@@ -215,9 +215,24 @@ pub struct SurrealProvenanceStore {
     write_coalesce: Arc<crate::surreal_write_batch::WriteCoalesceCache>,
     /// Lanes that keep one writer at a time on a context's reference records.
     shared_write_lanes: Vec<Arc<tokio::sync::Mutex<()>>>,
+    /// One [`ObservationUpdate`] per committed context-scoped event, for operator views.
+    observation_tx: tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>,
 }
 
+/// Updates buffered per observation subscriber before it lags.
+pub(crate) const OBSERVATION_CHANNEL_CAPACITY: usize = 1024;
+
 impl SurrealProvenanceStore {
+    /// Receive one [`baml_rt_core::ObservationUpdate`] for each event this store
+    /// commits that belongs to a context, whoever wrote it. Updates are sent after
+    /// the commit; a failed write sends none. A receiver that falls more than
+    /// [`OBSERVATION_CHANNEL_CAPACITY`] updates behind gets `RecvError::Lagged`.
+    pub fn subscribe_observations(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<baml_rt_core::ObservationUpdate> {
+        self.observation_tx.subscribe()
+    }
+
     /// Attach the shared in-process ref-table cache (same map as QuickJS / A2A).
     pub fn attach_ref_table_cache(
         &self,

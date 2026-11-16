@@ -214,7 +214,26 @@ impl SurrealProvenanceStore {
                 }
             }
         }
+        self.notify_observers(&event);
         Ok(())
+    }
+
+    /// Tell operator views a context changed. Runs only after a commit, so every
+    /// writer (agents, ingress, task store, runner) is covered by this one call.
+    fn notify_observers(&self, event: &crate::events::ProvEvent) {
+        let kinds = crate::observation::observation_kinds_for_event(event);
+        let Some(context_id) = event.context_id_opt() else {
+            return;
+        };
+        if kinds == 0 {
+            return;
+        }
+        // No receivers is normal (no operator watching); the write already succeeded.
+        let _ = self.observation_tx.send(baml_rt_core::ObservationUpdate {
+            context_id: context_id.as_str().to_string(),
+            task_id: event.task_id().map(|t| t.as_str().to_string()),
+            kinds,
+        });
     }
 }
 

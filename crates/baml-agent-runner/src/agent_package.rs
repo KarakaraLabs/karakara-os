@@ -116,8 +116,6 @@ pub(crate) struct AgentPackageBootArgs<'a> {
     pub(crate) stream_idle_secs: Option<u64>,
     /// Meter to register the agent's JS-event-loop progress probe with.
     pub(crate) runtime_progress: Arc<RuntimeProgressMeter>,
-    pub(crate) observation_notify:
-        Option<tokio::sync::broadcast::Sender<baml_rt_core::ObservationUpdate>>,
     pub(crate) compaction_summarizer: Arc<dyn baml_rt_provenance::ConversationCompactionSummarizer>,
 }
 
@@ -445,7 +443,7 @@ impl AgentPackage {
                 name = self.manifest.name
             ))
         })?;
-        let mut agent_builder = A2aAgent::builder()
+        let agent_builder = A2aAgent::builder()
             .with_execution_principal(principal)
             .with_runtime_handle(runtime_manager_arc.clone())
             .with_quickjs_config(quickjs_config)
@@ -453,9 +451,6 @@ impl AgentPackage {
             .with_agent_identity(agent_package)
             .with_host_store(Arc::clone(args.provenance_config.host_store()))
             .with_llm_client_config(llm_config_arc);
-        if let Some(tx) = args.observation_notify.clone() {
-            agent_builder = agent_builder.with_observation_notify(tx);
-        }
         let agent_builder =
             agent_builder.with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()));
         let agent_builder =
