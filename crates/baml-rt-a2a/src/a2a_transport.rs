@@ -1963,6 +1963,10 @@ impl A2aAgent {
         let mut suspended: Option<SuspendedState> = None;
 
         while let Ok(turn) = turn_rx.recv().await {
+            // Keep the client stream open until the session map reflects this turn's
+            // completion. Otherwise the client can observe EOF and start its next turn
+            // while this session still has `in_flight = true`.
+            let response_lifetime = turn.response_tx.clone();
             let turn_span = spans::live_stream_session_turn(session_context_id.as_str());
             if suspended.is_none() && !is_agent_to_agent_request(&turn.request) {
                 baml_rt_observability::turn::begin_turn(&session_context_id);
@@ -2462,14 +2466,29 @@ impl A2aAgent {
             .await;
 
             match action {
-                TurnAction::Continue => continue,
+                TurnAction::Continue => {
+                    // The InputRequired path cleared `in_flight` before the response
+                    // stream closes, so an immediate resume can attach safely.
+                    drop(response_lifetime);
+                    continue;
+                }
                 TurnAction::Break => {
                     metrics::record_live_stream_turn_duration(
                         self.agent_package.as_str(),
                         turn_ordinal,
                         turn_wall_started.elapsed(),
                     );
-                    break;
+                    let mut sessions = self.stream_sessions.lock().await;
+                    if let Some(session) = sessions.get_mut(&session_key) {
+                        session.relay_tx = None;
+                    }
+                    sessions.remove(&session_key);
+                    drop(sessions);
+                    // This is the last response sender. Dropping it only after map
+                    // cleanup makes stream EOF a reliable signal that the next turn
+                    // may start.
+                    drop(response_lifetime);
+                    return;
                 }
             }
         }
