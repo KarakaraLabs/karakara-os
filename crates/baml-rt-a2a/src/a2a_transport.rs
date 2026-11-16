@@ -396,6 +396,13 @@ impl ProvenanceWriter for AgentStoreView {
         self.provenance().add_event_fenced(event, fence).await
     }
 
+    async fn bind_task_executing_agent(
+        &self,
+        binding: baml_rt_provenance::TaskAgentBinding,
+    ) -> std::result::Result<(), baml_rt_provenance::ProvenanceError> {
+        self.provenance().bind_task_executing_agent(binding).await
+    }
+
     async fn gate_ledger_request(
         &self,
         context_id: &ContextId,
@@ -2886,6 +2893,75 @@ mod tests {
         synthetic_input_required_chunk,
     };
     use crate::a2a_types::{A2aMessageId, Message, MessageRole, Part};
+
+    fn fresh_agent_id() -> baml_rt_core::ids::AgentId {
+        baml_rt_core::ids::AgentId::from_uuid(baml_rt_core::ids::UuidId::new(uuid::Uuid::new_v4()))
+    }
+
+    /// An agent binds tasks through its writer, which in a hosted runner is the
+    /// observation wrapper around the agent's store view. The task-owner check
+    /// lives in the store, so both layers must forward the binding to it.
+    #[tokio::test]
+    async fn binding_through_the_agent_writer_rejects_another_agents_task() {
+        use baml_rt_provenance::{
+            ProvenanceError, ProvenanceWriter, TaskAgentBinding, TaskAgentBindingSource,
+        };
+
+        let host = crate::HostRuntimeStore::in_memory()
+            .await
+            .expect("host store");
+        let owner = fresh_agent_id();
+        let intruder = fresh_agent_id();
+        let context_id = ContextId::from("ctx-bind-through-writer");
+        let task_id = TaskId::from_external(ExternalId::new("task-bind-through-writer"));
+        let binding = |agent| {
+            TaskAgentBinding::new(
+                context_id.clone(),
+                task_id.clone(),
+                agent,
+                TaskAgentBindingSource::HostDispatchInvocation,
+            )
+            .expect("binding")
+        };
+
+        // Hosted agents always boot before they run; the boot registers the
+        // agent node the owner lookup resolves through.
+        for agent in [&owner, &intruder] {
+            host.provenance()
+                .add_event(baml_rt_provenance::ProvEvent::agent_booted(
+                    agent.clone(),
+                    baml_rt_provenance::AgentType::new("test_agent").expect("agent type"),
+                    "1.0.0".to_string(),
+                    "test@1.0.0".to_string(),
+                ))
+                .await
+                .expect("agent booted");
+        }
+
+        let owner_view = AgentStoreView::new(Arc::clone(&host), owner.clone(), None);
+        owner_view
+            .bind_task_executing_agent(binding(owner.clone()))
+            .await
+            .expect("first binding claims the task");
+
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let intruder_view: Arc<dyn ProvenanceWriter> =
+            AgentStoreView::new(Arc::clone(&host), intruder.clone(), None);
+        let intruder_writer =
+            crate::provenance_notify_writer::NotifyingProvenanceWriter::new(intruder_view, tx);
+        let err = intruder_writer
+            .bind_task_executing_agent(binding(intruder.clone()))
+            .await
+            .expect_err("another agent must not bind an owned task");
+        assert!(
+            matches!(
+                &err,
+                ProvenanceError::TaskOwnedByAnotherAgent { owner: o, writer: w, .. }
+                    if *o == owner && *w == intruder
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
 
     #[tokio::test]
     async fn hosted_agent_rejects_auto_generated_identity() {

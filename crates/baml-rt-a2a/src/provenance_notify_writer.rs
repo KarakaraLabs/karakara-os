@@ -71,6 +71,29 @@ impl ProvenanceWriter for NotifyingProvenanceWriter {
         Ok(())
     }
 
+    async fn bind_task_executing_agent(
+        &self,
+        binding: baml_rt_provenance::TaskAgentBinding,
+    ) -> Result<()> {
+        let notices: Vec<_> = binding
+            .clone()
+            .into_events()
+            .iter()
+            .map(|event| {
+                (
+                    event.context_id_opt().map(|c| c.as_str().to_string()),
+                    event.task_id().map(|t| t.as_str().to_string()),
+                    observation_kinds_for_event(event),
+                )
+            })
+            .collect();
+        self.inner.bind_task_executing_agent(binding).await?;
+        for (context_id, task_id, kinds) in notices {
+            self.notify(context_id, task_id, kinds);
+        }
+        Ok(())
+    }
+
     async fn gate_ledger_request(
         &self,
         context_id: &ContextId,
