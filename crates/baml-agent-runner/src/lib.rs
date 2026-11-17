@@ -2481,11 +2481,17 @@ globalThis.onChatMessage = async function(_message) {
 
     /// Minimal deployable package: manifest, source, compiled entry point, BAML dir.
     fn boot_fixture_tar_gz(name: &str) -> Vec<u8> {
+        boot_fixture_tar_gz_at_version(name, "1")
+    }
+
+    /// The fixture package as the repository builds it at `version`: only the
+    /// manifest version differs between publications of the same source.
+    fn boot_fixture_tar_gz_at_version(name: &str, version: &str) -> Vec<u8> {
         let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
             Vec::new(),
             flate2::Compression::default(),
         ));
-        let manifest = json!({ "name": name, "version": "1", "entry_point": "dist/index.js" });
+        let manifest = json!({ "name": name, "version": version, "entry_point": "dist/index.js" });
         let js =
             "globalThis.onChatMessage = async function(_m) { __chat_yield({ final: true }); };\n";
         let files: [(&str, Vec<u8>); 4] = [
@@ -2514,8 +2520,7 @@ globalThis.onChatMessage = async function(_message) {
         runner: &AgentRunner,
         bytes: &[u8],
     ) -> baml_rt_core::Result<(String, baml_rt_core::AgentRouteKey, BootedAgent)> {
-        let artifact_hash =
-            baml_rt_repository::artifact_hash_from_tar_gz(bytes).expect("artifact hash");
+        let artifact_hash = baml_rt_hash::ArtifactHash::from_bytes(bytes);
         let content_hash =
             baml_rt_core::DeploymentContentHash::new("ab".repeat(32)).expect("content hash");
         runner
@@ -2535,6 +2540,50 @@ globalThis.onChatMessage = async function(_message) {
             .await
             .expect("fixture package boots");
         assert_eq!(name, "boot-order-agent");
+    }
+
+    /// Republishing unchanged source assigns a new repository version, so the
+    /// packaged bytes differ. Each publication must get its own artifact hash
+    /// while keeping one `AgentId`, and booting the newer one after the older
+    /// one must not hit the immutable artifact registration.
+    #[tokio::test]
+    async fn republished_unchanged_source_boots_at_each_version() {
+        let runner = make_runner(
+            test_provenance_config().await,
+            test_deployment_state().await,
+        );
+        let v1 = boot_fixture_tar_gz_at_version("republish-agent", "1");
+        let v2 = boot_fixture_tar_gz_at_version("republish-agent", "2");
+        let v1_hash = baml_rt_hash::ArtifactHash::from_bytes(&v1);
+        let v2_hash = baml_rt_hash::ArtifactHash::from_bytes(&v2);
+        assert_ne!(
+            v1_hash, v2_hash,
+            "each publication has its own artifact hash"
+        );
+
+        let derive_agent_id = |bytes: Vec<u8>| async move {
+            let file = tempfile::NamedTempFile::new().expect("package file");
+            std::fs::write(file.path(), &bytes).expect("write package");
+            crate::agent_package::AgentPackage::load_from_file(file.path())
+                .await
+                .expect("load package")
+                .derived_agent_id()
+                .expect("derive agent id")
+        };
+        let agent_id = derive_agent_id(v1.clone()).await;
+        assert_eq!(agent_id, derive_agent_id(v2.clone()).await);
+
+        for (bytes, hash, version, content_hash) in [
+            (&v1, &v1_hash, 1, "ab".repeat(32)),
+            (&v2, &v2_hash, 2, "cd".repeat(32)),
+        ] {
+            let content_hash =
+                baml_rt_core::DeploymentContentHash::new(content_hash).expect("content hash");
+            runner
+                .boot_from_blob_bytes(bytes, &content_hash, hash, version, Some(&agent_id))
+                .await
+                .unwrap_or_else(|e| panic!("version {version} must boot: {e:#}"));
+        }
     }
 
     /// An agent whose `AgentBooted` write fails must not boot: it would serve

@@ -13,12 +13,10 @@ use std::{
 
 use baml_rt_core::AgentManifest;
 use baml_rt_hash::{
-    AgentIdentityDigest, AgentIdentityEntry, AgentIdentityError, ArtifactHash,
-    compute_agent_identity_digest,
+    AgentIdentityDigest, AgentIdentityEntry, AgentIdentityError, compute_agent_identity_digest,
 };
-use baml_rt_tools::external_tools::ExternalToolsLockfile;
 use flate2::read::GzDecoder;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tar::Archive;
 use thiserror::Error;
 
@@ -109,64 +107,6 @@ pub fn identity_digest_from_tar_gz(
 ) -> Result<AgentIdentityDigest, PackageIdentityError> {
     let entries = identity_entries_from_tar_gz(bytes)?;
     compute_agent_identity_digest(&entries).map_err(PackageIdentityError::Entry)
-}
-
-/// Compute the deployable agent artifact identity.
-///
-/// The package archive still carries the executable tool snapshots, but those
-/// bytes are deliberately absent from the behavior projection. The generated
-/// tool catalog and manifest retain the interface digests, so changing a
-/// tool implementation with the same descriptor leaves this value unchanged.
-pub fn artifact_hash_from_tar_gz(bytes: &[u8]) -> Result<ArtifactHash, PackageIdentityError> {
-    let identity = identity_digest_from_tar_gz(bytes)?;
-    let interface_digests = interface_digests_from_tar_gz(bytes)?;
-    let mut pairs = interface_digests;
-    pairs.sort();
-    Ok(ArtifactHash::from_identity_bytes(
-        serde_json::to_vec(&json!({
-            "agent_identity": identity.as_str(),
-            "tool_interfaces": pairs,
-        }))
-        .expect("artifact identity projection is serializable")
-        .as_slice(),
-    ))
-}
-
-fn interface_digests_from_tar_gz(
-    bytes: &[u8],
-) -> Result<Vec<(String, String)>, PackageIdentityError> {
-    let mut archive = Archive::new(GzDecoder::new(Cursor::new(bytes)));
-    for entry in archive
-        .entries()
-        .map_err(|e| PackageIdentityError::Archive(e.to_string()))?
-    {
-        let mut entry = entry.map_err(|e| PackageIdentityError::Archive(e.to_string()))?;
-        let path = entry
-            .path()
-            .map_err(|e| PackageIdentityError::Archive(e.to_string()))?;
-        if path.to_string_lossy() != "external_tools.lock.json" {
-            continue;
-        }
-        let mut content = Vec::new();
-        entry
-            .read_to_end(&mut content)
-            .map_err(|e| PackageIdentityError::FileRead {
-                path: "external_tools.lock.json".to_string(),
-                reason: e.to_string(),
-            })?;
-        let lockfile: ExternalToolsLockfile =
-            serde_json::from_slice(&content).map_err(|e| PackageIdentityError::FileRead {
-                path: "external_tools.lock.json".to_string(),
-                reason: format!("invalid lockfile: {e}"),
-            })?;
-        return Ok(lockfile
-            .toolsets
-            .into_iter()
-            .flat_map(|set| set.tools.into_iter())
-            .map(|tool| (tool.name, tool.descriptor_digest))
-            .collect());
-    }
-    Ok(Vec::new())
 }
 
 /// Collect the canonical behavior entries from a freshly extracted package directory.
@@ -408,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_identity_ignores_external_tool_implementation_bytes() {
+    fn external_tool_implementation_swap_keeps_agent_identity_but_changes_artifact_hash() {
         let lock = |tool_digest: &str| {
             serde_json::to_vec(&serde_json::json!({
                 "version": "2",
@@ -442,9 +382,17 @@ mod tests {
             "external-tools/support/clickup/tool.ktool",
             b"implementation B",
         ));
+        let (first, second) = (package(&first), package(&second));
+        let first_identity = super::identity_digest_from_tar_gz(&first).unwrap();
+        let second_identity = super::identity_digest_from_tar_gz(&second).unwrap();
+        assert_eq!(first_identity, second_identity);
         assert_eq!(
-            super::artifact_hash_from_tar_gz(&package(&first)).unwrap(),
-            super::artifact_hash_from_tar_gz(&package(&second)).unwrap(),
+            AgentId::from_identity_digest(&first_identity),
+            AgentId::from_identity_digest(&second_identity),
+        );
+        assert_ne!(
+            baml_rt_hash::ArtifactHash::from_bytes(&first),
+            baml_rt_hash::ArtifactHash::from_bytes(&second),
         );
     }
 

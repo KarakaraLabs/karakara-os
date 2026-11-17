@@ -81,8 +81,8 @@ pub use external_tool::{
     ExternalToolsetApprovalRecord,
 };
 pub use identity::{
-    PackageIdentityError, artifact_hash_from_tar_gz, identity_digest_from_tar_gz,
-    identity_entries_from_extracted_package, identity_entries_from_tar_gz,
+    PackageIdentityError, identity_digest_from_tar_gz, identity_entries_from_extracted_package,
+    identity_entries_from_tar_gz,
 };
 pub use ids::{AgentName, ArtifactHash, ContentHash, Generation, Version, VersionRef};
 pub use lineage::{LineageEdge, LineageKind, LineageSubgraph, Parentage};
