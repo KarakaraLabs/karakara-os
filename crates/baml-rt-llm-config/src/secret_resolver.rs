@@ -320,9 +320,8 @@ impl FnoxFileSecretResolver {
         } else {
             Config::load(path)?
         };
-        let profile = Config::get_profile(None);
-        let secrets = config.get_secrets(&profile)?;
-        let age_key_file = config.age_key_file.as_deref();
+        let profiles = Config::get_profiles(&[]);
+        let secrets = config.get_secrets(&profiles)?;
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -333,10 +332,9 @@ impl FnoxFileSecretResolver {
         for (key, secret_config) in secrets.iter() {
             match rt.block_on(fnox::secret_resolver::resolve_secret(
                 &config,
-                &profile,
+                &profiles,
                 key,
                 secret_config,
-                age_key_file,
             )) {
                 Ok(Some(value)) => {
                     cache.insert(StoreKey::new(key.as_str()), SecretValue::new(value));

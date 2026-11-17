@@ -18,6 +18,14 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 serde_yaml = "0.9"
-fnox = "0.1"
 tokio = { workspace = true }
 reqwest = { workspace = true }
+
+# The v1.49.0 tag predates fnox's provider feature gates, so pin the feature merge commit until
+# the next crates.io release. We only need fnox-core and none of its optional provider families.
+[dependencies.fnox]
+package = "fnox-core"
+version = "1.49.0"
+git = "https://github.com/jdx/fnox.git"
+rev = "c026bd90b981ee606c79db5829d68bf2dd270b9a"
+default-features = false
