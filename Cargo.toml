@@ -1,63 +1,63 @@
 [workspace]
 members = [
-  "crates/baml-agent-runner",
-  "crates/baml-derive-tests",
-  "crates/karakara-os",
-  "crates/baml-tool-links",
-  "crates/integrations/clickup-client",
-  "crates/integrations/github-client",
-  "crates/integrations/notion-read",
-  "crates/integrations/slack-read",
-  "crates/baml-rt",
-  "crates/baml-rt-a2a",
-  "crates/baml-rt-builder",
-  "crates/baml-rt-config",
-  "crates/baml-rt-citation",
-  "crates/baml-rt-conversation",
-  "crates/baml-rt-core",
-  "crates/baml-rt-karakara",
-  "crates/baml-rt-hash",
-  "crates/baml-rt-id",
-  "crates/baml-rt-interceptor",
-  "crates/baml-rt-llm-config",
-  "crates/baml-rt-observability",
-  "crates/baml-rt-provenance",
-  "crates/baml-rt-quickjs",
-  "crates/baml-rt-repository",
-  "crates/baml-rt-router",
-  "crates/baml-rt-tools",
-  "crates/baml-sandbox-protocol",
-  "crates/baml-ktool",
-  "crates/baml-tool-supervisor",
-  "crates/test-support",
-  "crates/task-daemon",
-  "crates/tools/calculator",
-  "crates/tools/internal-dev",
-  "crates/tools/security-eval",
-  "crates/tools/clickup",
-  "crates/tools/github",
-  "crates/tools/slack",
-  "crates/tools/slack-notify",
-  "crates/tools/typesafe",
-  "crates/tools/grafana-alerts",
-  "crates/tools/notion",
-  "crates/tools/system",
-  "crates/tools/memory",
-  "crates/baml-rt-mcp",
-  "crates/baml-tool-derive",
+    "crates/baml-agent-runner",
+    "crates/baml-derive-tests",
+    "crates/karakara-os",
+    "crates/baml-tool-links",
+    "crates/integrations/clickup-client",
+    "crates/integrations/github-client",
+    "crates/integrations/notion-read",
+    "crates/integrations/slack-read",
+    "crates/baml-rt",
+    "crates/baml-rt-a2a",
+    "crates/baml-rt-builder",
+    "crates/baml-rt-config",
+    "crates/baml-rt-citation",
+    "crates/baml-rt-conversation",
+    "crates/baml-rt-core",
+    "crates/baml-rt-karakara",
+    "crates/baml-rt-hash",
+    "crates/baml-rt-id",
+    "crates/baml-rt-interceptor",
+    "crates/baml-rt-llm-config",
+    "crates/baml-rt-observability",
+    "crates/baml-rt-provenance",
+    "crates/baml-rt-quickjs",
+    "crates/baml-rt-repository",
+    "crates/baml-rt-router",
+    "crates/baml-rt-tools",
+    "crates/baml-sandbox-protocol",
+    "crates/baml-ktool",
+    "crates/baml-tool-supervisor",
+    "crates/test-support",
+    "crates/task-daemon",
+    "crates/tools/calculator",
+    "crates/tools/internal-dev",
+    "crates/tools/security-eval",
+    "crates/tools/clickup",
+    "crates/tools/github",
+    "crates/tools/slack",
+    "crates/tools/slack-notify",
+    "crates/tools/typesafe",
+    "crates/tools/grafana-alerts",
+    "crates/tools/notion",
+    "crates/tools/system",
+    "crates/tools/memory",
+    "crates/baml-rt-mcp",
+    "crates/baml-tool-derive",
 ]
 default-members = [
-  "crates/baml-rt-citation",
-  "crates/baml-rt-conversation",
-  "crates/baml-rt-core",
-  "crates/baml-rt-id",
-  "crates/baml-rt-observability",
-  "crates/baml-rt-interceptor",
-  "crates/baml-rt-quickjs",
-  "crates/baml-rt-tools",
-  "crates/baml-rt-a2a",
-  "crates/baml-rt-provenance",
-  "crates/task-daemon",
+    "crates/baml-rt-citation",
+    "crates/baml-rt-conversation",
+    "crates/baml-rt-core",
+    "crates/baml-rt-id",
+    "crates/baml-rt-observability",
+    "crates/baml-rt-interceptor",
+    "crates/baml-rt-quickjs",
+    "crates/baml-rt-tools",
+    "crates/baml-rt-a2a",
+    "crates/baml-rt-provenance",
+    "crates/task-daemon",
 ]
 resolver = "2"
 
@@ -72,22 +72,22 @@ homepage = "https://karakara.dev"
 
 [workspace.dependencies]
 # Core
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_jcs = "0.2"
 anyhow = "1"
 thiserror = "2"
 tokio = { version = "1", features = [
-  "rt",
-  "rt-multi-thread",
-  "sync",
-  "time",
-  "macros",
-  "io-std",
-  "io-util",
-  "net",
-  "process",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "macros",
+    "io-std",
+    "io-util",
+    "net",
+    "process",
 ] }
 async-trait = "0.1"
 tracing = "0.1"
@@ -96,11 +96,15 @@ opentelemetry = "0.26"
 opentelemetry_sdk = "0.26"
 opentelemetry-http = "0.26"
 tracing-opentelemetry = "0.27"
-tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28.0", features = [
+    "rustls-tls-webpki-roots",
+] }
 futures-util = "0.3.31"
 libc = "0.2"
 testcontainers = "0.23"
-testcontainers-modules = { version = "0.15", default-features = false, features = ["surrealdb"] }
+testcontainers-modules = { version = "0.15", default-features = false, features = [
+    "surrealdb",
+] }
 insta = { version = "1.46.3", features = ["json"] }
 uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 schemars = "1.1.0"
@@ -115,8 +119,8 @@ proc-macro2 = "1"
 # ("decryption failed or bad record mac" connecting to OpenRouter).
 # Bump deliberately after testing; do not use `cargo generate-lockfile`.
 reqwest = { version = "=0.12.26", default-features = false, features = [
-  "json",
-  "rustls-tls",
+    "json",
+    "rustls-tls",
 ] }
 url = "2"
 regex = "1"
@@ -131,11 +135,17 @@ flate2 = "1"
 tar = "0.4"
 # Minimal QuickJS runtime: no SWC/typescript (agents are pre-compiled by the builder),
 # no timer APIs (unused), no console (we inject our own sandboxed polyfill).
-quickjs_runtime = { version = "0.15", default-features = false, features = ["bellard"] }
+quickjs_runtime = { version = "0.15", default-features = false, features = [
+    "bellard",
+] }
 # Agent memory
 agentic-memory = "0.2.6"
 # SurrealDB — embedded (kv-mem, kv-surrealkv) and remote (protocol-ws) backends.
-surrealdb = { version = "3", default-features = false, features = ["kv-mem", "kv-surrealkv", "protocol-ws"] }
+surrealdb = { version = "3", default-features = false, features = [
+    "kv-mem",
+    "kv-surrealkv",
+    "protocol-ws",
+] }
 # Keep SurrealDB's sysinfo process scan below Linux FD_SETSIZE for libkrun.
 sysinfo = "0.37.2"
 # Embedding / drift detection removed — citation integrity replaces ONNX drift scoring.
@@ -152,7 +162,9 @@ tracing-test = "0.2"
 tempfile = "3"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 rcgen = "0.13"
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "aws-lc-rs",
+] }
 dotenvy = "0.15"
 proptest = "1"
 # Builder / tools
@@ -160,10 +172,10 @@ inquire = "0.9"
 # MCP client SDK. Stdio uses `transport-child-process`, Streamable HTTP uses
 # `transport-streamable-http-client-reqwest`.
 rmcp = { version = "1.7", default-features = false, features = [
-  "client",
-  "reqwest",
-  "transport-child-process",
-  "transport-streamable-http-client-reqwest",
+    "client",
+    "reqwest",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
 ] }
 # API
 utoipa = { version = "5", features = ["axum_extras"] }
@@ -173,8 +185,8 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 # BAML (fork with minimal-runtime; branch for softer semver)
 baml-runtime = { git = "https://github.com/ryan-s-roberts/baml", branch = "canary", default-features = false, features = [
-  "minimal-runtime",
-  "internal",
+    "minimal-runtime",
+    "internal",
 ] }
 baml-types = { git = "https://github.com/ryan-s-roberts/baml", branch = "canary" }
 internal-baml-core = { git = "https://github.com/ryan-s-roberts/baml", branch = "canary" }
