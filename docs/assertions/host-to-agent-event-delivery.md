@@ -83,7 +83,7 @@ The agent responds with `AgentDispatchAck { accepted: bool, detail: Option<Strin
 | `HostDispatchRejected` (agent `accepted: false`) | Runner dispatch boundary (`record_dispatch_rejected`, `failure_kind: rejected`) |
 | `HostDispatchRejected` / transport (`dispatch_transport_error`) | Publish handler only when fan-out returns `SubscriberDeliveryFailure::Dispatch` (transport; dispatch never reached an agent ack) |
 
-Each row uses content-addressable identity (`HostIngressPollKey`, `HostIngressDispatchOutcomeKey`) so re-emits UPSERT one graph `Message` node. **`HOST_DISPATCH_TARGET` edges resolve to the stable `Agent`** identified by `target_agent_id` on the dispatch event (via [`DispatchTarget`](crates/baml-rt-core/src/agent_routing/dispatch_target.rs) at write time). The route is the package name alone; it is not used to mint stub agent nodes. When no agent is deployed, transport rejects may omit `target_agent_id` and write the operational row only.
+Each row uses content-addressable identity (`HostIngressPollKey`, `HostIngressDispatchOutcomeKey`) so re-emits UPSERT one graph `Message` node. **`HOST_DISPATCH_TARGET` edges resolve to the stable `Agent`** identified by `target_agent_id` on the dispatch event (via [`DispatchTarget`](../../crates/baml-rt-core/src/agent_routing/dispatch_target.rs) at write time). The route is the package name alone; it is not used to mint stub agent nodes. When no agent is deployed, transport rejects may omit `target_agent_id` and write the operational row only.
 
 Host poll ingress user messages attach processing to the runner control-plane instance (`RunnerRuntimeInstance`); they do not mint `WAS_EXECUTED_BY` edges to a nil agent id.
 
@@ -176,7 +176,7 @@ Reads resolve task→agent via that single head pointer (`get_task_agent_id`). T
 
 **Invariants:** head pointer is never bound to the nil UUID sentinel; episode API returns 404 for unbound tasks (poll ingress, `task_exists`-only) — use observation/ops surfaces instead.
 
-Implementation: [`crates/baml-rt-provenance/src/task_agent_binding.rs`](../crates/baml-rt-provenance/src/task_agent_binding.rs).
+Implementation: [`crates/baml-rt-provenance/src/task_agent_binding.rs`](../../crates/baml-rt-provenance/src/task_agent_binding.rs).
 
 ## Adding a New Event Source
 

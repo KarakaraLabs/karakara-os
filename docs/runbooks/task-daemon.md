@@ -137,7 +137,7 @@ sends a valid `message.sendStream` request with:
 
 For integration between poller, interpreter, and orchestration layers, use the
 versioned interpretation event contract:
-- [task-daemon-event-contract.md](./task-daemon-event-contract.md)
+- [task-daemon-event-contract.md](../reference/task-daemon-event-contract.md)
 
 ## Important Behavior
 

@@ -26,6 +26,7 @@ Rules that must hold — guide agentic workflow, codegen, and review.
 | [production-rust.md](assertions/production-rust.md) | Production Rust patterns and anti-patterns |
 | [testing-handbook.md](assertions/testing-handbook.md) | Enforced test strategy: E2E authority, boundary snapshots, matrices; TDD shards de-prioritized |
 | [tool-mvp-checklist.md](assertions/tool-mvp-checklist.md) | Pre-merge checklist for new host tools |
+| [karakara-gate.md](assertions/karakara-gate.md) | Deterministic pre-action grounding (`ParseArtifact`, sign taxonomy, P4 ambiguity gate) |
 
 ## Reference (`docs/reference/`)
 
@@ -47,15 +48,6 @@ System-as-is: APIs, contracts, and current behavior.
 | [task-daemon-event-contract.md](reference/task-daemon-event-contract.md) | Wire envelope `host.source-records.v1` |
 | [slack-tool.md](reference/slack-tool.md) | Slack read-only tool reference |
 | [tool-supervisor.md](reference/tool-supervisor.md) | Guest supervisor: wire, bundle verify, worker isolation, reveal secrets, DevBackend |
-
-## Plans (`docs/plans/`)
-
-Completed implementation plans kept for design and migration history.
-
-| Doc | Purpose |
-|-----|---------|
-| [tool-schema-graph.md](plans/tool-schema-graph.md) | Canonical JSON Schema graph migration for generated tool DTOs |
-| [tool-typescript-codegen.md](plans/tool-typescript-codegen.md) | Graph-driven TypeScript tool DTOs, catalog maps, and imperative session API |
 
 ## Workflows & CI (`docs/workflows/`)
 
@@ -81,6 +73,7 @@ Install, test, demo, and operate.
 | [coordinator-demo.md](runbooks/coordinator-demo.md) | Coordinator delegation demo |
 | [notion-demo.md](runbooks/notion-demo.md) | Notion agent demo |
 | [slack-it-requirements.md](runbooks/slack-it-requirements.md) | Slack Business+ IT questionnaire |
+| [binary-release-guide.md](runbooks/binary-release-guide.md) | Automated and manual prebuilt Linux binary releases (`karak`) |
 
 ## Crate-local docs
 

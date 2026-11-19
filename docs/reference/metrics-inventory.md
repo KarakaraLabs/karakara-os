@@ -2,11 +2,11 @@
 
 Authoritative list of **exported OTLP metric names** (OpenTelemetry/Prometheus), where they are defined, and their **operational purpose**. Dynamic values live in **attributes**, not in names.
 
-For implementation patterns, see [docs/reference/otel-metrics-instrumentation-guide.md](./docs/reference/otel-metrics-instrumentation-guide.md).
+For implementation patterns, see [docs/reference/otel-metrics-instrumentation-guide.md](./otel-metrics-instrumentation-guide.md).
 
 ---
 
-## `baml_rt` meter — [`crates/baml-rt-observability/src/metrics.rs`](../crates/baml-rt-observability/src/metrics.rs)
+## `baml_rt` meter — [`crates/baml-rt-observability/src/metrics.rs`](../../crates/baml-rt-observability/src/metrics.rs)
 
 Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, SSE latency.
 
@@ -27,7 +27,7 @@ Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, 
 | `baml_rt.a2a.worker.handle_duration_ms` | Histogram | Time to complete worker handle. |
 | `baml_rt.a2a.task_store.operation_total` | Counter | Graph-native task surface ops by `operation`, `result`. The previous Surreal `a2a_task` / `a2a_message` / `a2a_update` mirror tables were excised; metrics now report graph-only reads (`TaskGraphReader::list`, `record_status_update`, `record_artifact_update`) plus broadcaster wires. |
 | `baml_rt.a2a.task_store.operation_duration_ms` | Histogram | Latency of those operations (graph traversal + provenance write + broadcaster fan-out). |
-| `baml_rt.a2a.event_poll.cycle_total` | Counter | One increment per [`EventDispatcher::poll_and_deliver`](../crates/baml-rt-a2a/src/event_dispatcher.rs) sweep (all producers). |
+| `baml_rt.a2a.event_poll.cycle_total` | Counter | One increment per [`EventDispatcher::poll_and_deliver`](../../crates/baml-rt-a2a/src/event_dispatcher.rs) sweep (all producers). |
 | `baml_rt.a2a.event_poll.cycle_duration_ms` | Histogram | Wall time for that full sweep. |
 | `baml_rt.a2a.event_poll.producer_outcome_total` | Counter | Per-producer poll by bounded `producer_key` and `outcome` (`empty`, `poll_error`, `validation_error`, `delivery_error`, `partial_rejection`, `success`). |
 | `baml_rt.a2a.event_poll.producer_duration_ms` | Histogram | Latency per producer within a sweep (same attributes as `producer_outcome_total`). |
@@ -88,11 +88,11 @@ separable by `agent_package`. `turn=0` means no user turn has been recorded for 
 | `baml_rt_provenance.read.operation_total` | Counter | Heavy Surreal-backed graph reads by `operation`, `result`. |
 | `baml_rt_provenance.read.duration_ms` | Histogram | Latency of those reads. |
 
-`operation` values include graph export/list (`export_by_context`, `export_by_task`, `list_contexts` in [`graph_export/mod.rs`](../crates/baml-rt-provenance/src/graph_export/mod.rs)) and ops UI queries (`ops_query_llm_calls`, `ops_query_tool_calls`, `ops_query_messages`, `ops_query_aggregates`, `ops_query_lifecycle_events` in [`ops_query.rs`](../crates/baml-rt-provenance/src/surreal_store/ops_query.rs)).
+`operation` values include graph export/list (`export_by_context`, `export_by_task`, `list_contexts` in [`graph_export/mod.rs`](../../crates/baml-rt-provenance/src/graph_export/mod.rs)) and ops UI queries (`ops_query_llm_calls`, `ops_query_tool_calls`, `ops_query_messages`, `ops_query_aggregates`, `ops_query_lifecycle_events` in [`ops_query.rs`](../../crates/baml-rt-provenance/src/surreal_store/ops_query.rs)).
 
 ---
 
-## `baml_rt_task_daemon` meter — [`crates/baml-rt-observability/src/metrics.rs`](../crates/baml-rt-observability/src/metrics.rs)
+## `baml_rt_task_daemon` meter — [`crates/baml-rt-observability/src/metrics.rs`](../../crates/baml-rt-observability/src/metrics.rs)
 
 Task daemon poll / extract / deliver loop (when OTLP is enabled for the binary).
 
@@ -103,7 +103,7 @@ Task daemon poll / extract / deliver loop (when OTLP is enabled for the binary).
 
 ---
 
-## `baml_rt_core` meter — [`crates/baml-rt-core/src/effect_metrics.rs`](../crates/baml-rt-core/src/effect_metrics.rs)
+## `baml_rt_core` meter — [`crates/baml-rt-core/src/effect_metrics.rs`](../../crates/baml-rt-core/src/effect_metrics.rs)
 
 Effect bus and subscriber fan-out (liveness + provenance subscribers).
 
@@ -115,23 +115,23 @@ Effect bus and subscriber fan-out (liveness + provenance subscribers).
 
 ---
 
-## `baml_rt_api` meter — [`crates/baml-rt-api/src/metrics.rs`](../crates/baml-rt-api/src/metrics.rs)
+## `baml_rt_api` meter — [`crates/baml-rt-api/src/metrics.rs`](../../crates/baml-rt-api/src/metrics.rs)
 
 HTTP API surface (embedded in runner or standalone).
 
 | Metric name | Type | Purpose |
 |-------------|------|---------|
-| `baml_rt_api.http.request_total` | Counter | API requests. Non-agent routes label set: `route`, `result`. Agent routes (`/agents/{package}/...`) label set: `route`, `result`, `agent_package`, `agent_instance_id`, `forwarded`, `ingress_service_instance_id`. See [Runner identity labels](#runner-identity-labels) and [forwarded advisory](./docs/reference/otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding). |
+| `baml_rt_api.http.request_total` | Counter | API requests. Non-agent routes label set: `route`, `result`. Agent routes (`/agents/{package}/...`) label set: `route`, `result`, `agent_package`, `agent_instance_id`, `forwarded`, `ingress_service_instance_id`. See [Runner identity labels](#runner-identity-labels) and [forwarded advisory](./otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding). |
 | `baml_rt_api.http.request_duration_ms` | Histogram | Request latency (same per-route label split as `baml_rt_api.http.request_total`). |
 | `baml_rt_api.conversation_history.phase_duration_ms` | Histogram | Snapshot/delta build phases (`phase`). |
 | `baml_rt_api.conversation_history.payload_bytes` | Histogram | Response body size by `event` kind. |
 | `baml_rt_api.conversation_history.item_count` | Histogram | Items per page/snapshot by `event`. |
 
-**Routes:** Deploy/undeploy/list/migrate/dispatch handlers call `record_request`. Config CRUD uses stable `route` labels in [`config_handlers.rs`](../crates/baml-rt-api/src/config_handlers.rs) (e.g. `config_get`, `config_put`, `config_secrets_overview`). Static `/openapi.json`, `/healthz`, `/readyz`, `/diagnose` and nested repository paths are timed in [`router.rs`](../crates/baml-rt-api/src/router.rs) (`get_openapi_json`, `get_healthz`, `get_readyz`, `get_diagnose`, plus `repository_*` via middleware). Since #339, `/readyz` consumes the same `runtime_progress_lag_ms` signal and returns `503` once lag exceeds `READYZ_LAG_THRESHOLD_MS`; `/diagnose` exposes the raw value for operator dashboards.
+**Routes:** Deploy/undeploy/list/migrate/dispatch handlers call `record_request`. Config CRUD uses stable `route` labels in [`config_handlers.rs`](../../crates/baml-rt-api/src/config_handlers/mod.rs) (e.g. `config_get`, `config_put`, `config_secrets_overview`). Static `/openapi.json`, `/healthz`, `/readyz`, `/diagnose` and nested repository paths are timed in [`router.rs`](../../crates/baml-rt-api/src/router.rs) (`get_openapi_json`, `get_healthz`, `get_readyz`, `get_diagnose`, plus `repository_*` via middleware). Since #339, `/readyz` consumes the same `runtime_progress_lag_ms` signal and returns `503` once lag exceeds `READYZ_LAG_THRESHOLD_MS`; `/diagnose` exposes the raw value for operator dashboards.
 
 ---
 
-## `baml_rt_repository` meter — [`crates/baml-rt-repository/src/metrics.rs`](../crates/baml-rt-repository/src/metrics.rs)
+## `baml_rt_repository` meter — [`crates/baml-rt-repository/src/metrics.rs`](../../crates/baml-rt-repository/src/metrics.rs)
 
 Agent package repository (publish, search, blobs).
 
@@ -148,7 +148,7 @@ Agent package repository (publish, search, blobs).
 
 ---
 
-## `baml_rt_tools` meter — [`crates/baml-rt-tools/src/metrics.rs`](../crates/baml-rt-tools/src/metrics.rs)
+## `baml_rt_tools` meter — [`crates/baml-rt-tools/src/metrics.rs`](../../crates/baml-rt-tools/src/metrics.rs)
 
 Registry lifecycle and session FSM timings. **Tool run completion** totals use `baml_rt.tool.invocation_*` only (see guide).
 
@@ -160,7 +160,7 @@ Registry lifecycle and session FSM timings. **Tool run completion** totals use `
 
 ### v2 Sandbox tool VMs
 
-Runner-wide tool VM pool ([`host/pool.rs`](../crates/baml-rt-tools/src/external_tools/host/pool.rs)), grant authority ([`host/grants.rs`](../crates/baml-rt-tools/src/external_tools/host/grants.rs)), and guest-reported usage ([`host/channel.rs`](../crates/baml-rt-tools/src/external_tools/host/channel.rs)). All label values are bounded; no agent, tool, or digest labels.
+Runner-wide tool VM pool ([`host/pool.rs`](../../crates/baml-rt-tools/src/external_tools/host/pool.rs)), grant authority ([`host/grants.rs`](../../crates/baml-rt-tools/src/external_tools/host/grants.rs)), and guest-reported usage ([`host/channel.rs`](../../crates/baml-rt-tools/src/external_tools/host/channel.rs)). All label values are bounded; no agent, tool, or digest labels.
 
 | Metric name | Type | Purpose |
 |-------------|------|---------|
@@ -176,7 +176,7 @@ Runner-wide tool VM pool ([`host/pool.rs`](../crates/baml-rt-tools/src/external_
 
 ## Runner identity labels
 
-The runner emits these OpenTelemetry **resource attributes** on every signal (see [`runner_identity.rs`](../crates/baml-rt-observability/src/runner_identity.rs) and [`otel_env.rs`](../crates/baml-rt-observability/src/otel_env.rs)):
+The runner emits these OpenTelemetry **resource attributes** on every signal (see [`runner_identity.rs`](../../crates/baml-rt-observability/src/runner_identity.rs) and [`otel_env.rs`](../../crates/baml-rt-observability/src/otel_env.rs)):
 
 | Resource attr | Value / source |
 |---|---|
@@ -194,7 +194,7 @@ The runner emits these OpenTelemetry **resource attributes** on every signal (se
 | `serving_service_instance_id` | `baml_rt_a2a_request_*`, `baml_rt_a2a_error_total` | Identity of the runner that actually executed the A2A handler (local runner from the serving side's point of view). |
 | `target_service_instance_id` | `baml_rt_cluster_a2a_forward_*` | Identity of the peer runner an ingress forward was routed to. The literal `unknown` is emitted when the cluster resolver fallback fires. |
 
-The `forwarded` label on `baml_rt_api_http_request_*` is **advisory** (derived from W3C baggage on public `/agents/...` routes) — see the trace guide's [cross-runner A2A forwarding](./docs/reference/otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding) section.
+The `forwarded` label on `baml_rt_api_http_request_*` is **advisory** (derived from W3C baggage on public `/agents/...` routes) — see the trace guide's [cross-runner A2A forwarding](./otel-trace-instrumentation-guide.md#cross-runner-a2a-forwarding) section.
 
 ---
 
@@ -212,9 +212,9 @@ Prior gap items below are **wired** in tree; extend only when new surfaces ship 
 | Area | Coverage |
 |------|----------|
 | **Control plane HTTP** | Deploy/undeploy/list/migrate/dispatch + config CRUD + OpenAPI/health/ready + repository nested router (`baml_rt_api.http.*`). |
-| **Event pipeline** | Poll sweep (`baml_rt.a2a.event_poll.*`) + per-delivery aggregation (`baml_rt.a2a.event_dispatch.*`) from [`event_dispatcher.rs`](../crates/baml-rt-a2a/src/event_dispatcher.rs). |
+| **Event pipeline** | Poll sweep (`baml_rt.a2a.event_poll.*`) + per-delivery aggregation (`baml_rt.a2a.event_dispatch.*`) from [`event_dispatcher.rs`](../../crates/baml-rt-a2a/src/event_dispatcher.rs). |
 | **Provenance reads** | Graph export/list + `query_ops` resource kinds (`baml_rt_provenance.read.*`). |
-| **Cluster A2A** | HTTP forwards (`baml_rt.cluster.a2a_forward_*`) in [`forward.rs`](../crates/baml-rt-router/src/forward.rs). |
+| **Cluster A2A** | HTTP forwards (`baml_rt.cluster.a2a_forward_*`) in [`forward.rs`](../../crates/baml-rt-router/src/forward.rs). |
 | **task-daemon** | Run loop (`baml_rt_task_daemon.run_once.*`) when the binary exports OTLP. |
 
 ### Covered well (baseline)

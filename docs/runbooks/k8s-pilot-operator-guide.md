@@ -135,7 +135,7 @@ curl -sf http://localhost:18080/readyz  && echo ok
 
 ## Step 6 — Authenticated publish and deploy
 
-Publish the `dispatch-echo` fixture and deploy it in one step using the authenticated CLI path from [#220](https://github.com/semiotic-agentium/agent-platform/issues/220):
+Publish the `dispatch-echo` fixture and deploy it in one step using the authenticated CLI path:
 
 ```bash
 cargo run -p karakara-os -- push \
