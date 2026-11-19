@@ -65,6 +65,7 @@ Install, test, demo, and operate.
 
 | Doc | Purpose |
 |-----|---------|
+| [getting-started.md](runbooks/getting-started.md) | Build from source, local runner, example `just` flows, tests, and observability |
 | [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) | Parked Helm chart guide (dormant pilot) |
 | [ci-security.md](runbooks/ci-security.md) | Public-repo CI trust model and GitHub settings |
 | [task-daemon.md](runbooks/task-daemon.md) | Task-daemon user guide |
