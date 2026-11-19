@@ -103,7 +103,7 @@ jobs:
 
       - name: Inspect runner binary (architecture and static ONNX linkage)
         run: |
-          bin=target/aarch64-unknown-linux-gnu/release-dist/karakara
+          bin=target/aarch64-unknown-linux-gnu/release-dist/karak
           file "$bin"
           echo "=== dynamic NEEDED libs ==="
           readelf -d "$bin" | grep NEEDED || true

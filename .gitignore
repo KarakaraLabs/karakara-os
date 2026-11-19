@@ -55,12 +55,6 @@ crates/baml-agent-runner/.runner-state/
 /provenance_db-shm
 /provenance_db-wal
 
-# Fastembed model cache (downloaded ONNX models, ~130 MB)
-.fastembed_cache/
-# HF-style fetch sidecars — not committed (tensors under blobs/ use Git LFS)
-models/fastembed/**/blobs/*.lock
-models/fastembed/**/blobs/*.part
-
 # task-daemon Slack source dump — local-only, carries workspace tokens
 source-slack.json
 

@@ -145,7 +145,7 @@ only. There is no separate “SPDX license” — `Apache-2.0` is the standard
 
 Use **`Apache-2.0`** everywhere for first-party work. Do not use `MIT`, bare
 `Apache`, or other identifiers unless you are documenting **third-party**
-upstream code (e.g. vendored models under `models/fastembed/` — see `REUSE.toml`).
+upstream code (see `REUSE.toml`).
 
 ### REUSE compliance
 

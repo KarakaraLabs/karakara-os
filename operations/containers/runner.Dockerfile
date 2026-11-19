@@ -58,21 +58,9 @@ RUN mkdir -p /data && chown -R karakara:karakara /data
 
 COPY --from=builder /build/target/release/karak /usr/local/bin/
 
-# ONNX models for embedding/drift detection (git-lfs tracked).
-# Fail fast if LFS pointers were not resolved (e.g. missing `git lfs pull`).
-COPY models/fastembed /models/fastembed
-RUN stubs=$(find /models/fastembed -name '*.onnx' -exec sh -c \
-      'head -c 7 "$1" | grep -q "^version" && echo "$1"' _ {} \;); \
-    if [ -n "$stubs" ]; then \
-      echo "ERROR: ONNX models are LFS pointer stubs (run 'git lfs pull'):" >&2; \
-      echo "$stubs" >&2; \
-      exit 1; \
-    fi
-ENV BAML_MODELS_DIR=/models
-
 USER 1000
 
 EXPOSE 18080
 
-ENTRYPOINT ["karakara", "serve"]
+ENTRYPOINT ["karak", "serve"]
 CMD ["--serve-http", "0.0.0.0:18080"]

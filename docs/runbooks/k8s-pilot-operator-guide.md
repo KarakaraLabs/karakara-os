@@ -44,8 +44,6 @@ docker build -f operations/containers/runner.Dockerfile \
 docker push your-registry.example.com/karakara-runner:0.1.0
 ```
 
-> **Note:** [`operations/containers/runner.Dockerfile`](../../operations/containers/runner.Dockerfile) currently has a known `models/fastembed` / `karak` entrypoint issue tracked in `#29`.
-
 Compare the trailing `sha256:…` digests against the one printed by
 `docker push` (or the registry's manifest).
 
