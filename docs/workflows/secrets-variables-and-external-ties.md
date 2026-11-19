@@ -38,7 +38,6 @@ Configured under **Settings → Secrets and variables → Actions → Variables*
 | `TASK_DAEMON_LLM_BASE_URL`, `TASK_DAEMON_LLM_API_KEY`, `TASK_DAEMON_LLM_MODEL` | [`.env.example`](../../.env.example), `crates/task-daemon/` | Primary OpenAI-compatible LLM endpoint for `task-daemon` (defaults to `openai/gpt-4.1-mini`). | Can point to any OpenAI-compatible provider or local server. |
 | `TASK_DAEMON_LLM_FALLBACK_BASE_URL`, `TASK_DAEMON_LLM_FALLBACK_MODEL` | [`.env.example`](../../.env.example), `crates/task-daemon/` | Local OpenAI-compatible fallback (`http://localhost:1234/v1`). | Supports `$0` local inference via **Ollama**, **LM Studio**, or **vLLM**. |
 | `TYPESAFE_API_KEY`, `TYPESAFE_API_BASE_URL`, `TYPESAFE_MODEL` | [`scripts/capture_typesafe_system_one_fixtures.sh`](../../scripts/capture_typesafe_system_one_fixtures.sh) | Helper script to capture live fixtures from `https://api.typesafe.ai`. | Committed fixtures already live under `crates/tools/typesafe/tests/fixtures/`; this key is never needed in CI or normal builds. |
-| `BAML_MODELS_DIR` | [`.env.example`](../../.env.example), [`runner.Dockerfile`](../../operations/containers/runner.Dockerfile) | Directory containing local ONNX models (`./models`). | Defaults to `./models` when running from the workspace. |
 
 ---
 
@@ -57,8 +56,4 @@ Configured under **Settings → Secrets and variables → Actions → Variables*
 
 ### 2. Container Registry Placeholders (`ghcr.io/KarakaraLabs/*`)
 - **Guidance:** Remote GHCR publishing and Argo CD deploy-ref tracking were deferred/pruned under Issue `#44`. When remote container deployments are revived, GHCR hosting is free for public packages under `KarakaraLabs` using `GITHUB_TOKEN` (`packages: write`).
-
-### 3. Git LFS Quota (`models/fastembed/`)
-- **Location:** [`runner.Dockerfile`](../../operations/containers/runner.Dockerfile) (dangling `models/fastembed` copy tracked in Issue `#29`).
-- **Guidance:** GitHub's free Git LFS plan includes 1 GB storage and 1 GB/month bandwidth. Avoid running `git lfs pull` in routine CI workflows; removing the vendored ONNX model copy from `operations/containers/runner.Dockerfile` is tracked in `#29`.
 

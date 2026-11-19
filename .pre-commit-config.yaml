@@ -15,18 +15,13 @@ repos:
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^models/fastembed/
       - id: end-of-file-fixer
-        # HF hub layout: refs/main must be raw revision bytes (no trailing newline);
-        # tokenizer/config blobs must not be rewritten by EOF normalization.
-        exclude: ^models/fastembed/
       - id: check-yaml
         exclude: ^operations/deployment/helm/
       - id: check-json
       - id: check-toml
       - id: check-added-large-files
         args: ['--maxkb=1000']
-        exclude: ^models/
       - id: check-merge-conflict
       - id: check-case-conflict
 
@@ -105,8 +100,7 @@ repos:
             \.snap$|
             \.tar\.gz$|
             node_modules/|
-            dist/|
-            models/fastembed/
+            dist/
           )
 
   # Cargo deny - disabled (license/source config not fully aligned with git deps)

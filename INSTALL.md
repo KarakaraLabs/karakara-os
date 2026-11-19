@@ -38,11 +38,6 @@ sudo apt install -y libdbus-1-dev libcap-ng-dev pkg-config ca-certificates
 just check-host
 ```
 
-### Embedding models (optional)
-
-- Clone with Git LFS: `git lfs pull`
-- Or set `BAML_MODELS_DIR` to a directory containing fastembed ONNX models (see `just download-models`)
-
 ---
 
 ## Option A — GitHub Release (recommended)

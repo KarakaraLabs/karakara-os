@@ -28,4 +28,4 @@ Prefer authority E2E and vertical slices, then boundary `insta` snapshots and `*
 Recent history follows Conventional Commit prefixes such as `feat:`, `fix:`, `test:`, and `docs:`. Keep subjects imperative and scoped to one change. PRs should describe affected crates or agents, list the commands you ran (`just test-unit`, `just clippy`, etc.), call out regenerated fixtures, and include screenshots only for `web/` UI changes. Link the issue when relevant.
 
 ## Configuration & Generated Assets
-Keep secrets in `.env` or `fnox.toml`; never commit tokens. Large model assets under `models/fastembed/` are Git LFS-managed and should not be rewritten casually.
+Keep secrets in `.env` or `fnox.toml`; never commit tokens.

@@ -38,9 +38,6 @@ regexes = [
 # the highest-risk regression.
 description = "Vendored, generated, and large-blob paths excluded from secret scanning"
 paths = [
-  # Model tensors/LFS blobs are large and binary; their sibling metadata
-  # (config/tokenizer JSON) stays scanned.
-  '''models/.*/blobs/.*''',
   '''(^|/)node_modules/.*''',
   '''(^|/)target/.*''',
   '''(^|/)dist/.*''',

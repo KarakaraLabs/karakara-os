@@ -63,18 +63,3 @@ path = [
 precedence = "closest"
 SPDX-FileCopyrightText = ["2026 Semiotic AI, Inc.", "2026 Karakara Labs"]
 SPDX-License-Identifier = "Apache-2.0"
-
-# --- Vendored third-party model snapshots (HuggingFace cache layout) ---
-# Embedding/reranker models cached for offline use. Upstream-licensed under
-# Apache-2.0; copyright remains with the model authors, not Karakara Labs.
-[[annotations]]
-path = "models/fastembed/models--Alibaba-NLP--gte-base-en-v1.5/**"
-precedence = "override"
-SPDX-FileCopyrightText = "The gte-base-en-v1.5 authors (Alibaba-NLP)"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = "models/fastembed/models--jinaai--jina-reranker-v1-turbo-en/**"
-precedence = "override"
-SPDX-FileCopyrightText = "Jina AI GmbH (jina-reranker-v1-turbo-en authors)"
-SPDX-License-Identifier = "Apache-2.0"
