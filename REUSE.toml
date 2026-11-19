@@ -63,10 +63,3 @@ path = [
 precedence = "closest"
 SPDX-FileCopyrightText = ["2026 Semiotic AI, Inc.", "2026 Karakara Labs"]
 SPDX-License-Identifier = "Apache-2.0"
-
-# --- First-party documentation visual assets ---
-[[annotations]]
-path = ["docs/assets/**"]
-precedence = "closest"
-SPDX-FileCopyrightText = "2026 Karakara Labs"
-SPDX-License-Identifier = "Apache-2.0"

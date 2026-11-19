@@ -1,14 +1,17 @@
-![Karakara OS — Deployable Agent Runtime](docs/assets/karakara-hero-banner.jpg)
+<div align="center">
 
 # Karakara OS
 
-Karakara OS is a **deployable agent runtime** for AI systems that take real
-actions — tools, MCP servers, other agents, multi-turn tasks — while the **host
-stays in control of every effect**. Agents are authored in
-[BAML](https://github.com/BoundaryML/baml) and TypeScript, executed in an
-embedded QuickJS sandbox, and served over the
-[A2A](https://google.github.io/A2A/) protocol. What happened is recorded in a
-**graph-native provenance store** you can query after the fact.
+A **deployable agent runtime** for AI systems that take real actions while the **host stays in control of every effect** — authored in [BAML](https://github.com/BoundaryML/baml) and TypeScript, sandboxed in QuickJS, served over [A2A](https://google.github.io/A2A/), and recorded in a graph-native provenance store.
+
+[![REUSE](https://github.com/KarakaraLabs/karakara-os/actions/workflows/reuse.yml/badge.svg)](https://github.com/KarakaraLabs/karakara-os/actions/workflows/reuse.yml)
+[![Secret Scan](https://github.com/KarakaraLabs/karakara-os/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/KarakaraLabs/karakara-os/actions/workflows/secret-scan.yml)
+[![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange.svg)](https://www.rust-lang.org/)
+[![Protocol](https://img.shields.io/badge/Protocol-A2A-0284C7.svg)](https://google.github.io/A2A/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![Workflow](https://img.shields.io/badge/Workflow-Trunk--Based-7C3AED.svg)](CONTRIBUTING.md)
+
+</div>
 
 ---
 
