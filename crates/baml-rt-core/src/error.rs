@@ -267,7 +267,7 @@ pub enum BamlRtError {
     Conflict(String),
 
     /// Invalid argument with source error
-    #[error("{message}")]
+    #[error("{message}: {source}")]
     InvalidArgumentWithSource {
         message: String,
         #[source]

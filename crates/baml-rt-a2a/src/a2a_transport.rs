@@ -2258,7 +2258,7 @@ impl A2aAgent {
                             .await
                         {
                             tracing::warn!(
-                                error = %e,
+                                error = ?e,
                                 "live stream: store_result for rx-closed completion failed (provenance may show Running)"
                             );
                         }
@@ -2323,7 +2323,7 @@ impl A2aAgent {
                             Span::current().record("store_result_ok", ok);
                             if let Err(e) = store_result {
                                 tracing::warn!(
-                                    error = %e,
+                                    error = ?e,
                                     "live stream: store_result failed (task/subscribe may miss task)"
                                 );
                             }
