@@ -884,7 +884,7 @@ Full distributed trace (ingress + serving, or direct-serving) for one agent inst
 
 ## Per-layer env filters (baml-rt binaries)
 
-[`baml_rt_observability::init_tracing`](crates/baml-rt-observability/src/tracing_setup.rs) wires **separate** [`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) instances for the console (`fmt`) layer and the OpenTelemetry trace layer:
+[`baml_rt_observability::init_tracing`](../../crates/baml-rt-observability/src/tracing_setup.rs) wires **separate** [`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) instances for the console (`fmt`) layer and the OpenTelemetry trace layer:
 
 | Variable | Layer | When unset |
 |----------|--------|--------------|
