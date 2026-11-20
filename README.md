@@ -1,43 +1,28 @@
+<div align="center">
+
 # Karakara OS
 
-Karakara OS is a **deployable agent runtime** for AI systems that take real
-actions — tools, MCP servers, other agents, multi-turn tasks — while the **host
-stays in control of every effect**. Agents are authored in
-[BAML](https://github.com/BoundaryML/baml) and TypeScript, executed in an
-embedded QuickJS sandbox, and served over the
-[A2A](https://google.github.io/A2A/) protocol. What happened is recorded in a
-**graph-native provenance store** you can query after the fact.
+A **deployable agent runtime** for AI systems that take real actions while the **host stays in control of every effect** — authored in [BAML](https://github.com/BoundaryML/baml) and TypeScript, sandboxed in QuickJS, served over [A2A](https://google.github.io/A2A/), and recorded in a graph-native provenance store.
+
+[![REUSE](https://github.com/KarakaraLabs/karakara-os/actions/workflows/reuse.yml/badge.svg)](https://github.com/KarakaraLabs/karakara-os/actions/workflows/reuse.yml)
+[![Secret Scan](https://github.com/KarakaraLabs/karakara-os/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/KarakaraLabs/karakara-os/actions/workflows/secret-scan.yml)
+[![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange.svg)](https://www.rust-lang.org/)
+[![Protocol](https://img.shields.io/badge/Protocol-A2A-0284C7.svg)](https://google.github.io/A2A/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![Workflow](https://img.shields.io/badge/Workflow-Trunk--Based-7C3AED.svg)](CONTRIBUTING.md)
+
+</div>
 
 ---
 
 ## The proposition
 
-These are the architectural commitments that define Karakara OS (expanded in
-[`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md)):
-
-**Runtime, not framework.** Karakara is something you **deploy and operate** —
-a boundary around planning, execution, A2A, and observability — not a library
-you embed and hope agents behave.
-
-**Host-mediated effects.** Tool calls (HTTP, MCP, inter-agent delegation) run in
-**Rust on the host** via a session FSM. JavaScript never mediates host tool
-execution. If an effect happened, the runtime saw it.
-
-**Declarative agent artefacts.** The shareable unit is a **content-addressable
-bundle** (manifest, TypeScript, BAML) executed by the trusted runtime — not an
-ad-hoc dependency graph on the agent side.
-
-**Planning and outcomes are runtime concepts.** Tasks, plans, steps, tool-session
-phases, citations, and `StructuredReply` are enforced by the platform — not
-informal prompt conventions.
-
-**Graph-first provenance.** Conversation context, exports, and drift reads
-**traverse edges** in the provenance graph — never string hacks on node IDs or
-timestamps. If a relationship matters, it is an edge.
-
-**Cluster continuity.** In multi-runner deployments, router-held conversation
-state, shared SurrealDB, and deployment APIs provide operational continuity;
-durable truth lives in the graph.
+- **Runtime, not framework.** Deploy and operate a boundary around planning, execution, A2A, and observability — not a library you embed and hope agents behave.
+- **Host-mediated effects.** Tool calls (HTTP, MCP, inter-agent delegation) run in **Rust on the host** via a session FSM. JavaScript never mediates host tool execution.
+- **Declarative agent artefacts.** The shareable unit is a **content-addressable bundle** (manifest, TypeScript, BAML) executed by the trusted runtime.
+- **Planning and outcomes are runtime concepts.** Tasks, plans, steps, tool-session phases, citations, and `StructuredReply` are enforced by the platform.
+- **Graph-first provenance.** Conversation context, exports, and drift reads **traverse edges** in the provenance graph — never string hacks on node IDs or timestamps.
+- **Cluster continuity.** In multi-runner deployments, router-held conversation state, shared SurrealDB, and deployment APIs provide operational continuity; durable truth lives in the graph.
 
 ```mermaid
 flowchart LR
@@ -54,80 +39,18 @@ flowchart LR
   MCP[MCP / APIs / peers] --> HOST
 ```
 
-**Authoring and deep references:** [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) · [`docs/README.md`](docs/README.md)
+Expanded thesis: [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md)
 
 ---
 
-## Get running
+## Quick start
 
-Commands use [`just`](https://github.com/casey/just) (`just --list` for the full
-set). A `.env` / `fnox.toml` in the repo root supplies API keys for LLM tests and
-demos — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-> **Just want the binaries?** Grab prebuilt Linux release tarballs (or
-> `cargo install`) — see [`INSTALL.md`](INSTALL.md). The steps below build from a
-> source clone for contributors.
-
-### First-time setup
+- **Prebuilt Linux binaries (`karak`):** [`INSTALL.md`](INSTALL.md)
+- **Build from source, demos, tests & observability:** [`docs/runbooks/getting-started.md`](docs/runbooks/getting-started.md)
 
 ```bash
-just check-host          # Linux deps + TypeScript 6 on PATH
-just build-release       # karakara (platform host + SDK)
-```
-
-### Local runner (+ chat UI)
-
-```bash
-just web-build           # optional: operator UI at /
-just runner              # HTTP A2A on http://127.0.0.1:18080
-```
-
-Persist provenance to disk:
-
-```bash
-just runner-provenance
-```
-
-Publish and deploy agents with `baml-agent-builder` and the runner repository
-API — see [`docs/reference/agent-runner.md`](docs/reference/agent-runner.md).
-
-### Example flows (`just`)
-
-| Command | What it does |
-|---------|----------------|
-| `just notion-demo` | HTTP demo: package + deploy + one Notion agent request (needs `NOTION_API_TOKEN`) |
-| `just coordinator-demo` | Coordinator delegates to Notion over A2A |
-| `just slack-demo` | Slack todo-extraction demo |
-| `just clickup-agent` | Run the ClickUp agent (stdio + HTTP runner) |
-| `just list-agents` | List agent packages known to the SDK |
-| `just list-tools` | List registered host tools |
-
-Stop background demos: `just notion-demo-stop`, `just coordinator-demo-stop`, etc.
-
-MCP walkthrough (weather agent, no `just` wrapper): [`scripts/meteo_mcp.sh`](scripts/meteo_mcp.sh) — `runner` in one terminal, `chat` in another.
-
-### Deployment (Linux binary & container)
-
-Prebuilt Linux release binaries (`karak`) are documented in [`INSTALL.md`](INSTALL.md). Container definitions live under [`operations/containers/`](operations/containers/).
-
-An experimental/parked Kubernetes Helm chart is kept at [`operations/deployment/helm/karakara-os/`](operations/deployment/helm/karakara-os/) (dormant pilot; see [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md)).
-
-### Develop and test
-
-```bash
-just fmt
-just clippy
-just doctor              # workspace integrity (karakara)
-just test-unit           # no API keys
-just test                # CI-parity nextest (needs OPENROUTER_API_KEY for LLM lane)
-```
-
-### Observability (optional)
-
-```bash
-just otel-up             # local Prometheus / Tempo / Grafana stack
-just otel-summary 15m    # latency snapshot from Prometheus
-just otel-down
+just check-host && just build-release   # build karakara from source
+just runner                             # HTTP A2A on http://127.0.0.1:18080
 ```
 
 ---
@@ -136,11 +59,11 @@ just otel-down
 
 | Audience | Start here |
 |----------|------------|
+| Getting started (source, demos, tests) | [`docs/runbooks/getting-started.md`](docs/runbooks/getting-started.md) |
+| Installing prebuilt binaries | [`INSTALL.md`](INSTALL.md) |
 | Agent authors | [`docs/assertions/how-to-write-agents.md`](docs/assertions/how-to-write-agents.md) |
-| Installing / running | [`INSTALL.md`](INSTALL.md) |
-| Operators / K8s (dormant pilot) | [`docs/runbooks/k8s-pilot-operator-guide.md`](docs/runbooks/k8s-pilot-operator-guide.md) |
 | Runtime thesis | [`docs/assertions/karakara-runtime-thesis.md`](docs/assertions/karakara-runtime-thesis.md) |
-| Full index | [`docs/README.md`](docs/README.md) |
+| Full documentation index | [`docs/README.md`](docs/README.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 ## License
