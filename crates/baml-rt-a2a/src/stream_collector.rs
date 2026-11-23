@@ -194,7 +194,7 @@ pub async fn run_chat_stream_collector(
                 }
                 if let Err(e) = pipeline.store_result(&normalized).await {
                     tracing::warn!(
-                        error = %e,
+                        error = ?e,
                         "stream: store_result failed for chunk; still forwarding to client"
                     );
                 }
@@ -218,7 +218,7 @@ pub async fn run_chat_stream_collector(
                 let err_normalized = serde_json::json!({"error": e.to_string()});
                 if let Err(store_err) = pipeline.store_result(&err_normalized).await {
                     tracing::warn!(
-                        error = %store_err,
+                        error = ?store_err,
                         "stream: store_result failed for error chunk"
                     );
                 }
