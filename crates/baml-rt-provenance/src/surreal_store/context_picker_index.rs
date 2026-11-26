@@ -40,8 +40,12 @@ impl SurrealProvenanceStore {
         };
 
         // One row per context, so agents writing into the same context update it
-        // concurrently. A conflict loser re-reads the winner's row and merges again.
+        // concurrently. Serialize per-context within this process on the shared
+        // write lane to avoid burning the MVCC retry budget under fanout, and
+        // keep the retry loop for cross-process conflicts.
         let ctx = context_id.as_str().to_string();
+        let lane = self.shared_write_lanes[self.shared_write_lane(Some(&ctx))].clone();
+        let _lane_guard = lane.lock().await;
         let sql = format!(
             "UPSERT {TBL_CONTEXT_PICKER_INDEX} SET \
                context_id = $context_id, \

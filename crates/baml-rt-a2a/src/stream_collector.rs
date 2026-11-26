@@ -152,11 +152,19 @@ pub async fn run_chat_stream_collector(
                         let submitted_chunk = make_submitted_chunk(context_id_str, task_id_str);
                         let submitted_wire =
                             serde_json::to_value(&submitted_chunk).unwrap_or(Value::Null);
-                        if pipeline.store_result(&submitted_wire).await.is_ok()
-                            && tx.send((submitted_chunk, 0, None)).await.is_ok()
-                        {
-                            submitted_sent = true;
-                            index = 1;
+                        match pipeline.store_result(&submitted_wire).await {
+                            Ok(()) => {
+                                if tx.send((submitted_chunk, 0, None)).await.is_ok() {
+                                    submitted_sent = true;
+                                    index = 1;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = ?e,
+                                    "stream: store_result failed for synthetic submitted chunk"
+                                );
+                            }
                         }
                     }
                 }
