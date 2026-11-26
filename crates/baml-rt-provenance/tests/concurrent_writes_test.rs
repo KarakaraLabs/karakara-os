@@ -17,7 +17,7 @@
 //! ```
 use std::sync::Arc;
 
-use baml_rt_core::ids::{AgentId, ContextId, ExternalId, TaskId, UuidId};
+use baml_rt_core::ids::{AgentId, ContextId, ExternalId, MessageId, TaskId, UuidId};
 use baml_rt_provenance::{ProvEvent, ProvenanceWriter};
 use test_support::testing::provenance_fixtures::build_isolated_store;
 
@@ -63,5 +63,69 @@ async fn parallel_task_execution_started_writes_succeed_under_mvcc_contention() 
     assert!(
         failures.is_empty(),
         "all {PARALLEL_WRITERS} concurrent writers must succeed under MVCC retry; failures: {failures:?}"
+    );
+}
+
+#[tokio::test]
+async fn parallel_message_writes_same_context_succeed_under_picker_index_contention() {
+    // Same-context message fanout (user turn + streamed assistant chunks + child agents)
+    // all update the single `context_picker_index` row for that context.
+    // Without per-context write-lane serialization, 16 concurrent writers exhaust the
+    // 6-attempt MVCC retry budget and fail `add_event` with `Contention`.
+    const PARALLEL_WRITERS: usize = 16;
+
+    let store = build_isolated_store().await;
+
+    let context_id = ContextId::new(7778, 1);
+    let agent_id =
+        AgentId::from_uuid(UuidId::parse_str("00000000-0000-0000-0000-000000000098").unwrap());
+
+    let mut handles = Vec::with_capacity(PARALLEL_WRITERS);
+    for i in 0..PARALLEL_WRITERS {
+        let store = Arc::clone(&store);
+        let context_id = context_id.clone();
+        let agent_id = agent_id.clone();
+        handles.push(tokio::spawn(async move {
+            let task_id =
+                TaskId::from_external(ExternalId::new(format!("msg-contention-task-{i}")));
+            let message_id = MessageId::from_external(ExternalId::new(format!("msg-{i}")));
+            let event = if i == 0 {
+                ProvEvent::message_received_task(
+                    context_id,
+                    task_id,
+                    message_id,
+                    "user".to_string(),
+                    vec![format!("user turn {i}")],
+                    None,
+                    agent_id,
+                    1_700_000_000_000 + i as u64,
+                )
+            } else {
+                ProvEvent::message_sent_task(
+                    context_id,
+                    task_id,
+                    message_id,
+                    "assistant".to_string(),
+                    vec![format!("assistant chunk {i}")],
+                    None,
+                    agent_id,
+                    1_700_000_000_000 + i as u64,
+                    Vec::new(),
+                )
+            };
+            store.add_event(event).await
+        }));
+    }
+
+    let mut failures: Vec<String> = Vec::new();
+    for (i, handle) in handles.into_iter().enumerate() {
+        match handle.await.expect("writer task panicked") {
+            Ok(()) => {}
+            Err(e) => failures.push(format!("writer[{i}]: {e:?}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "all {PARALLEL_WRITERS} concurrent message writers must succeed; failures: {failures:?}"
     );
 }

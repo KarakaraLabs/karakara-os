@@ -115,8 +115,14 @@ async fn apply_task_delta_concurrent_same_task_valid_final_state() {
             .await
     });
 
-    let _ = handle_a.await.unwrap();
-    let _ = handle_b.await.unwrap();
+    handle_a
+        .await
+        .unwrap()
+        .expect("concurrent apply_task_chunk A must succeed");
+    handle_b
+        .await
+        .unwrap()
+        .expect("concurrent apply_task_chunk B must succeed");
 
     let task = store
         .get(task_id.as_str(), None)
@@ -137,5 +143,84 @@ async fn apply_task_delta_concurrent_same_task_valid_final_state() {
             Some("TASK_STATE_AUTH_REQUIRED" | "TASK_STATE_COMPLETED")
         ),
         "final state must be one of the concurrent writes, got {state:?}",
+    );
+}
+
+#[tokio::test]
+async fn apply_task_chunk_concurrent_bootstrap_and_first_status_update() {
+    // Issue #26: bootstrap chunk (TASK_STATE_SUBMITTED) and first status update
+    // (TASK_STATE_WORKING) arriving concurrently on a brand-new task must both
+    // succeed without MVCC contention errors.
+    let store = build_store().await;
+    let task_id = TaskId::from_external(ExternalId::new("concurrent-bootstrap-task-1"));
+    let context_id = ContextId::new(26, 1);
+
+    let store_boot = store.clone();
+    let tid_boot = task_id.clone();
+    let cid_boot = context_id.clone();
+    let handle_boot = tokio::spawn(async move {
+        let boot_task = common::minimal_task(
+            &tid_boot,
+            &cid_boot,
+            Some(common::task_status("TASK_STATE_SUBMITTED")),
+        );
+        store_boot
+            .apply_task_chunk(
+                ValidatedTaskChunk::try_from(StreamResponse {
+                    task: Some(boot_task),
+                    ..Default::default()
+                })
+                .unwrap(),
+            )
+            .await
+    });
+
+    let store_first = store.clone();
+    let tid_first = task_id.clone();
+    let cid_first = context_id.clone();
+    let handle_first = tokio::spawn(async move {
+        let first_task = common::minimal_task(&tid_first, &cid_first, None);
+        store_first
+            .apply_task_chunk(
+                ValidatedTaskChunk::try_from(StreamResponse {
+                    task: Some(first_task),
+                    status_update: Some(baml_rt_a2a::a2a_types::TaskStatusUpdateEvent {
+                        context_id: Some(cid_first),
+                        task_id: Some(tid_first),
+                        status: Some(common::task_status("TASK_STATE_WORKING")),
+                        metadata: None,
+                        extra: HashMap::new(),
+                    }),
+                    ..Default::default()
+                })
+                .unwrap(),
+            )
+            .await
+    });
+
+    handle_boot
+        .await
+        .unwrap()
+        .expect("bootstrap apply_task_chunk must succeed");
+    handle_first
+        .await
+        .unwrap()
+        .expect("first status update apply_task_chunk must succeed");
+
+    let task = store
+        .get(task_id.as_str(), None)
+        .await
+        .expect("bootstrapped task must exist");
+    let state = task
+        .status
+        .as_ref()
+        .and_then(|status| status.state.as_ref())
+        .and_then(|state| match state {
+            TaskState::String(value) => Some(value.as_str()),
+            TaskState::Integer(_) => None,
+        });
+    assert!(
+        matches!(state, Some("TASK_STATE_SUBMITTED" | "TASK_STATE_WORKING")),
+        "expected SUBMITTED or WORKING after concurrent bootstrap, got {state:?}"
     );
 }

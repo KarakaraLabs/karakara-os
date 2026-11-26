@@ -428,6 +428,79 @@ async fn test_tasks_subscribe_streams_incremental_updates() {
     let _ = saw_artifact; // artifact updates are optional for this fixture.
 }
 
+/// Issue #26 regression: driving two turns in the same conversation through the
+/// live stream collector must persist every turn's task updates so `tasks.subscribe`
+/// returns state updates for both turns without `Task not found`.
+#[tokio::test]
+async fn test_multi_turn_same_context_stream_and_subscribe_updates() {
+    init_trace();
+    let _permit = acquire_test_permit().await;
+    let agent = setup_agent().await;
+    let shared_context = baml_rt_core::ids::ContextId::new(26, 2);
+
+    let turn1 = send_stream_request(
+        "vox-mt-1",
+        "long-rite-subscribe: turn one",
+        "corr-26-1",
+        Some(shared_context.clone()),
+    );
+    let turn1_chunks = collect_responses(&agent, serde_json::to_value(turn1).unwrap())
+        .await
+        .unwrap();
+    let task_id_1 = first_task_id_from_stream(&turn1_chunks).expect("turn 1 task id");
+
+    let turn2 = send_stream_request(
+        "vox-mt-2",
+        "long-rite-subscribe: turn two",
+        "corr-26-2",
+        Some(shared_context),
+    );
+    let turn2_chunks = collect_responses(&agent, serde_json::to_value(turn2).unwrap())
+        .await
+        .unwrap();
+    let task_id_2 = first_task_id_from_stream(&turn2_chunks).expect("turn 2 task id");
+
+    for (label, task_id, corr_id) in [
+        ("turn1", task_id_1, "corr-26-3"),
+        ("turn2", task_id_2, "corr-26-4"),
+    ] {
+        let subscribe_request = JSONRPCRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "tasks.subscribe".to_string(),
+            params: Some(json!({ "id": task_id, "stream": true })),
+            id: Some(JSONRPCId::String(corr_id.to_string())),
+        };
+        let responses = collect_responses(&agent, serde_json::to_value(subscribe_request).unwrap())
+            .await
+            .unwrap();
+        let responses_debug = serde_json::to_string_pretty(&responses).unwrap_or_default();
+
+        let saw_not_found = responses.iter().any(|r| {
+            r.get("error")
+                .and_then(|e| e.get("data"))
+                .and_then(|d| d.get("details"))
+                .and_then(Value::as_str)
+                == Some("Task not found")
+        });
+        let saw_status = responses.iter().any(|r| {
+            r.get("result")
+                .and_then(|res| res.get("chunk"))
+                .is_some_and(|chunk| {
+                    chunk.get("statusUpdate").is_some()
+                        || chunk.get("task").and_then(|t| t.get("status")).is_some()
+                })
+        });
+        assert!(
+            !saw_not_found,
+            "{label}: tasks.subscribe returned Task not found; responses={responses_debug}"
+        );
+        assert!(
+            saw_status,
+            "{label}: tasks.subscribe must return state updates; responses={responses_debug}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_message_send_tool_calling() {
     let _permit = acquire_test_permit().await;
