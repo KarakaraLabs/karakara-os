@@ -174,7 +174,10 @@ Reads resolve task→agent via that single head pointer (`get_task_agent_id`). T
 | Tool/LLM on minted task scope (metadata carries `agent_id`) | Defense-in-depth — normalizer repoints in same batch |
 | Poll ingress (task-scoped, nil host agent) | **No** — poll speaker is not an executing agent |
 
-**Invariants:** head pointer is never bound to the nil UUID sentinel; episode API returns 404 for unbound tasks (poll ingress, `task_exists`-only) — use observation/ops surfaces instead.
+**Invariants:**
+- Head pointer is never bound to the nil UUID sentinel.
+- Once bound, a task belongs exclusively to its first executing agent (`TaskOwnedByAnotherAgent`); `A2aAgent::handle_live_message_stream` checks `TaskRepository::is_task_owned_by_another_agent` (`get_task_agent_id`) before stale `message.taskId` stripping so foreign writes cannot bypass ownership rejection during the bootstrap window before the owner's first `TaskStatus` commits.
+- Episode API returns 404 for unbound tasks (poll ingress, `task_exists`-only) — use observation/ops surfaces instead.
 
 Implementation: [`crates/baml-rt-provenance/src/task_agent_binding.rs`](../../crates/baml-rt-provenance/src/task_agent_binding.rs).
 

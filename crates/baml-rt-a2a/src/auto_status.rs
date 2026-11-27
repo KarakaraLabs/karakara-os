@@ -240,6 +240,10 @@ mod tests {
         async fn insert_message(&self, _message: &crate::a2a_types::Message) -> Result<()> {
             Ok(())
         }
+
+        async fn is_task_owned_by_another_agent(&self, _task_id: &TaskId) -> bool {
+            false
+        }
     }
 
     #[async_trait]

@@ -274,7 +274,23 @@ impl TaskRepository for AgentStoreView {
         match self.provenance().get_task_agent_id(task_id).await {
             Ok(baml_rt_provenance::TaskAgentResolution::Resolved(owner)) => owner != self.agent_id,
             Ok(baml_rt_provenance::TaskAgentResolution::NotLinked) => false,
-            Ok(baml_rt_provenance::TaskAgentResolution::TimedOut) | Err(_) => true,
+            Ok(baml_rt_provenance::TaskAgentResolution::TimedOut) => {
+                tracing::warn!(
+                    task_id = %task_id.as_str(),
+                    agent_id = %self.agent_id,
+                    "timed out resolving task owner before wire taskId strip check; preserving wire taskId"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    task_id = %task_id.as_str(),
+                    agent_id = %self.agent_id,
+                    error = ?e,
+                    "failed to resolve task owner before wire taskId strip check; preserving wire taskId"
+                );
+                true
+            }
         }
     }
 }
@@ -2954,7 +2970,8 @@ mod tests {
     }
 
     /// Issue #91 regression: when `owner` has bound a `task_id` in provenance but has not
-    /// yet committed its first `TaskStatus`, `task_store.get(task_id)` returns `None`.
+    /// yet committed its first `TaskStatus`, `task_store.get(task_id)` returns a `Task` with
+    /// `status: None` (which normally triggers `should_strip_wire_task_id_for_message_send_stream`).
     /// `handle_live_message_stream` must not strip `taskId` for a foreign agent in that
     /// bootstrap window — otherwise the foreign agent synthesizes a fresh task ID and
     /// succeeds instead of being rejected with `TaskOwnedByAnotherAgent`.
@@ -2991,7 +3008,7 @@ mod tests {
         assert!(!owner_view.is_task_owned_by_another_agent(&task_id).await);
         assert!(!intruder_view.is_task_owned_by_another_agent(&task_id).await);
 
-        // Owner binds the task without committing any TaskStatus yet (`get()` is still `None`).
+        // Owner binds the task without committing any TaskStatus yet (`get()` returns `status: None`).
         owner_view
             .bind_task_executing_agent(
                 TaskAgentBinding::new(
