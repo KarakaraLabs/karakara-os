@@ -22,8 +22,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read       # required to check out source code
-  pull-requests: read  # required for dorny/paths-filter on pull_request events
+  contents: read  # required to check out source code and diff changed paths
 
 concurrency:
   group: docs-and-hygiene-${{ github.ref }}
@@ -37,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install ripgrep for static doc & BAML checks
         run: |
@@ -46,12 +47,22 @@ jobs:
 
       - name: Detect Helm chart changes
         id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            helm:
-              - 'operations/deployment/helm/**'
-              - 'scripts/test-helm-runner-probes.sh'
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_ref="${{ github.event.pull_request.base.sha }}"
+          else
+            base_ref="${{ github.event.before }}"
+          fi
+          if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="HEAD~1"
+          fi
+          if git rev-parse --verify "$base_ref" >/dev/null 2>&1 \
+            && git diff --name-only "$base_ref"...HEAD | grep -qE '^(operations/deployment/helm/|scripts/test-helm-runner-probes\.sh$)'; then
+            echo "helm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "helm=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify documentation links (check-doc-links.sh)
         id: doc_links

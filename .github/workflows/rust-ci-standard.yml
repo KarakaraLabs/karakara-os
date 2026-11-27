@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Update APT package repositories (with retries)
         # Mitigates transient mirror synchronization races on archive.ubuntu.com
@@ -186,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Update APT package repositories (with retries)
         # Mitigates transient mirror synchronization races on archive.ubuntu.com
@@ -222,7 +222,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
 
       - name: Setup Node.js 22 LTS environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -267,7 +267,7 @@ jobs:
       - name: Publish JUnit test results report
         id: junit
         if: always()
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@v6
         with:
           report_paths: "target/nextest/ci-merged/junit.xml"
           require_tests: false

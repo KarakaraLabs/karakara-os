@@ -18,7 +18,7 @@ Because `KarakaraLabs/karakara-os` is a **public repository**, standard GitHub-h
 
 Workflows that depend on unprovisioned self-hosted runners (`arc-runner-set`) or paid LLM tokens (`OPENROUTER_API_KEY`) carry a **dual lock**: their automatic `push` / `pull_request` / `schedule` triggers are commented out in YAML (leaving `workflow_dispatch`) **and** they are manually disabled in GitHub Actions (`disabled_manually` via `gh workflow disable`).
 
-All active workflows share a unified architectural pattern: structured header documentation, least-privilege permissions, descriptive step naming, OS package retry mechanisms (`scripts/ci/apt-update-retry.sh`), and dynamic Markdown status summaries appended to `$GITHUB_STEP_SUMMARY`.
+All active workflows share a unified architectural pattern: structured header documentation, least-privilege permissions, descriptive step naming, OS package retry mechanisms (`scripts/ci/apt-update-retry.sh`), Node.js 24-native GitHub Actions (`actions/checkout@v7`, `actions/setup-node@v6`, `mikepenz/action-junit-report@v6`), and dynamic Markdown status summaries appended to `$GITHUB_STEP_SUMMARY`.
 
 | Workflow Name | File | Active Triggers | Runner(s) | Secrets / Cost | Current State |
 |---|---|---|---|---|---|
@@ -43,12 +43,13 @@ All active workflows share a unified architectural pattern: structured header do
      - **Union Nextest Suite (`nextest`):** Runs all 2,116 workspace unit, integration, and property tests via `cargo nextest run --profile ci-merged` using the high-performance `mold` linker and unpacked split debuginfo (`-C link-arg=-fuse-ld=mold -C split-debuginfo=unpacked`) with `ci-nextest-standard` cache.
    - Publishes JUnit test annotations and real-time Markdown summaries with test execution metrics to `$GITHUB_STEP_SUMMARY`.
 2. **[`docs-and-hygiene.yml`](../../.github/workflows/docs-and-hygiene.yml) (`Docs, BAML & Hygiene`):**
-   - Runs fast static repository guardrails (~20–30s, zero Rust compilation) on every PR and `main` push — including doc-only PRs skipped by `rust-ci-standard.yml`:
+   - Runs fast static repository guardrails (~20–30s, zero Rust compilation, `contents: read` only) on every PR and `main` push — including doc-only PRs skipped by `rust-ci-standard.yml`:
      - `scripts/check-doc-links.sh` (repo-relative Markdown link integrity),
      - `scripts/check-doc-claims.sh` (stale routes/enums/claims guard),
      - `scripts/check-baml-conversation-history.sh` (canonical `conversation_transcript` enforcement across `agents/`, `tests/fixtures/agents/`, and `baml_src/`),
+     - `python3 -B -m unittest discover -s scripts/tests -p 'test_*.py' -v` (stdlib unit tests for Python hygiene scripts),
      - `scripts/check-doc-mermaid.py` (Mermaid syntax and `docs/assertions/accessibility.md` guardrails),
-     - `scripts/test-helm-runner-probes.sh` (path-gated to `operations/deployment/helm/**` or `workflow_dispatch`).
+     - `scripts/test-helm-runner-probes.sh` (native `git diff` path-gated to `operations/deployment/helm/**` or `scripts/test-helm-runner-probes.sh`, or on `workflow_dispatch`).
 3. **[`secret-scan.yml`](../../.github/workflows/secret-scan.yml) (`Secret Scan (Gitleaks)`):**
    - Runs `gitleaks` (`v8.30.1`) against the full commit history (`gitleaks git`) and working tree (`gitleaks dir`) using [`.gitleaks.toml`](../../.gitleaks.toml).
    - Completes in ~17s with `contents: read` permissions and zero external dependencies, appending scan results to `$GITHUB_STEP_SUMMARY`.
