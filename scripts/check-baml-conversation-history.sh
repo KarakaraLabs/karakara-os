@@ -7,7 +7,7 @@
 # Reject BAML that references ctx.tags conversation_history — canonical history is
 # conversation_transcript only (see docs/assertions/intent-based-planning-and-session-prompting.md).
 #
-# Usage: from repo root. No args: scan agents/ and tests/fixtures/agents/ .baml
+# Usage: from repo root. No args: scan agents/, tests/fixtures/agents/, and baml_src/ .baml
 # Or pass .baml paths (pre-commit).
 set -euo pipefail
 
@@ -32,7 +32,7 @@ if [[ $# -gt 0 ]]; then
 else
   while IFS= read -r p; do
     baml_files+=("$p")
-  done < <(find agents tests/fixtures/agents -name '*.baml' -type f 2>/dev/null | sort)
+  done < <(find agents tests/fixtures/agents baml_src -name '*.baml' -type f 2>/dev/null | sort)
 fi
 
 if [[ ${#baml_files[@]} -eq 0 ]]; then

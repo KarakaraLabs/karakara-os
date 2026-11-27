@@ -1,0 +1,107 @@
+name: Docs, BAML & Hygiene
+
+# Fast static guardrails for documentation links, grounded doc claims, BAML conversation_transcript
+# rules, accessible Mermaid diagrams, and Helm runner probe rendering on standard GitHub-hosted
+# ubuntu-latest runners ($0 / unlimited minutes, zero Rust compilation required).
+#
+# Key Architectural Properties:
+# 1. Standard Compute: Runs on standard GitHub-hosted ubuntu-latest runners (4 vCPU, 16 GB RAM).
+# 2. Fast Feedback (~20-30s): Zero Cargo build; runs even on doc-only PRs where rust-ci-standard.yml
+#    skips docs/** and **/*.md via paths-ignore.
+# 3. Path-Gated Helm Check: Runs cluster-free Helm probe template assertions only when
+#    operations/deployment/helm/** changes (or on manual workflow_dispatch).
+# 4. Concurrency Policy: Protects main branch gate completion while cancelling superseded PR runs.
+
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read       # required to check out source code
+  pull-requests: read  # required for dorny/paths-filter on pull_request events
+
+concurrency:
+  group: docs-and-hygiene-${{ github.ref }}
+  # Never cancel a check on the default branch — the gate must always complete
+  # there. PR re-runs on new commits safely cancel the superseded check.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  hygiene:
+    name: Docs, BAML & Hygiene Checks (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Detect Helm chart changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            helm:
+              - 'operations/deployment/helm/**'
+              - 'scripts/test-helm-runner-probes.sh'
+
+      - name: Verify documentation links (check-doc-links.sh)
+        id: doc_links
+        run: bash scripts/check-doc-links.sh
+
+      - name: Verify grounded documentation claims (check-doc-claims.sh)
+        id: doc_claims
+        run: bash scripts/check-doc-claims.sh
+
+      - name: Verify BAML conversation_transcript discipline (check-baml-conversation-history.sh)
+        id: baml_history
+        run: bash scripts/check-baml-conversation-history.sh
+
+      - name: Validate Mermaid diagrams & accessibility rules (check-doc-mermaid.py)
+        id: doc_mermaid
+        run: python3 scripts/check-doc-mermaid.py
+
+      - name: Verify Helm runner probe defaults & overrides (test-helm-runner-probes.sh)
+        id: helm_probes
+        if: steps.filter.outputs.helm == 'true' || github.event_name == 'workflow_dispatch'
+        run: bash scripts/test-helm-runner-probes.sh
+
+      - name: Generate Docs & Hygiene Execution Summary
+        if: always()
+        run: |
+          LINKS_STATUS="${{ steps.doc_links.outcome }}"
+          CLAIMS_STATUS="${{ steps.doc_claims.outcome }}"
+          BAML_STATUS="${{ steps.baml_history.outcome }}"
+          MERMAID_STATUS="${{ steps.doc_mermaid.outcome }}"
+          HELM_STATUS="${{ steps.helm_probes.outcome }}"
+
+          format_status() {
+            case "$1" in
+              success) echo "PASSED" ;;
+              skipped) echo "SKIPPED" ;;
+              *) echo "FAILED" ;;
+            esac
+          }
+
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Docs, BAML & Hygiene - Execution Summary
+
+          ### Quality Gates Status
+          | Gate | Script | Status |
+          |---|---|---|
+          | **Doc Link Integrity** | \`scripts/check-doc-links.sh\` | $(format_status "$LINKS_STATUS") |
+          | **Grounded Doc Claims** | \`scripts/check-doc-claims.sh\` | $(format_status "$CLAIMS_STATUS") |
+          | **BAML Transcript Rules** | \`scripts/check-baml-conversation-history.sh\` | $(format_status "$BAML_STATUS") |
+          | **Mermaid Accessibility & Syntax** | \`scripts/check-doc-mermaid.py\` | $(format_status "$MERMAID_STATUS") |
+          | **Helm Runner Probes** | \`scripts/test-helm-runner-probes.sh\` | $(format_status "$HELM_STATUS") |
+
+          ### Runner & Infrastructure
+          | Property | Specification | Details |
+          |---|---|---|
+          | **Runner Type** | \`ubuntu-latest\` | GitHub-hosted standard pool (\$0 / unlimited minutes) |
+          | **Rust Build Required** | No | Fast shell + Python static checks (~20–30s) |
+          | **External Secrets** | None (\$0) | Self-contained static hygiene gates |
+          EOF
