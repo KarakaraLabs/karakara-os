@@ -27,6 +27,7 @@ Rules that must hold — guide agentic workflow, codegen, and review.
 | [testing-handbook.md](assertions/testing-handbook.md) | Enforced test strategy: E2E authority, boundary snapshots, matrices; TDD shards de-prioritized |
 | [tool-mvp-checklist.md](assertions/tool-mvp-checklist.md) | Pre-merge checklist for new host tools |
 | [karakara-gate.md](assertions/karakara-gate.md) | Deterministic pre-action grounding (`ParseArtifact`, sign taxonomy, P4 ambiguity gate) |
+| [accessibility.md](assertions/accessibility.md) | Accessibility & diagram standards (colorblind-safe Mermaid, shapes, future UI/CLI scope) |
 
 ## Reference (`docs/reference/`)
 
