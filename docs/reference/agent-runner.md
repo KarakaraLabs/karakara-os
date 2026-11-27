@@ -4,44 +4,44 @@ The `baml-agent-runner` crate provides the core A2A (Agent-to-Agent) host librar
 
 ## Configuration
 
-### Drift Scoring (Opt-in)
+### Provenance Drift Flag (Opt-in)
 
-Drift scoring for provenance tracking is now opt-in and requires explicit configuration:
+Provenance drift scoring is opt-in on `RunnerConfig` (`crates/baml-agent-runner/src/config.rs`) and disabled by default:
 
 ```rust
-// In config.rs - drift scoring is disabled by default
-struct RunnerConfig {
-    enable_drift_scoring: bool,  // Default: false
-    embedding_model: Option<String>,  // Default: None
-    // ... other config
+// crates/baml-agent-runner/src/config.rs
+pub(crate) struct RunnerConfig {
+    pub(crate) repository_url: String,
+    pub(crate) repository_dir: PathBuf,
+    pub(crate) state_dir: PathBuf,
+    pub(crate) provenance_db: ProvenanceDb,
+    pub(crate) provenance_drift_enabled: bool, // Default: false
+    // ...
 }
 ```
 
-To enable drift scoring:
-1. Set `enable_drift_scoring: true` in runner configuration
-2. Provide a valid `embedding_model` (e.g., `"text-embedding-3-small"`)
-3. Ensure embedding provider credentials are available
-
-### Embedding Model Configuration
-
-The runner no longer assumes a default embedding model. When drift scoring is enabled, you must explicitly specify:
-
-- **Model name**: Full provider/model identifier (e.g., `"openai/text-embedding-3-small"`)
-- **Provider setup**: Ensure API keys are configured in `fnox.toml`
-- **Fallback behavior**: If embedding fails, drift scoring is silently disabled for that session
+`provenance_drift_enabled` turns `true` only when `--enable-provenance-drift` is passed to `karak serve` or a non-empty `BAML_MODELS_DIR` environment variable is set (the in-runner embedding drift consumer is currently reserved/inactive while the CLI and `BAML_MODELS_DIR` wiring remain in place; see [`drift-catalogue.md`](../assertions/drift-catalogue.md)).
 
 ## Core Components
 
-### A2A Protocol
+### HTTP & A2A Surface
 
-The runner implements the Agent-to-Agent JSON-RPC protocol over HTTP with Server-Sent Events (SSE) for real-time updates.
+The runner mounts `baml-rt-api`, exposing public discovery/A2A/provenance routes alongside operator-authenticated lifecycle and configuration routes (`X-Runner-Token` in cluster mode).
 
-**Key endpoints:**
-- `GET /agents` - Agent discovery (one entry per deployed package)
+**Key public endpoints:**
+- `GET /agents` - Agent discovery (one entry per active deployed package)
 - `POST /agents/{agent_package}/a2a` - A2A JSON-RPC with SSE streaming
 - `POST /agents/{agent_package}/dispatch` - Deterministic host-to-agent event delivery
-- `GET /conversations/{id}` - Conversation state retrieval
-- `POST /conversations` - New conversation creation
+- `POST /events/publish` - Host source-records intake (`host.source-records.v1`)
+- `GET /contexts` - Conversation context index
+- `GET /contexts/{context_id}/conversation-history` (and `/stream`) - Projected conversation history
+- `GET /contexts/{context_id}/episode` (and `/text`, `/stream`) - Episode snapshot and stream
+
+**Key operator endpoints (`X-Runner-Token` in cluster mode):**
+- `POST /deploy`, `POST /undeploy`, `GET /deployments` - Runner-local deployment lifecycle
+- `GET /cluster/agents`, `POST /cluster/deploy` - Cluster-wide views and placement
+- `GET/PUT/DELETE /config/{bundle}` - Runtime configuration bundles (LLM routing, `karakara` gate, etc.)
+- `POST /repository/publish`, `POST /repository/fork` - Build and publish agent packages into `/repository`
 
 ### Tool Session Management
 
@@ -103,12 +103,43 @@ production boot paths pass the identity explicitly.
 
 ### Agent Lifecycle
 
-1. **Package Resolution**: Load agent from repository or local path
-2. **Build Pipeline**: Compile BAML → TypeScript → QuickJS bytecode
-3. **Identity Derivation**: Hash the behavior set and derive `AgentId`
-4. **Session Creation**: Initialize conversation context and tool sessions
-5. **Execution**: Run agent code with tool access and conversation state
-6. **Cleanup**: Terminate tool sessions and persist final state
+```mermaid
+flowchart TB
+  subgraph PD["Publish & Deploy"]
+    direction LR
+    PUB["1. Build & Publish<br/>(POST /repository/publish:<br/>BAML → TS → .tar.gz)"]
+    DEP["2. Deploy / Restore<br/>(POST /deploy or state.db:<br/>fetch blob by hash)"]
+    ID["3. Verify & Boot<br/>(check ArtifactHash & AgentId;<br/>emit AgentBooted)"]
+    PUB --> DEP --> ID
+  end
+
+  subgraph RT["Runtime Execution"]
+    direction LR
+    SESS["4. Dispatch / A2A<br/>(context + QuickJS bridge)"]
+    EXEC["5. Tool Session FSM<br/>(Open/Send/SearchRead/<br/>PageRead/Finish/Abort)"]
+    CLEAN[["6. Drain & Undeploy<br/>(503 new reqs, 30s drain)"]]
+    SESS --> EXEC --> CLEAN
+  end
+
+  PROV[("Provenance Graph<br/>(SurrealDB + OTel)")]
+
+  ID --> SESS
+  ID -.->|"AgentBooted"| PROV
+  SESS -.->|"messages & LLM calls"| PROV
+  EXEC -.->|"tool hops"| PROV
+
+  classDef ok stroke:#0072B2,stroke-width:2px
+  classDef warn stroke:#E69F00,stroke-width:2px
+  class ID,PROV ok
+  class CLEAN warn
+```
+
+1. **Build & Publish**: `karak install agent` or `POST /repository/publish` compiles BAML and TypeScript into an immutable `.tar.gz` artifact and records `content_hash`, `artifact_hash`, and `identity_digest` (`karak serve` never accepts raw positional agent directories).
+2. **Deploy / Startup Restore**: `POST /deploy` (or startup replay from `--state-dir/state.db`) pulls the stored artifact from `--repository-url`.
+3. **Identity Verification & Boot**: Verify `ArtifactHash` and derived `AgentId` before serving, initialize the QuickJS runtime bridge, and emit `AgentBooted`.
+4. **Dispatch / A2A Execution**: Route `POST /agents/{agent_package}/a2a` and `/dispatch` calls into conversation contexts.
+5. **Tool Session Execution**: Mediate host, MCP, and external tools in Rust via the session FSM (`Open`, `Send`, `SearchRead`, `PageRead`, `Finish`, `Abort`).
+6. **Drain & Undeploy**: On `POST /undeploy`, mark the deployment draining (`503` to new requests, up to `30s` drain timeout) and update local state.
 
 ### Error Handling
 
@@ -154,59 +185,64 @@ Provenance tracking provides:
 
 ### Environment Variables
 
-- `RUNNER_TOKEN`: Authentication token for API access
-- `SURREAL_ENDPOINT`: SurrealDB connection for cluster mode
-- `BAML_TEST_MODEL`: Default LLM model for testing (default: `x-ai/grok-4.3`)
-- `RUST_LOG`: Logging level configuration
+- `RUNNER_TOKEN`: Shared secret for operator-authenticated HTTP routes (`X-Runner-Token`)
+- `SURREAL_USER` / `SURREAL_PASS`: Credentials for `--surreal-endpoint` (all-or-nothing)
+- `RUNNER_ENDPOINT`: Public URL this runner advertises in cluster placements (`--runner-endpoint`)
+- `PLACEMENT_TTL_MS`: Cluster placement heartbeat TTL in milliseconds (default: `90000`)
+- `BAML_RUNNER_CONFIG`: Path to `runner.toml` (`--runner-config`)
+- `BAML_MODELS_DIR`: Local model directory (non-empty value also enables `provenance_drift_enabled`)
+- `RUST_LOG` / `RUST_LOG_FMT` / `RUST_LOG_OTEL`: Console and OpenTelemetry tracing filters
 
-### Config File Format
+### Config Files
+
+Secrets live in `.env` or `fnox.toml` (resolved via `baml-rt-llm-config`), while optional datasource/webhook directories live in `runner.toml`:
 
 ```toml
-# fnox.toml - API keys and secrets
-[openai]
-api_key = "sk-..."
+# runner.toml (passed via --runner-config or BAML_RUNNER_CONFIG)
+[external_tools]
+dirs = ["./operations/datasources"]
 
-[anthropic]
-api_key = "sk-ant-..."
-
-# Runner-specific config
-[runner]
-enable_drift_scoring = false
-embedding_model = "openai/text-embedding-3-small"
-max_concurrent_conversations = 100
-tool_timeout_seconds = 300
+[external_datasources.grafana.prod]
+enabled = true
 ```
 
 ### Command Line Options
 
 ```bash
 karak serve \
-  --port 8080 \
-  --surreal-endpoint ws://localhost:8000/rpc \
-  --agent-path ./my-agent \
-  --enable-drift-scoring \
-  --embedding-model openai/text-embedding-3-small
+  --serve-http 127.0.0.1:18080 \
+  --repository-dir ./.repository \
+  --repository-url http://127.0.0.1:18080/repository \
+  --state-dir ./.runner-state \
+  --provenance-db ./.provenance \
+  --web-dir ./web/dist
+```
+
+For cluster mode with remote SurrealDB:
+
+```bash
+karak serve \
+  --serve-http 0.0.0.0:18080 \
+  --surreal-endpoint ws://surrealdb:8000 \
+  --runner-endpoint http://runner-0:18080 \
+  --runner-token "$RUNNER_TOKEN"
 ```
 
 ## Debugging and Observability
 
 ### Logging
 
-Structured logging with tracing spans:
-- `conversation_id`: Tracks all events for a conversation
-- `tool_session_id`: Isolates tool-specific operations
-- `agent_package`: Identifies which agent is executing
+Structured logging with tracing spans (`crates/baml-rt-observability`):
+- `context_id` / `task_id` / `message_id`: Correlates events across an A2A turn
+- `agent_package` / `agent_instance_id`: Identifies which deployed agent instance is executing
 
 ### Metrics
 
-OpenTelemetry metrics exported:
-- `conversations_active`: Current active conversation count
-- `tool_calls_total`: Total tool invocations by type
-- `agent_execution_duration`: Agent execution time distribution
-- `drift_score`: Conversation drift measurements (when enabled)
+OpenTelemetry metrics are exported via OTLP (`baml_rt_api.http.*`, `baml_rt.*`, `baml_rt_provenance.*`, etc.). See [`metrics-inventory.md`](metrics-inventory.md) for the complete workspace metric catalog.
 
-### Health Checks
+### Health & Diagnostic Endpoints
 
-- `GET /health`: Basic service health
-- `GET /ready`: Readiness including database connectivity
-- `GET /metrics`: Prometheus-format metrics endpoint
+- `GET /healthz`: Liveness probe
+- `GET /readyz`: Readiness probe (including backing store readiness)
+- `GET /diagnose`: Runtime diagnostic summary
+- `GET /openapi.json`: Merged OpenAPI 3.1 specification

@@ -20,37 +20,37 @@ The repository is the **memory layer** for an agent development and selection (A
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        HTTP API (Axum)                            │
-│  /agents  /entries  /search  /lineage  /blobs  /drafts           │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │
-                    ┌──────────▼───────────┐
-                    │   RepositoryService  │  ← orchestrates publish, fork,
-                    └──┬──────┬──────┬──┬──┘    search, lineage, tagging
-                       │      │      │  │
-              ┌────────▼──────▼──────▼──▼────────┐
-              │           SurrealStore           │
-              │  (single embedded SurrealDB Db)  │
-              │  implements all four traits      │
-              └──────────────────────────────────┘
+```mermaid
+flowchart TB
+  HTTP["HTTP API (Axum)<br/>/agents /entries /search /lineage /blobs /drafts<br/>/tools /mcp/* /external-tools/* /static-tools/snapshots"]
+  SVC["RepositoryService<br/>orchestrates publish, fork, search, lineage, tagging,<br/>MCP & external-tool registries"]
+  STORE["SurrealStore<br/>(single embedded SurrealDB Db)<br/>implements all six storage traits"]
+
+  HTTP --> SVC
+  SVC -->|"BlobStore"| STORE
+  SVC -->|"MetadataStore"| STORE
+  SVC -->|"LineageStore"| STORE
+  SVC -->|"SearchStore"| STORE
+  SVC -->|"McpRegistryStore"| STORE
+  SVC -->|"ExternalToolRegistryStore"| STORE
 ```
 
 Release-producing `/publish` and `/fork` are host routes: this crate cannot build artifacts, so it exposes source-only `/drafts` and `/drafts/fork` instead.
 
 ### Single Backend, Trait-Separated Surface
 
-The repository keeps four storage traits separated at the type level:
+The repository keeps six storage traits separated at the type level:
 
 | Trait | Concern |
 |---|---|
-| `BlobStore` | Distributable tar.gz packages keyed by artifact hash |
-| `MetadataStore` | Entry/version metadata, tag CRUD, version-ref resolution |
+| `BlobStore` | Distributable tar.gz packages and `.ktool` bundles keyed by content/artifact hash |
+| `MetadataStore` | Entry/version metadata, version reservations, tag CRUD, version-ref resolution |
 | `LineageStore` | Edge recording and DAG traversal |
 | `SearchStore` | Structured queries with text, tag, capability, tool, generation, and lineage filters |
+| `McpRegistryStore` | Approved MCP server snapshots, versions, and tool lookup |
+| `ExternalToolRegistryStore` | Approved external-tool snapshots, versions, and staleness tracking |
 
-A single concrete backend, `SurrealStore`, implements all four. The traits exist for testability and so that future deployments can swap individual concerns without rewriting the service layer.
+A single concrete backend, `SurrealStore`, implements all six. The traits exist for testability and so that future deployments can swap individual concerns without rewriting the service layer.
 
 ---
 
@@ -147,10 +147,12 @@ DEFINE INDEX idx_edge_source ON lineage_edges FIELDS source_hash;
 DEFINE INDEX idx_edge_target ON lineage_edges FIELDS target_hash;
 
 DEFINE TABLE blobs SCHEMAFULL;
-DEFINE FIELD hash     ON blobs TYPE string;                         -- artifact hash
-DEFINE FIELD data_hex ON blobs TYPE string;                         -- hex-encoded tar.gz
+DEFINE FIELD hash     ON blobs TYPE string;                         -- artifact or .ktool hash
+DEFINE FIELD data_hex ON blobs TYPE string;                         -- hex-encoded bytes
 DEFINE INDEX idx_blob_hash ON blobs FIELDS hash UNIQUE;
 ```
+
+In addition to these four core tables, `SurrealStore` defines `entry_version_reservations` (TTL-bounded version reservations held while a host builds an artifact), `mcp_servers` / `mcp_server_versions` / `mcp_tool_versions` / `mcp_snapshot_blobs` (for `McpRegistryStore`), and `external_tools` / `external_tool_versions` / `external_tool_approvals` / `external_tool_snapshot_blobs` (for `ExternalToolRegistryStore`).
 
 ### Why a single SurrealDB backend?
 
@@ -163,22 +165,16 @@ DEFINE INDEX idx_blob_hash ON blobs FIELDS hash UNIQUE;
 
 ## Lineage DAG
 
-```
-         ┌──────────┐
-         │ agent-v1 │  (Original)
-         │ gen=0    │
-         └────┬─────┘
-              │ Fork
-         ┌────▼─────┐
-         │ agent-v2 │  (Forked)
-         │ gen=1    │
-         └────┬─────┘
-         ╱    │ Fork
-   Influence  │
-   ╱     ┌────▼─────┐
-┌──────┐ │ agent-v3 │  (Synthesized: fork + influence)
-│ref-v1├─▶ gen=2    │
-└──────┘ └──────────┘
+```mermaid
+flowchart TD
+  V1["agent-v1<br/>Original, gen=0"]
+  V2["agent-v2<br/>Forked, gen=1"]
+  REF["ref-v1<br/>Original, gen=0"]
+  V3["agent-v3<br/>Synthesized, gen=2"]
+
+  V1 -->|"Fork"| V2
+  V2 -->|"Influence"| V3
+  REF -->|"Influence"| V3
 ```
 
 ### Edge Kinds
@@ -223,9 +219,9 @@ weather-agent@3  →  ContentHash("789abc…")
 
 ### Repository-assigned versions are part of the hash input
 
-`MetadataStore::insert_entry` is the canonical write path:
+`MetadataStore::reserve_version` + `MetadataStore::insert_reserved_entry` is the canonical publish write path (`MetadataStore::insert_entry` performs the same steps directly for unreserved fork drafts):
 
-1. Look up the highest existing `version` for `agent_name`; the next version is `prev + 1` (or `1` for a new lineage).
+1. Reserve (or look up) the next monotonic `version` for `agent_name`: `prev + 1`, or `1` for a new lineage.
 2. Rewrite `manifest.version` to that next version (`SourceBundle::with_manifest_version`).
 3. Compute the canonical content hash from the versioned source bundle.
    The behavior-set identity digest and artifact hash are derived separately and
@@ -267,10 +263,10 @@ SearchQuery {
 
 | Builder | Routes | Intended use |
 |---|---|---|
-| `repository_router(service)` | Read + draft routes, no release publish/fork | Standalone or embedded repository use |
+| `repository_router(service)` | All read + mutation routes below, no release publish/fork | Standalone or embedded repository use |
 | `repository_router_without_publish(service)` | Compatibility alias with the same release-free surface | Hosts that wire publish/fork themselves |
-| `repository_read_router(service)` | Read-only routes (agents, versions, entries, lineage, blobs, search) | Mount unauthenticated for public discovery and pull |
-| `repository_mutation_router(service)` | `POST /drafts`, `POST /drafts/fork`, tag CRUD | Mount behind operator authentication |
+| `repository_read_router(service)` | Read-only routes (agents, versions, entries, lineage, blobs, search, tools, MCP & external-tool catalogs) | Mount unauthenticated for public discovery and pull |
+| `repository_mutation_router(service)` | `POST /drafts`, `POST /drafts/fork`, tag CRUD, MCP & external-tool snapshot publish/import/staleness | Mount behind operator authentication |
 
 The host application mounts `/repository/publish` and `/repository/fork` to `repository_publish::publish_with_build` / `fork_with_build`. Both build a package, compute `artifact_hash` and `identity_digest`, and only then insert the entry.
 
@@ -287,47 +283,43 @@ The split read/mutation routers reflect how `baml-agent-runner` exposes the repo
 | `GET` | `/entries/{name}/{version}` | Retrieve an entry by `name@version` |
 | `POST` | `/drafts` | Create a source-only draft (not deployable) |
 | `POST` | `/drafts/fork` | Create a source-only fork draft (not deployable) |
-
-Host-only release routes: `POST /repository/publish` and `POST /repository/fork` build before storing and always return an artifact hash plus identity digest.
 | `POST` | `/search` | Run a structured search query |
 | `GET` | `/lineage/{hash}?depth={n}` | Get a lineage subgraph (ancestors + direct descendants) |
 | `GET` | `/blobs/{hash}` | Download the tar.gz blob by artifact hash |
 | `POST` | `/entries/{hash}/tags` | Add a tag |
 | `DELETE` | `/entries/{hash}/tags` | Remove a tag |
+| `GET` | `/tools`, `/static-tools/snapshots` | List unified or static host tool catalogs |
+| `GET` | `/mcp/servers`, `/mcp/servers/{server_id}[/versions[/{version}]]`, `/mcp/tools` | Read approved MCP server snapshots and tool mappings |
+| `POST` | `/mcp/snapshots/import`, `/mcp/servers/{server_id}/versions/{version}/mark-stale` | Import MCP snapshots or mark a version stale |
+| `GET` | `/external-tools`, `/external-tools/snapshots`, `/external-tools/snapshot`, `/external-tools/versions` | Read external-tool registry snapshots and versions |
+| `POST` | `/external-tools/publish`, `/external-tools/service/publish`, `/external-tools/snapshots/import`, `/external-tools/snapshots/mark-stale` | Publish/import external tools or mark a version stale |
 
-All errors use RFC 7807 Problem Details via `http-api-problem`.
+Host-only release routes: `POST /repository/publish` and `POST /repository/fork` build before storing and always return an artifact hash plus identity digest. All errors use RFC 7807 Problem Details via `http-api-problem`.
 
 ### Publish Flow
 
-```
-Client                    RepositoryService              SurrealStore
-  │                              │                              │
-  │  POST /publish (host-built)  │                              │
-  │  { name, source, origin,     │                              │
-  │    rationale }               │                              │
-  │ ────────────────────────────▶│                              │
-  │                              │  resolve parentage +         │
-  │                              │  generation from origin      │
-  │                              │  (lookup latest / influences)│
-  │                              │─────────────────────────────▶│
-  │                              │                              │
-  │                              │  insert_entry(NewEntry):     │
-  │                              │   - assign next version      │
-  │                              │   - rewrite manifest.version │
-  │                              │   - compute ContentHash      │
-  │                              │   - reject on duplicate hash │
-  │                              │   - persist row + tags +     │
-  │                              │     search projections       │
-  │                              │─────────────────────────────▶│
-  │                              │◀─ RepositoryEntry            │
-  │                              │                              │
-  │                              │  record lineage edges        │
-  │                              │  (using stored.hash as       │
-  │                              │   target)                    │
-  │                              │─────────────────────────────▶│
-  │  { hash, version_ref,        │                              │
-  │    generation }              │                              │
-  │ ◀────────────────────────────│                              │
+```mermaid
+sequenceDiagram
+  participant Client as Client / Host
+  participant Service as RepositoryService
+  participant Store as SurrealStore
+
+  Client->>Service: reserve_version(name)
+  Service->>Store: reserve_version(name, ttl)
+  Store-->>Service: VersionReservation
+  Service-->>Client: VersionReservation
+
+  Note over Client: Host builds artifact & computes<br/>artifact_hash + identity_digest
+
+  Client->>Service: publish_built(cmd, reservation, artifact_hash, identity_digest)
+  Service->>Store: resolve parentage + generation from origin (get_latest / get_by_hash)
+  Store-->>Service: parent / influence metadata
+  Service->>Store: insert_reserved_entry(NewEntry, reservation)
+  Note right of Store: - assign reserved version<br/>- rewrite manifest.version<br/>- compute ContentHash & reject duplicate<br/>- persist row + tags + search projections
+  Store-->>Service: RepositoryEntry
+  Service->>Store: record_edges(LineageEdge[]) using stored.hash as target
+  Store-->>Service: ok
+  Service-->>Client: PublishResult { hash, artifact_hash, identity_digest, version_ref, generation }
 ```
 
 ---
@@ -336,23 +328,30 @@ Client                    RepositoryService              SurrealStore
 
 ```
 baml-rt-hash/
+├── agent_identity.rs  AgentIdentityDigest + behavior-set hashing
+├── artifact_hash.rs   ArtifactHash newtype over stored .tar.gz bytes
 ├── content_hash.rs    ContentHash newtype (validated SHA-256 hex-64)
 ├── hasher.rs          CanonicalHasher, HashInput, canonical_json()
 └── lib.rs             Re-exports
 
 baml-rt-repository/
 ├── ids.rs             AgentName, Version, Generation, VersionRef, LineageEdgeId
+├── identity.rs        Package identity helpers
 ├── lineage.rs         LineageKind, Parentage, LineageEdge, EdgeDescription,
 │                      InfluenceRef, AncestryNode, LineageSubgraph
-├── entry.rs           SourceBundle, ManifestSource, RepositoryEntry,
+├── entry.rs           SourceBundle, ManifestSource, RepositoryEntry, VersionReservation,
 │                      RepositoryEntryHeader, ChangeRationale, Tag, Timestamp
 ├── search.rs          SearchQuery, filter newtypes, LineageRelation, SearchOrder
-├── commands.rs        PublishCommand, ForkCommand, PublishOrigin, PublishResult
+├── commands.rs        PublishCommand, ForkCommand, PublishOrigin, PublishResult, DraftResult
+├── dev_artifacts.rs   Generated BAML/TS dev-artifact extraction helpers
+├── mcp.rs             MCP server/tool registry domain types
+├── external_tool.rs   External-tool registry domain types
 ├── error.rs           RepositoryError (StorageWrite/Read carry boxed sources)
 ├── package.rs         tar.gz / on-disk → SourceBundle extraction
-├── storage.rs         BlobStore, MetadataStore, LineageStore, SearchStore traits
-├── surreal_store.rs   SurrealStore — single backend implementing all four traits
-├── service.rs         RepositoryService — publish, fork, search, lineage, tagging
+├── storage.rs         BlobStore, MetadataStore, LineageStore, SearchStore,
+│                      McpRegistryStore, ExternalToolRegistryStore traits
+├── surreal_store.rs   SurrealStore — single backend implementing all six traits
+├── service.rs         RepositoryService — publish, fork, search, lineage, tagging, registries
 ├── http.rs            Request/response types, RFC 7807 mappings
 ├── handlers.rs        Axum handlers for each route
 ├── router.rs          repository_router, repository_router_without_publish,
@@ -369,7 +368,7 @@ baml-rt-repository/
 Builder and runner need to compute hashes without pulling in SurrealDB or Axum. `baml-rt-hash` depends only on `sha2`, `serde_json`, `thiserror`.
 
 ### Trait boundaries for storage
-`BlobStore`, `MetadataStore`, `LineageStore`, `SearchStore` are async traits even though one struct implements all four. Keeping the seams visible documents the responsibilities and lets future deployments split or replace any single concern.
+`BlobStore`, `MetadataStore`, `LineageStore`, `SearchStore`, `McpRegistryStore`, and `ExternalToolRegistryStore` are async traits even though one struct (`SurrealStore`) implements all six. Keeping the seams visible documents the responsibilities and lets future deployments split or replace any single concern.
 
 ### Discriminated unions over flags
 `LineageKind::{Fork, Influence}`, `Parentage::{Original, Forked, Synthesized}`, `PublishOrigin::{Original, Iteration, Influenced}` — invalid states are unrepresentable at the type level.

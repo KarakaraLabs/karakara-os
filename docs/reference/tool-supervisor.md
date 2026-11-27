@@ -11,13 +11,23 @@ clone/setuid. There is one supervisor implementation, two isolation backends.
 
 ## Topology
 
-```
-host runner                         guest microVM
-ToolHost / VmPool  ── vsock ──▶     supervisor (pid 1, root)
-  channel.rs        protocol v2       ├─ verify + unpack .ktool to tmpfs
-                                      └─ worker per tool digest (uid, ns,
-                                         rlimits, seccomp)
-                                            node → MCP stdio server
+```mermaid
+flowchart LR
+  subgraph HOST["Host runner"]
+    TH["ToolHost / VmPool<br/>(channel.rs)"]
+  end
+
+  subgraph GUEST["Guest microVM"]
+    SUP["supervisor (pid 1, root)"]
+    UNPACK["verify + unpack .ktool to tmpfs"]
+    WORKER["worker per tool digest<br/>(uid, ns, rlimits, seccomp)"]
+    MCP["node → MCP stdio server"]
+    SUP --> UNPACK
+    SUP --> WORKER
+    WORKER --> MCP
+  end
+
+  TH -->|"vsock (protocol v2)"| SUP
 ```
 
 The supervisor is an MCP client of the worker. It maps `protocol_v2` invokes to
@@ -140,6 +150,7 @@ of `karak`, or `PATH`. `just build` builds it alongside `karak`.
 | stderr capture | 1 MiB | `SupervisorLimits` |
 | result size | 4 MiB | `SupervisorLimits` |
 | warm workers | 16 | `SupervisorLimits` |
+| inflight per worker | 16 | `KARAKARA_MAX_INFLIGHT` |
 | idle worker timeout | 300 s | `KARAKARA_WORKER_IDLE_MS` |
 | worker uid/gid base | 100000 | `SupervisorLimits` |
 

@@ -10,6 +10,36 @@ This document defines MVP runner deployment contracts and runtime semantics.
 - Runner stores deployment state locally.
 - Deployment state is not persisted in repository.
 
+```mermaid
+flowchart TD
+  REQ["Deploy / Startup Restore<br/>(hash or name@version)"]
+  REPO[("Repository<br/>immutable .tar.gz + metadata")]
+  VERIFY{"Verify content_hash,<br/>artifact_hash & AgentId"}
+  ACTIVE(["DeploymentStatus::Active<br/>(serving A2A / dispatch)"])
+  FAILED{{"DeploymentStatus::Failed<br/>(record last_error & failure_count)"}}
+  FWD{"Cluster forward:<br/>X-Karakara-Expected-Artifact-Hash<br/>matches BootedAgent?"}
+  EXEC(["Dispatch task"])
+  P412{{"412 Precondition Failed"}}
+  DRAIN[["Draining<br/>(reject new requests with 503;<br/>wait up to 30s, then force-abort)"]]
+  GONE["Undeployed"]
+
+  REQ --> REPO --> VERIFY
+  VERIFY -->|"match"| ACTIVE
+  VERIFY -->|"mismatch / extract error"| FAILED
+  FAILED -->|"subsequent boot succeeds"| ACTIVE
+  ACTIVE --> FWD
+  FWD -->|"match / omitted"| EXEC
+  FWD -->|"mismatch"| P412
+  ACTIVE -->|"undeploy"| DRAIN --> GONE
+
+  classDef ok stroke:#0072B2,stroke-width:2px
+  classDef pause stroke:#E69F00,stroke-width:2px
+  classDef deny stroke:#D55E00,stroke-width:2px
+  class ACTIVE,EXEC ok
+  class DRAIN pause
+  class FAILED,P412 deny
+```
+
 ## Deployment Identity
 
 - Runner internal deploy API is hash-based.
