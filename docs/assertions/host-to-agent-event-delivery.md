@@ -15,13 +15,12 @@ Tools have two roles:
 1. **Invoke** (agent -> tool): the agent calls the tool through the session FSM (`Open` / `Send` / `SearchRead` / `PageRead` / `Finish` / `Abort`).
 2. **Produce events** (tool -> host -> agent): the tool declares `event_sources` in its metadata, the host polls or receives webhooks, and dispatches matching events to subscribed agents.
 
-```
-┌─────────┐   invoke    ┌──────┐   poll/webhook   ┌──────┐
-│  Agent   │ ──────────> │ Tool │ <──────────────── │Source│
-└─────────┘             └──────┘                   └──────┘
-     ^                      │
-     │    dispatch           │ events
-     └───── host ◄───────────┘
+```mermaid
+flowchart LR
+    Agent["Agent"] -->|"invoke"| Tool["Tool"]
+    Source["External Source"] -->|"poll / webhook"| Tool
+    Tool -->|"events"| Host["Host"]
+    Host -->|"dispatch"| Agent
 ```
 
 A tool's `ToolFunctionMetadata.event_sources` field declares which `EventSourceKind` values it can produce. Empty means invoke-only. When a tool declares event sources, the host can poll it and route resulting events to agents whose subscriptions match.
