@@ -20,21 +20,19 @@ Host tools in Karakara OS provide agents with capabilities beyond LLM inference.
 
 ## MCP Server Integration
 
+For the complete MCP operator and authoring reference, see [`karakara-mcp-support.md`](karakara-mcp-support.md).
+
 ### Server Configuration
 
-MCP servers are configured in `mcp-catalog.json`:
+Operators declare MCP servers in **`mcp-servers.json`** (default `$HOME/.karakara-os/mcp-servers.json`, override via `BAML_MCP_SERVERS_CONFIG`; schema in `crates/baml-rt-tools/src/mcp_config.rs`):
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "filesystem": {
       "command": "npx",
       "args": ["@modelcontextprotocol/server-filesystem", "/tmp"],
       "env": {}
-    },
-    "postgres": {
-      "command": "mcp-server-postgres",
-      "args": ["postgresql://user:pass@localhost/db"]
     }
   }
 }
@@ -42,34 +40,24 @@ MCP servers are configured in `mcp-catalog.json`:
 
 ### Registry Snapshots
 
-Karakara maintains registry snapshots of MCP servers for:
-- **Schema validation** - Ensure tool/resource schemas match expectations
-- **Offline builds** - Enable CI/test without external dependencies  
-- **Version consistency** - Lock to approved server versions
+Karakara stores approved MCP server snapshots in the repository registry (`karak mcp enable <server_id>`):
+- **Schema validation** - Seal tool schemas and `server_config_digest` at approval time
+- **Offline builds** - Build and test agent packages from approved snapshots without live server discovery
+- **Drift refusal** - At runtime, `McpResolver` recomputes `server_config_digest` against `mcp-servers.json` and refuses to bind if operator config drifted
 
-Snapshot resolution:
-1. Check registry for cached server snapshot
-2. Fall back to live server discovery if not cached
-3. Validate schema compatibility
+### Agent Manifest & Session Integration
 
-### BAML Integration
-
-MCP tools are exposed as BAML functions:
+Agents declare individual `mcp/<server>/<tool>` entries in `manifest.json` (never a generic dynamic gateway). At build time, `baml-agent-builder` materializes approved snapshots into the package's `mcp/` directory and generates typed BAML/TypeScript session DTOs plus `openToolSession` (invoked through the host-mediated session FSM or `runGeneratedStepExecutor`, never imported directly from `./baml_client`):
 
 ```typescript
-// Generated from MCP server schema
-function ReadFile(path: string) -> string
-function WriteFile(path: string, content: string) -> string
-function ListDirectory(path: string) -> string[]
-```
-
-Usage in agents:
-
-```typescript
-import { ReadFile, WriteFile } from "./baml_client"
-
-const content = await ReadFile("/path/to/file.txt")
-const result = await WriteFile("/output.txt", processedContent)
+const session = await openToolSession("mcp/filesystem/read_file", {});
+try {
+  const result = await session.send({ path: "/tmp/example.txt" });
+  await session.finish();
+} catch (err) {
+  await session.abort();
+  throw err;
+}
 ```
 
 ## Generated tool DTO schemas
@@ -208,25 +196,54 @@ in policy: this agent may use this exact toolset digest, and
 
 **4. At runtime there are two routes, and they never mix:**
 
-```
-ROUTE 1 — the call: arguments and results only, never a secret
-  LLM / agent ─"create_task {list_id, name}"─► runner ─protocol_v2 (vsock)─► supervisor ─MCP stdio─► tool
-       ▲                                                                                              │
-       └───────────────────────────────────── result ◄───────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph R1["ROUTE 1 — the call (arguments & results only, never a secret)"]
+    direction LR
+    LLM["LLM / agent"]
+    RUN1["runner"]
+    SUP1["supervisor"]
+    TOOL1["tool"]
+    LLM -->|"create_task {list_id, name}"| RUN1
+    RUN1 -->|"protocol_v2 (vsock)"| SUP1
+    SUP1 -->|"MCP stdio"| TOOL1
+    TOOL1 -->|"result"| LLM
+  end
 
-ROUTE 2 — the secret: host side only
-  fnox (real token) ─► runner ─► microsandbox network layer (host side)
-                                    │ at VM create: env CLICKUP_API_KEY = "$MSB_CLICKUP_API_KEY"
-                                    ▼
-                             supervisor env ─► worker env ─► process.env in the tool (placeholder)
+  subgraph R2["ROUTE 2 — the secret (host side only)"]
+    direction TB
+    subgraph R2H["Host side"]
+      direction LR
+      FNOX["fnox (real token)"]
+      RUN2["runner"]
+      NET["microsandbox network layer"]
+      FNOX --> RUN2 --> NET
+    end
+    subgraph R2G["Guest side (placeholder only)"]
+      direction LR
+      SUP2["supervisor env"]
+      WORK["worker env"]
+      PENV["process.env in tool"]
+      SUP2 --> WORK --> PENV
+    end
+    NET -->|"at VM create:<br/>CLICKUP_API_KEY=$MSB_CLICKUP_API_KEY"| SUP2
+  end
 
-WHERE THEY MEET — on the network, outside the guest
-  tool: fetch(api.clickup.com, Authorization: "$MSB_CLICKUP_API_KEY")
-        │ TLS from the guest
-        ▼
-  host network layer: is this really api.clickup.com (DNS identity + verified TLS)?
-        ├─ yes → swap the placeholder for the real token ─► api.clickup.com
-        └─ no  → cut the connection
+  subgraph MEET["WHERE THEY MEET — on the network, outside the guest"]
+    direction TB
+    FETCH["tool: fetch(api.clickup.com, Authorization: $MSB_CLICKUP_API_KEY)"]
+    CHECK{"host network layer:<br/>DNS identity + verified TLS<br/>for api.clickup.com?"}
+    API(["api.clickup.com"])
+    DROP{{"cut connection"}}
+    FETCH -->|"TLS from guest"| CHECK
+    CHECK -->|"yes: swap placeholder for real token"| API
+    CHECK -->|"no"| DROP
+  end
+
+  classDef ok stroke:#0072B2,stroke-width:2px
+  classDef deny stroke:#D55E00,stroke-width:2px
+  class API ok
+  class DROP deny
 ```
 
 Why it works this way: everything on Route 1 is seen by the LLM (which can be
@@ -248,7 +265,7 @@ How the VM enforces it:
 
 | Binding | Use when | What the tool sees |
 |---|---|---|
-| `egress_bound` (default choice) | the secret is sent as-is on the wire: `Authorization: Bearer …`, `x-api-key`, API-key headers | a placeholder in `process.env.<NAME>` |
+| `"egress-bound"` (TS SDK) / `"egress_bound"` (`karakara.toml` & wire; default choice) | the secret is sent as-is on the wire: `Authorization: Bearer …`, `x-api-key`, API-key headers | a placeholder in `process.env.<NAME>` |
 | `reveal` (separately approved, rare) | the code must compute with the value: request signing (AWS SigV4, HMAC webhooks), non-HTTP protocols | the real value, delivered to that one worker over a sealed fd; `KARAKARA_REVEAL_FDS` maps `NAME` → fd number. Never in env, argv, or the invoke payload |
 
 With `reveal`, the plaintext is inside the VM, in one worker only. Prefer

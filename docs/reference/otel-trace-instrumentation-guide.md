@@ -251,9 +251,11 @@ runner.handle_a2a_by_key(&route_key, wire).await?;
 
 **Resulting span hierarchy:**
 
-```
-baml_rt.a2a_request {method, agent_package, agent_instance_id, correlation_id, context_id, ...}
-└── baml_rt.a2a_js_invoke {method, invocation}
+```mermaid
+flowchart TD
+  REQ["baml_rt.a2a_request<br/>{method, agent_package, agent_instance_id, correlation_id, context_id, ...}"]
+  JS["baml_rt.a2a_js_invoke<br/>{method, invocation}"]
+  REQ --> JS
 ```
 
 **Attributes automatically added by sqlx-tracing:**
@@ -374,10 +376,10 @@ async fn spawn_work(&self) -> Result<()> {
 
 ### The OtelTestFixture Pattern
 
-Create a reusable test fixture that captures spans:
+Create a reusable test fixture that captures spans (in this workspace, see `OtelTestFixture` in `crates/baml-rt-api/tests/api_test.rs` and tracing initialization in `crates/baml-rt-observability`; the `CreditStore` / `otel-test-support` snippets in this guide are standalone reference examples of the pattern):
 
 ```rust
-// lib/otel-test-support/src/lib.rs
+// Example test-support fixture pattern
 
 pub struct OtelTestFixture {
     provider: SdkTracerProvider,
@@ -442,8 +444,6 @@ impl OtelTestFixture {
 // Same trace verification
 .assert_same_trace("span_a", "span_b")
 ```
-
-**See**: `lib/otel-test-support/src/lib.rs` for full implementation and additional helpers.
 
 ### Example Integration Test
 
@@ -554,16 +554,22 @@ let app = Router::new()
 
 **Span hierarchy:**
 
-```
-request (http.method=POST, http.route=/webhooks/hyperswitch)
-├── baml_rt.insert_webhook_event
-│   └── sqlx.execute
-├── baml_rt.fetch_webhook_meta
-│   └── sqlx.fetch_optional
-├── baml_rt.insert_ledger
-│   └── sqlx.execute
-└── baml_rt.mark_webhook_applied
-    └── sqlx.execute
+```mermaid
+flowchart TD
+  REQ["request<br/>(http.method=POST, http.route=/webhooks/hyperswitch)"]
+  S1["baml_rt.insert_webhook_event"]
+  Q1["sqlx.execute"]
+  S2["baml_rt.fetch_webhook_meta"]
+  Q2["sqlx.fetch_optional"]
+  S3["baml_rt.insert_ledger"]
+  Q3["sqlx.execute"]
+  S4["baml_rt.mark_webhook_applied"]
+  Q4["sqlx.execute"]
+
+  REQ --> S1 --> Q1
+  REQ --> S2 --> Q2
+  REQ --> S3 --> Q3
+  REQ --> S4 --> Q4
 ```
 
 ---

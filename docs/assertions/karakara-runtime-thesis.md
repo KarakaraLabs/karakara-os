@@ -16,6 +16,30 @@ External systems stay outside the boundary. What the runtime records is what cro
 interfaces: LLM calls, tool hops, A2A interactions, task transitions, messages, artefacts, and
 provenance events.
 
+```mermaid
+flowchart TB
+  EXT["External Systems<br/>(LLM providers, MCP / external tools, A2A clients)"]
+
+  subgraph RT["Karakara OS Runtime Boundary"]
+    IFACE["Host-Mediated Interfaces<br/>(LLM client, Tool Session FSM, A2A HTTP/SSE)"]
+    AGENT["Declarative Agent Execution<br/>(manifest + QuickJS TS + BAML + Planning)"]
+    PROV["Provenance Graph (SurrealDB)<br/>(graph-first reads)"]
+    subgraph CONV["Conversation Projection Boundaries"]
+      CH["CanonicalHistory"]
+      PO["PhaseOverlay"]
+      REF["StableHistoryRefResolver (#N / @N)"]
+    end
+  end
+
+  EXT <--> IFACE
+  IFACE <--> AGENT
+  IFACE -->|"observed effects"| PROV
+  PROV --> CH
+  CH --> REF
+  PO --> AGENT
+  REF --> AGENT
+```
+
 ## Host-mediated effects
 
 Host tools run in Rust via the session FSM (`Open` / `Send` / `SearchRead` / `PageRead` / `Finish` / `Abort`).
