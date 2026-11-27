@@ -20,12 +20,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from hack.logger import log_event
-from hack.runtime import (
+from hack.containers.logger import log_event
+from hack.containers.runtime import (
     DEFAULT_CONTAINER_NAME,
     DEFAULT_IMAGE,
     DEFAULT_VOLUME_NAME,

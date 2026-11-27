@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Structured JSON Lines (JSONL) logger for hack/ container tooling."""
+"""Structured JSON Lines (JSONL) logger for hack/containers tooling."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LOGS_DIR = REPO_ROOT / ".hack-logs"
 
 

@@ -9,7 +9,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build, start, and validate the Karakara OS runner container (Podman / Docker)."""
+"""Build, start, and validate the Karakara OS runner + Web UI container."""
 
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from hack.logger import log_event
-from hack.runtime import (
+from hack.containers.logger import log_event
+from hack.containers.runtime import (
     DEFAULT_CONTAINER_NAME,
     DEFAULT_IMAGE,
     DEFAULT_PORT,
@@ -68,9 +68,9 @@ signal.signal(signal.SIGINT, _sigint_handler)
 
 
 def render_probe_table(results: list[ProbeResult], base_url: str) -> None:
-    """Display endpoint verification results in a Rich table or plain text."""
+    """Display API and Web UI verification results in a Rich table or plain text."""
     if HAS_RICH and console is not None:
-        table = Table(title=f"Karakara Runner Verification ({base_url})")
+        table = Table(title=f"Karakara Runner + Web UI Verification ({base_url})")
         table.add_column("Endpoint", style="cyan", no_wrap=True)
         table.add_column("HTTP Status", justify="right")
         table.add_column("Result", style="bold")
@@ -79,13 +79,15 @@ def render_probe_table(results: list[ProbeResult], base_url: str) -> None:
             badge = (
                 "[green]PASS[/green]" if item.ok else f"[red]FAIL ({item.detail})[/red]"
             )
-            table.add_row(item.path, status_str, badge)
+            label = "/ (Web UI)" if item.path == "/" else item.path
+            table.add_row(label, status_str, badge)
         console.print(table)
         return
 
     for item in results:
         badge = "PASS" if item.ok else f"FAIL ({item.detail})"
-        print(f"  {item.path:15s} -> {item.status} {badge}")
+        label = "/ (Web UI)" if item.path == "/" else item.path
+        print(f"  {label:15s} -> {item.status} {badge}")
 
 
 def run_cmd(cmd: list[str], cwd: Path, dry_run: bool = False) -> None:
@@ -99,7 +101,7 @@ def run_cmd(cmd: list[str], cwd: Path, dry_run: bool = False) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for container deployment."""
     parser = argparse.ArgumentParser(
-        description="Build, start, and verify the Karakara OS runner container."
+        description="Build, start, and verify the Karakara OS runner + Web UI container."
     )
     parser.add_argument(
         "--runtime",
@@ -158,7 +160,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run container build, launch, and HTTP verification."""
+    """Run container build, launch, and HTTP/Web UI verification."""
     args = parse_args(argv)
     try:
         runtime = detect_runtime(args.runtime)
@@ -200,10 +202,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if not args.skip_build:
-            print_msg("[deploy] Building runner image...", "cyan")
+            print_msg("[deploy] Building runner + Web UI image...", "cyan")
             run_cmd(build_image_cmd(cfg), cwd=REPO_ROOT, dry_run=args.dry_run)
 
-        # Replace any existing container with the same name so re-runs are idempotent.
         if args.dry_run:
             run_cmd(
                 remove_container_cmd(runtime, cfg.container_name),
@@ -243,10 +244,10 @@ def main(argv: list[str] | None = None) -> int:
             {"base_url": base_url, "results": [item.__dict__ for item in results]},
         )
         if not all_ok:
-            print_msg("[deploy] One or more HTTP checks failed.", "bold red")
+            print_msg("[deploy] One or more HTTP/Web UI checks failed.", "bold red")
             return 1
 
-        print_msg(f"[deploy] Runner is live at {base_url}", "bold green")
+        print_msg(f"[deploy] Runner + Web UI live at {base_url}", "bold green")
         return 0
     except (subprocess.CalledProcessError, TimeoutError, ValueError) as exc:
         log_event("deploy", "error", {"error": str(exc)})

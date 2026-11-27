@@ -46,7 +46,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release -p karakara-os --features http-tools,memory,sandbox-provider,dev-tools ${CARGO_BUILD_JOBS:+--jobs "$CARGO_BUILD_JOBS"} \
     && cp /build/target/release/karak /usr/local/bin/karak
 
-# Stage 2: Slim runtime image.
+# Stage 2: Build the Vue/Vite web UI.
+FROM node:22-bookworm-slim AS web-builder
+
+WORKDIR /web
+
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci
+
+COPY web/ ./
+RUN npx vite build
+
+# Stage 3: Slim runtime image.
 #
 # Node.js is needed at runtime because repository publish compiles
 # TypeScript when agents are published via POST /repository/publish.
@@ -70,6 +82,7 @@ RUN groupadd -r -g 1000 karakara && useradd -r -u 1000 -g karakara -d /data -s /
 RUN mkdir -p /data && chown -R karakara:karakara /data
 
 COPY --from=builder /usr/local/bin/karak /usr/local/bin/karak
+COPY --from=web-builder /web/dist /app/web/dist
 
 WORKDIR /data
 USER 1000
@@ -80,4 +93,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://127.0.0.1:18080/healthz || exit 1
 
 ENTRYPOINT ["karak", "serve"]
-CMD ["--serve-http", "0.0.0.0:18080"]
+CMD ["--serve-http", "0.0.0.0:18080", "--web-dir", "/app/web/dist"]

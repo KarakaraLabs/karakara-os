@@ -3,6 +3,8 @@ target/
 .worktrees/
 .github/
 node_modules/
+**/node_modules/
+web/dist/
 *.tar.gz
 tmp/
 operations/observability/

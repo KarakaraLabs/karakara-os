@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for hack/ container deploy, teardown, and logging helpers."""
+"""Unit tests for hack/containers deploy, teardown, and logging helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from hack import deploy, logger, runtime, teardown
+from hack.containers import deploy, logger, runtime, teardown
 
 
 class RuntimeTests(unittest.TestCase):
@@ -87,7 +87,7 @@ class RuntimeTests(unittest.TestCase):
             ],
         )
 
-    def test_wait_for_ready_retries_503_then_verifies_endpoints(self) -> None:
+    def test_wait_for_ready_retries_503_then_verifies_api_and_web_ui(self) -> None:
         calls: list[str] = []
         readyz_attempts = 0
 
@@ -106,7 +106,8 @@ class RuntimeTests(unittest.TestCase):
             poll_interval_secs=0.0,
             getter=fake_get,
         )
-        self.assertEqual(len(results), 4)
+        self.assertEqual(len(results), 5)
+        self.assertIn("/", [item.path for item in results])
         self.assertTrue(all(item.ok and item.status == 200 for item in results))
         self.assertGreaterEqual(readyz_attempts, 2)
 
@@ -130,12 +131,14 @@ class RuntimeTests(unittest.TestCase):
 
 class CliAndLoggerTests(unittest.TestCase):
     def test_deploy_dry_run_exits_zero(self) -> None:
-        with mock.patch("hack.deploy.detect_runtime", return_value="podman"):
+        with mock.patch("hack.containers.deploy.detect_runtime", return_value="podman"):
             code = deploy.main(["--dry-run", "--jobs", "4"])
         self.assertEqual(code, 0)
 
     def test_teardown_dry_run_exits_zero(self) -> None:
-        with mock.patch("hack.teardown.detect_runtime", return_value="podman"):
+        with mock.patch(
+            "hack.containers.teardown.detect_runtime", return_value="podman"
+        ):
             code = teardown.main(["--dry-run", "--purge-volume", "--purge-image"])
         self.assertEqual(code, 0)
 

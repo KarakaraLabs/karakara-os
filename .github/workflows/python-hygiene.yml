@@ -46,7 +46,7 @@ jobs:
           uv tool run ruff format --check hack/
 
       - name: Run hack/ unit tests (uv + rich)
-        run: uv run --with rich python3 -B -m unittest discover -s hack/tests -p 'test_*.py' -v
+        run: uv run --with rich python3 -B -m unittest discover -s hack -t . -p 'test_*.py' -v
 
       - name: Run scripts/ unit tests (unittest)
         run: python3 -B -m unittest discover -s scripts/tests -p 'test_*.py' -v

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared container runtime helpers and HTTP probe checks for hack/ scripts."""
+"""Shared container runtime helpers and HTTP/Web UI probe checks."""
 
 from __future__ import annotations
 
@@ -23,6 +23,13 @@ DEFAULT_IMAGE = "karakara-os:local-test"
 DEFAULT_CONTAINER_NAME = "karakara-runner"
 DEFAULT_VOLUME_NAME = "karakara-runner-data"
 DEFAULT_PORT = 18080
+VERIFY_ENDPOINTS: tuple[str, ...] = (
+    "/healthz",
+    "/readyz",
+    "/agents",
+    "/openapi.json",
+    "/",
+)
 
 
 @dataclass(frozen=True)
@@ -146,7 +153,7 @@ def wait_for_ready(
     poll_interval_secs: float = 1.0,
     getter: Callable[[str], tuple[int, str]] = http_get_status,
 ) -> list[ProbeResult]:
-    """Poll `/healthz` and `/readyz` until both return 200, then verify API endpoints."""
+    """Poll `/healthz` and `/readyz` until both return 200, then verify API + Web UI."""
     deadline = time.monotonic() + timeout_secs
     last_readyz = (0, "not checked")
 
@@ -164,7 +171,7 @@ def wait_for_ready(
         )
 
     results: list[ProbeResult] = []
-    for path in ("/healthz", "/readyz", "/agents", "/openapi.json"):
+    for path in VERIFY_ENDPOINTS:
         code, detail = getter(f"{base_url}{path}")
         results.append(
             ProbeResult(path=path, status=code, ok=(code == 200), detail=detail)
