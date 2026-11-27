@@ -10,6 +10,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if ! command -v rg &>/dev/null; then
+  echo >&2 "check-doc-links: ripgrep (rg) is required"
+  exit 1
+fi
+
 fail=0
 
 check_file() {
