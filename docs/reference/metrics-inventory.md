@@ -62,10 +62,10 @@ Core runtime: A2A, tools (via QuickJS), LLM, QuickJS bridge, live stream, ONNX, 
 | `baml_rt.onnx.run_ms` | Histogram | ONNX session run time. |
 | `baml_rt.onnx.wait_to_run_ratio` | Histogram | `wait_ms / run_ms` (saturation signal). |
 | `baml_rt.onnx.wait_dominant_total` | Counter | Count where wait ≥ run (contention). |
-| `baml_rt.context_compaction.total` | Counter | Host context compaction attempts. Labels: `trigger`, `result`, `reason`, `summarizer`, `model`, `provider`, `budget_source`, `budget_freshness`. |
+| `baml_rt.context_compaction.attempt_total` | Counter | Host context compaction attempts (`ContextCompactionSubscriber` agent path and `AuditCompactionProducer` operator audit path). Labels: `trigger` (`post_turn_threshold`, `pre_model_emergency`, `manual_operator`), `result`, `reason` (when applicable), `summarizer`, `model`, `provider`, `budget_source`, `budget_freshness`. |
 | `baml_rt.context_compaction.duration_ms` | Histogram | Compaction attempt latency (same labels as counter). |
-| `baml_rt.context_compaction.bytes_before` | Histogram | Pre-compaction prompt bytes (success only). |
-| `baml_rt.context_compaction.bytes_after` | Histogram | Post-compaction summary bytes (success only). |
+| `baml_rt.context_compaction.prompt_bytes_before` | Histogram | Pre-compaction rendered prefix bytes (success only). |
+| `baml_rt.context_compaction.prompt_bytes_after` | Histogram | Post-compaction summary bytes (success only). |
 | `baml_rt.context_compaction.covered_rows` | Histogram | Prefix rows compacted (success only). |
 
 ### Turn ordinals
