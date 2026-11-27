@@ -67,15 +67,23 @@ uv run hack/containers/teardown.py --purge-volume
 
 A fresh container starts with **0 deployed agents** (`existing_deployments=0`), so `http://127.0.0.1:18080` renders an empty agent list until at least one agent is installed.
 
-### 1. Zero-LLM Agent (No API Key Required)
-Deploy the pure QuickJS [`stream-js-tool`](../../tests/fixtures/agents/stream-js-tool/src/index.ts) fixture agent to test the full deploy → Web UI → A2A chat loop offline:
+### 1. Zero-LLM Agent (No API Key or Host Rust Build Required)
+Deploy the pure QuickJS [`stream-js-tool`](../../tests/fixtures/agents/stream-js-tool/src/index.ts) fixture agent using the `/usr/local/bin/karak` binary already bundled inside the container image (replace `podman` with `docker` if using Docker):
 
 ```bash
-karak install agent \
-  --path tests/fixtures/agents/stream-js-tool \
-  --repository-url http://127.0.0.1:18080/repository \
-  --url http://127.0.0.1:18080
+podman run --rm \
+  --network container:karakara-runner \
+  -v "$(pwd):/workspace:ro" \
+  -w /workspace \
+  --entrypoint /usr/local/bin/karak \
+  karakara-os:local-test \
+  install agent \
+    --path /workspace/tests/fixtures/agents/stream-js-tool \
+    --repository-url http://127.0.0.1:18080/repository \
+    --url http://127.0.0.1:18080
 ```
+
+*(If you also have `karak` installed natively on your host, you can run `karak install agent --path tests/fixtures/agents/stream-js-tool --repository-url http://127.0.0.1:18080/repository --url http://127.0.0.1:18080` directly.)*
 
 Open `http://127.0.0.1:18080`, select `stream-js-tool`, and send a message containing `stream-task`.
 

@@ -53,14 +53,20 @@ Open `http://127.0.0.1:18080` to view the Web UI.
 
 A fresh container starts with **0 deployed agents** (`existing_deployments=0`), so the Web UI loads with an empty agent list until you install an agent.
 
-### 1. Zero-LLM Verification (No API Key Required)
-Pure QuickJS agents run without any LLM provider or API key. Deploy the deterministic [`stream-js-tool`](../../tests/fixtures/agents/stream-js-tool/src/index.ts) fixture agent:
+### 1. Zero-LLM Verification (No API Key or Host Build Required)
+Pure QuickJS agents run without any LLM provider or API key. Deploy the deterministic [`stream-js-tool`](../../tests/fixtures/agents/stream-js-tool/src/index.ts) fixture agent using the `karak` binary already inside the container image (replace `podman` with `docker` if using Docker):
 
 ```bash
-karak install agent \
-  --path tests/fixtures/agents/stream-js-tool \
-  --repository-url http://127.0.0.1:18080/repository \
-  --url http://127.0.0.1:18080
+podman run --rm \
+  --network container:karakara-runner \
+  -v "$(pwd):/workspace:ro" \
+  -w /workspace \
+  --entrypoint /usr/local/bin/karak \
+  karakara-os:local-test \
+  install agent \
+    --path /workspace/tests/fixtures/agents/stream-js-tool \
+    --repository-url http://127.0.0.1:18080/repository \
+    --url http://127.0.0.1:18080
 ```
 
 Then open `http://127.0.0.1:18080`, select `stream-js-tool`, and send a message containing `stream-task`.
