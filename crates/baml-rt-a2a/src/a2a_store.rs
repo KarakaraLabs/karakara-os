@@ -75,6 +75,16 @@ pub trait TaskRepository: Send + Sync {
         msg.task_id = task_id;
         self.insert_message(&msg).await
     }
+
+    /// True if `task_id` is already bound in provenance to a different agent than this
+    /// repository's owner (or if ownership resolution fails/times out, failing closed).
+    ///
+    /// Used by `handle_live_message_stream` so a foreign write targeting another agent's
+    /// task cannot bypass `TaskOwnedByAnotherAgent` rejection by having its wire `taskId`
+    /// stripped before the owner's first `TaskStatus` commits.
+    async fn is_task_owned_by_another_agent(&self, _task_id: &TaskId) -> bool {
+        false
+    }
 }
 
 #[async_trait]

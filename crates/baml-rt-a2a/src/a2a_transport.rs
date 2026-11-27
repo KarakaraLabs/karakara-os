@@ -270,6 +270,13 @@ impl TaskRepository for AgentStoreView {
         record_task_store_metrics("insert_message", "success", start);
         Ok(())
     }
+    async fn is_task_owned_by_another_agent(&self, task_id: &TaskId) -> bool {
+        match self.provenance().get_task_agent_id(task_id).await {
+            Ok(baml_rt_provenance::TaskAgentResolution::Resolved(owner)) => owner != self.agent_id,
+            Ok(baml_rt_provenance::TaskAgentResolution::NotLinked) => false,
+            Ok(baml_rt_provenance::TaskAgentResolution::TimedOut) | Err(_) => true,
+        }
+    }
 }
 
 #[async_trait]
@@ -1837,6 +1844,7 @@ impl A2aAgent {
             let stored = self.task_store.get(tid.as_str(), None).await;
             if crate::a2a_store::should_strip_wire_task_id_for_message_send_stream(stored.as_ref())
                 && !should_preserve_wire_task_id_for_message_send_stream(&parsed)
+                && !self.task_store.is_task_owned_by_another_agent(tid).await
             {
                 tracing::debug!(
                     task_id = %tid.as_str(),
@@ -2942,6 +2950,119 @@ mod tests {
                     if *o == owner && *w == intruder
             ),
             "unexpected error: {err:?}"
+        );
+    }
+
+    /// Issue #91 regression: when `owner` has bound a `task_id` in provenance but has not
+    /// yet committed its first `TaskStatus`, `task_store.get(task_id)` returns `None`.
+    /// `handle_live_message_stream` must not strip `taskId` for a foreign agent in that
+    /// bootstrap window — otherwise the foreign agent synthesizes a fresh task ID and
+    /// succeeds instead of being rejected with `TaskOwnedByAnotherAgent`.
+    #[tokio::test]
+    async fn foreign_agent_task_id_is_not_stripped_before_first_status_commits() {
+        use baml_rt_core::{A2aRequestHandler, A2aWireRequest};
+        use baml_rt_provenance::{ProvenanceWriter, TaskAgentBinding, TaskAgentBindingSource};
+        use futures_util::StreamExt;
+
+        let host = crate::HostRuntimeStore::in_memory()
+            .await
+            .expect("host store");
+        let owner = fresh_agent_id();
+        let intruder = fresh_agent_id();
+        let context_id = ContextId::from("ctx-issue-91-bootstrap");
+        let task_id = TaskId::from_external(ExternalId::new("live-task:ctx-issue-91:owner-msg"));
+
+        for agent in [&owner, &intruder] {
+            host.provenance()
+                .add_event(baml_rt_provenance::ProvEvent::agent_booted(
+                    agent.clone(),
+                    baml_rt_provenance::AgentType::new("test_agent").expect("agent type"),
+                    "1.0.0".to_string(),
+                    "test@1.0.0".to_string(),
+                ))
+                .await
+                .expect("agent booted");
+        }
+
+        let owner_view = AgentStoreView::new(Arc::clone(&host), owner.clone(), None);
+        let intruder_view = AgentStoreView::new(Arc::clone(&host), intruder.clone(), None);
+
+        // Before binding, neither agent treats the unbound task as owned by another agent.
+        assert!(!owner_view.is_task_owned_by_another_agent(&task_id).await);
+        assert!(!intruder_view.is_task_owned_by_another_agent(&task_id).await);
+
+        // Owner binds the task without committing any TaskStatus yet (`get()` is still `None`).
+        owner_view
+            .bind_task_executing_agent(
+                TaskAgentBinding::new(
+                    context_id.clone(),
+                    task_id.clone(),
+                    owner.clone(),
+                    TaskAgentBindingSource::A2aStreamBootstrap,
+                )
+                .expect("binding"),
+            )
+            .await
+            .expect("owner binds task");
+        let stored_before_status = owner_view.get(task_id.as_str(), None).await;
+        assert!(
+            crate::a2a_store::should_strip_wire_task_id_for_message_send_stream(
+                stored_before_status.as_ref()
+            ),
+            "bootstrap task without TaskStatus would normally trigger wire taskId stripping"
+        );
+
+        // Owner still sees false (same-agent stale/terminal stripping intact);
+        // foreign agent sees true so wire `taskId` is preserved and rejected.
+        assert!(!owner_view.is_task_owned_by_another_agent(&task_id).await);
+        assert!(intruder_view.is_task_owned_by_another_agent(&task_id).await);
+
+        // End-to-end through `A2aAgent::handle_a2a_stream`: foreign write must be rejected.
+        let intruder_agent = A2aAgent::builder()
+            .with_agent_id(intruder.clone())
+            .with_host_store(Arc::clone(&host))
+            .with_effect_emitter(Arc::new(baml_rt_core::bus::BusWithEffects::new()))
+            .with_init_js(
+                r#"globalThis.onChatMessage = async function() {
+                    __chat_yield({ message: { parts: [{ text: "intruder" }] } });
+                    __chat_yield({ final: true });
+                };"#
+                .to_string(),
+            )
+            .build()
+            .await
+            .expect("intruder agent");
+
+        let foreign_req = json!({
+            "jsonrpc": "2.0",
+            "id": "corr-91-1",
+            "method": "message.sendStream",
+            "params": {
+                "message": {
+                    "messageId": "msg-intruder-91",
+                    "role": "ROLE_USER",
+                    "parts": [{ "text": "hijack" }],
+                    "contextId": context_id.as_str(),
+                    "taskId": task_id.as_str()
+                }
+            }
+        });
+        let rejected = match intruder_agent
+            .handle_a2a_stream(A2aWireRequest::from(foreign_req))
+            .await
+        {
+            Err(_) => true,
+            Ok(stream) => {
+                let frames: Vec<_> = stream
+                    .map(baml_rt_core::A2aStreamChunk::into_inner)
+                    .collect()
+                    .await;
+                frames.iter().any(|frame| frame.get("error").is_some())
+            }
+        };
+        assert!(
+            rejected,
+            "foreign write targeting an already-bound task before first TaskStatus must be rejected"
         );
     }
 
