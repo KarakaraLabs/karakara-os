@@ -10,6 +10,12 @@ tmp/
 operations/observability/
 tests/
 scripts/
+hack/
+.hack-logs/
+.ravs/
+**/__pycache__/
+*.py[cod]
+.venv/
 operations/deployment/*
 !operations/deployment/helm/
 !operations/deployment/values/
