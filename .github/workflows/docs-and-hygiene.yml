@@ -60,6 +60,10 @@ jobs:
         id: baml_history
         run: bash scripts/check-baml-conversation-history.sh
 
+      - name: Run Python hygiene script unit tests (unittest)
+        id: py_tests
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
       - name: Validate Mermaid diagrams & accessibility rules (check-doc-mermaid.py)
         id: doc_mermaid
         run: python3 scripts/check-doc-mermaid.py
@@ -75,6 +79,7 @@ jobs:
           LINKS_STATUS="${{ steps.doc_links.outcome }}"
           CLAIMS_STATUS="${{ steps.doc_claims.outcome }}"
           BAML_STATUS="${{ steps.baml_history.outcome }}"
+          PY_TESTS_STATUS="${{ steps.py_tests.outcome }}"
           MERMAID_STATUS="${{ steps.doc_mermaid.outcome }}"
           HELM_STATUS="${{ steps.helm_probes.outcome }}"
 
@@ -95,6 +100,7 @@ jobs:
           | **Doc Link Integrity** | \`scripts/check-doc-links.sh\` | $(format_status "$LINKS_STATUS") |
           | **Grounded Doc Claims** | \`scripts/check-doc-claims.sh\` | $(format_status "$CLAIMS_STATUS") |
           | **BAML Transcript Rules** | \`scripts/check-baml-conversation-history.sh\` | $(format_status "$BAML_STATUS") |
+          | **Python Script Unit Tests** | \`python3 -m unittest discover -s scripts/tests\` | $(format_status "$PY_TESTS_STATUS") |
           | **Mermaid Accessibility & Syntax** | \`scripts/check-doc-mermaid.py\` | $(format_status "$MERMAID_STATUS") |
           | **Helm Runner Probes** | \`scripts/test-helm-runner-probes.sh\` | $(format_status "$HELM_STATUS") |
 

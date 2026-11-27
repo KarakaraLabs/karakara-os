@@ -10,13 +10,15 @@ Enforces docs/assertions/accessibility.md across README.md, docs/**/*.md, and cr
 - First non-comment line declares a supported Mermaid diagram type.
 - Flowcharts/graphs have balanced subgraph / end pairs.
 - No hardcoded background fill overrides (theme-native fills only for Light/Dark legibility).
-- No raw HTML tags or %%{init:...}%% theme overrides inside Mermaid blocks.
+- No styling/layout HTML tags or %%{init:...}%% theme overrides inside Mermaid blocks.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,23 +33,53 @@ SUPPORTED_DIAGRAM_HEADERS: tuple[str, ...] = (
     "xychart-beta",
 )
 
+OPEN_FENCE_RE = re.compile(r"^(`{3,}|~{3,})\s*mermaid\s*$")
+SUBGRAPH_RE = re.compile(r"^subgraph\b")
 HARDCODED_FILL_RE = re.compile(r"\bfill\s*:\s*(?!none\b)[^\s,;]+", re.IGNORECASE)
 # `<br/>` is Mermaid's standard line-break separator; reject styling/layout HTML tags.
 HTML_TAG_RE = re.compile(
-    r"</?(?:b|i|u|span|div|font|p|strong|em|style|script)\b[^>]*>", re.IGNORECASE
+    r"</?(?:b|i|u|span|div|font|p|strong|em|style|script)\b[^>]*>",
+    re.IGNORECASE,
 )
 INIT_DIRECTIVE_RE = re.compile(r"%%\{.*init.*\}%%", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class MermaidBlock:
+    """A single fenced ```mermaid block extracted from a Markdown file."""
+
     path: Path
     start_line: int
     lines: tuple[str, ...]
     closed: bool
 
 
-def iter_markdown_files(root: Path) -> list[Path]:
+def find_repo_root(start: Path | None = None) -> Path:
+    """Locate the repository root dynamically by walking parents for Cargo.toml."""
+    origin = (start or Path(__file__)).resolve()
+    candidates = [origin, *origin.parents]
+    for parent in candidates:
+        if (parent / "Cargo.toml").is_file():
+            return parent
+    return Path(__file__).resolve().parent.parent
+
+
+def iter_markdown_files(root: Path, explicit_paths: Sequence[Path] = ()) -> list[Path]:
+    """Return sorted Markdown files to scan under root (or explicit CLI targets)."""
+    if explicit_paths:
+        resolved: list[Path] = []
+        for raw in explicit_paths:
+            path = raw if raw.is_absolute() else (root / raw)
+            if path.is_dir():
+                resolved.extend(
+                    md
+                    for md in sorted(path.rglob("*.md"))
+                    if "target" not in md.parts and "node_modules" not in md.parts
+                )
+            elif path.is_file():
+                resolved.append(path)
+        return resolved
+
     files: list[Path] = []
     readme = root / "README.md"
     if readme.is_file():
@@ -56,50 +88,49 @@ def iter_markdown_files(root: Path) -> list[Path]:
         base = root / subdir
         if not base.is_dir():
             continue
-        for md in sorted(base.rglob("*.md")):
-            if "target" in md.parts or "node_modules" in md.parts:
-                continue
-            files.append(md)
+        files.extend(
+            md
+            for md in sorted(base.rglob("*.md"))
+            if "target" not in md.parts and "node_modules" not in md.parts
+        )
     return files
 
 
 def extract_mermaid_blocks(path: Path) -> list[MermaidBlock]:
+    """Extract all fenced Mermaid blocks from a Markdown file."""
     blocks: list[MermaidBlock] = []
     text = path.read_text(encoding="utf-8")
     raw_lines = text.splitlines()
 
     in_block = False
-    fence_char = "`"
-    fence_len = 3
+    close_re: re.Pattern[str] | None = None
     start_line = 0
     buf: list[str] = []
 
     for idx, line in enumerate(raw_lines, start=1):
         stripped = line.lstrip()
         if not in_block:
-            match = re.match(r"^(`{3,}|~{3,})\s*mermaid\s*$", stripped)
+            match = OPEN_FENCE_RE.match(stripped)
             if match:
                 fence = match.group(1)
-                fence_char = fence[0]
-                fence_len = len(fence)
+                close_re = re.compile(rf"^{re.escape(fence[0])}{{{len(fence)},}}\s*$")
                 in_block = True
                 start_line = idx
                 buf = []
-        else:
-            close_re = rf"^{re.escape(fence_char)}{{{fence_len},}}\s*$"
-            if re.match(close_re, stripped):
-                blocks.append(
-                    MermaidBlock(
-                        path=path,
-                        start_line=start_line,
-                        lines=tuple(buf),
-                        closed=True,
-                    )
+        elif close_re is not None and close_re.match(stripped):
+            blocks.append(
+                MermaidBlock(
+                    path=path,
+                    start_line=start_line,
+                    lines=tuple(buf),
+                    closed=True,
                 )
-                in_block = False
-                buf = []
-            else:
-                buf.append(line)
+            )
+            in_block = False
+            close_re = None
+            buf = []
+        else:
+            buf.append(line)
 
     if in_block:
         blocks.append(
@@ -113,8 +144,16 @@ def extract_mermaid_blocks(path: Path) -> list[MermaidBlock]:
     return blocks
 
 
+def _display_path(path: Path, root: Path) -> Path:
+    try:
+        return path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return path
+
+
 def validate_block(block: MermaidBlock, root: Path) -> list[str]:
-    rel = block.path.relative_to(root)
+    """Validate one extracted Mermaid block against syntax and accessibility rules."""
+    rel = _display_path(block.path, root)
     errors: list[str] = []
 
     if not block.closed:
@@ -167,7 +206,7 @@ def validate_block(block: MermaidBlock, root: Path) -> list[str]:
             )
 
         if is_flowchart:
-            if re.match(r"^subgraph\b", stripped):
+            if SUBGRAPH_RE.match(stripped):
                 subgraph_depth += 1
             elif stripped == "end":
                 subgraph_depth -= 1
@@ -182,14 +221,43 @@ def validate_block(block: MermaidBlock, root: Path) -> list[str]:
     return errors
 
 
-def main() -> int:
-    root = Path(__file__).resolve().parent.parent
-    md_files = iter_markdown_files(root)
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Validate fenced Mermaid diagrams in Markdown files for syntax and "
+            "accessibility compliance (docs/assertions/accessibility.md)."
+        )
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Repository root directory (defaults to auto-detected Cargo.toml ancestor).",
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help="Optional Markdown files or directories to check (defaults to README.md, docs/, crates/).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint."""
+    args = parse_args(argv)
+    root = args.root.resolve() if args.root is not None else find_repo_root()
+    md_files = iter_markdown_files(root, args.paths)
     total_blocks = 0
     all_errors: list[str] = []
 
     for path in md_files:
-        blocks = extract_mermaid_blocks(path)
+        try:
+            blocks = extract_mermaid_blocks(path)
+        except OSError as exc:
+            all_errors.append(f"{_display_path(path, root)}: failed to read file: {exc}")
+            continue
         total_blocks += len(blocks)
         for block in blocks:
             all_errors.extend(validate_block(block, root))
