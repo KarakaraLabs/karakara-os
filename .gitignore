@@ -68,3 +68,13 @@ result
 
 # Karakara Labs Team Related
 .ravs/
+
+# Python / uv / ruff
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local tooling & runtime logs
+/logs/

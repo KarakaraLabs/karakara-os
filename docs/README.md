@@ -56,7 +56,7 @@ GitHub Actions workflows, runner architecture, required secrets/variables, and z
 
 | Doc | Purpose |
 |-----|---------|
-| [README.md](workflows/README.md) | Master inventory of all 9 GitHub Actions workflows, triggers, status, and CLI commands |
+| [README.md](workflows/README.md) | Master inventory of all 10 GitHub Actions workflows, triggers, status, and CLI commands |
 | [runners-and-zero-cost-alternatives.md](workflows/runners-and-zero-cost-alternatives.md) | Runner map (`ubuntu-latest` vs self-hosted `arc-runner-set`) and `$0` migration paths |
 | [secrets-variables-and-external-ties.md](workflows/secrets-variables-and-external-ties.md) | Matrix of `secrets.*`, `vars.*`, `fnox.toml`, `.env.example`, GHCR, BAML fork, and Git LFS |
 
@@ -67,6 +67,7 @@ Install, test, demo, and operate.
 | Doc | Purpose |
 |-----|---------|
 | [getting-started.md](runbooks/getting-started.md) | Build from source, local runner, example `just` flows, tests, and observability |
+| [local-containers.md](runbooks/local-containers.md) | Local Podman/Docker runner + Web UI build, `hack/containers/` CLI, and zero-LLM verification |
 | [k8s-pilot-operator-guide.md](runbooks/k8s-pilot-operator-guide.md) | Parked Helm chart guide (dormant pilot) |
 | [ci-security.md](runbooks/ci-security.md) | Public-repo CI trust model and GitHub settings |
 | [task-daemon.md](runbooks/task-daemon.md) | Task-daemon user guide |

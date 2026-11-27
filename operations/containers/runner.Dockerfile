@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Karakara Labs
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Stage 1: Build the Rust binaries.
 #
 # Uses stable Rust (matching CI) with lld linker for fast linking.
@@ -25,15 +29,36 @@ COPY baml_src/host baml_src/host
 # Override to stable (rust-toolchain.toml pins nightly for local dev).
 ENV RUSTUP_TOOLCHAIN=stable
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
 # Override workspace LTO profile: full LTO needs >8GB RAM during linking.
 # Thin LTO produces equivalent binaries within constrained build environments.
 ENV CARGO_PROFILE_RELEASE_LTO=thin
 ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
-RUN cargo build --release -p karakara-os --features http-tools,memory,sandbox-provider,dev-tools
+# Optional Cargo parallelism cap (e.g. --build-arg CARGO_BUILD_JOBS=4) for
+# memory-constrained macOS/Linux container VMs.
+ARG CARGO_BUILD_JOBS
 
-# Stage 2: Slim runtime image.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    cargo build --release -p karakara-os --features http-tools,memory,sandbox-provider,dev-tools ${CARGO_BUILD_JOBS:+--jobs "$CARGO_BUILD_JOBS"} \
+    && cp /build/target/release/karak /usr/local/bin/karak
+
+# Stage 2: Build the Vue/Vite web UI.
+FROM node:22-bookworm-slim AS web-builder
+
+WORKDIR /web
+
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci
+
+COPY web/ ./
+RUN npx vite build
+
+# Stage 3: Slim runtime image.
 #
 # Node.js is needed at runtime because repository publish compiles
 # TypeScript when agents are published via POST /repository/publish.
@@ -53,14 +78,19 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 ENV NPM_CONFIG_CACHE=/tmp/npm-cache
 
-RUN groupadd -r karakara && useradd -r -g karakara -d /data -s /sbin/nologin karakara
+RUN groupadd -r -g 1000 karakara && useradd -r -u 1000 -g karakara -d /data -s /sbin/nologin karakara
 RUN mkdir -p /data && chown -R karakara:karakara /data
 
-COPY --from=builder /build/target/release/karak /usr/local/bin/
+COPY --from=builder /usr/local/bin/karak /usr/local/bin/karak
+COPY --from=web-builder /web/dist /app/web/dist
 
+WORKDIR /data
 USER 1000
 
 EXPOSE 18080
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:18080/healthz || exit 1
+
 ENTRYPOINT ["karak", "serve"]
-CMD ["--serve-http", "0.0.0.0:18080"]
+CMD ["--serve-http", "0.0.0.0:18080", "--web-dir", "/app/web/dist"]

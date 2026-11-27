@@ -6,13 +6,13 @@ This directory is the canonical reference for all GitHub Actions workflows in [`
 
 | Document | Purpose |
 |---|---|
-| [`README.md`](README.md) | Master inventory of all 9 workflows, triggers, runner classes, and `gh workflow` CLI commands |
+| [`README.md`](README.md) | Master inventory of all 10 workflows, triggers, runner classes, and `gh workflow` CLI commands |
 | [`runners-and-zero-cost-alternatives.md`](runners-and-zero-cost-alternatives.md) | Runner architecture (`ubuntu-latest` vs self-hosted `arc-runner-set`) and `$0` public-repo migration paths |
 | [`secrets-variables-and-external-ties.md`](secrets-variables-and-external-ties.md) | Complete reference for `secrets.*`, `vars.*`, `fnox.toml`, `.env.example`, and external post-fork dependencies |
 
 ---
 
-## 1. Master Inventory of All 9 Workflows
+## 1. Master Inventory of All 10 Workflows
 
 Because `KarakaraLabs/karakara-os` is a **public repository**, standard GitHub-hosted Linux x64 and ARM64 runners (`ubuntu-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`) are **free (`$0`) with unlimited minutes**.
 
@@ -24,6 +24,7 @@ All active workflows share a unified architectural pattern: structured header do
 |---|---|---|---|---|---|
 | **Rust CI (Standard Runner)** | [`rust-ci-standard.yml`](../../.github/workflows/rust-ci-standard.yml) | `push` (`main`), `pull_request`, `workflow_dispatch` | `ubuntu-latest` | `$0` (Standard, union non-LLM) | **ACTIVE** |
 | **Docs, BAML & Hygiene** | [`docs-and-hygiene.yml`](../../.github/workflows/docs-and-hygiene.yml) | `push` (`main`), `pull_request`, `workflow_dispatch` | `ubuntu-latest` | `$0` (Free, read-only) | **ACTIVE** |
+| **Python Hygiene & Tests** | [`python-hygiene.yml`](../../.github/workflows/python-hygiene.yml) | `push` (`main`), `pull_request` (`hack/**`, `scripts/**/*.py`), `workflow_dispatch` | `ubuntu-latest` | `$0` (Free, read-only) | **ACTIVE** |
 | **Secret Scan (Gitleaks)** | [`secret-scan.yml`](../../.github/workflows/secret-scan.yml) | `push` (`main`), `pull_request`, `workflow_dispatch` | `ubuntu-latest` | `$0` (Free, read-only) | **ACTIVE** |
 | **License Compliance (REUSE)** | [`reuse.yml`](../../.github/workflows/reuse.yml) | `push` (`main`), `pull_request`, `workflow_dispatch` | `ubuntu-latest` | `$0` (Free, read-only) | **ACTIVE** |
 | **Release Please (Automation & Assets)** | [`release-please.yml`](../../.github/workflows/release-please.yml) | `push` (`main`), `workflow_dispatch` | `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm` | `$0` (Free, uses `GITHUB_TOKEN`) | `disabled_manually` (enable when cutting releases) |
