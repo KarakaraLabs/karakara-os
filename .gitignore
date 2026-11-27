@@ -68,3 +68,6 @@ result
 
 # Karakara Labs Team Related
 .ravs/
+
+# Local hack/ tooling logs
+.hack-logs/
