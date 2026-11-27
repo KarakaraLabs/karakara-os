@@ -598,6 +598,7 @@ pub enum ProvEventData {
         agent_id: Option<AgentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<TaskId>,
+        projection_version: crate::context_compaction::CompactionProjectionVersion,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
         covered_node_ids: Vec<String>,
@@ -2182,6 +2183,7 @@ impl ProvEvent {
         context_id: ContextId,
         agent_id: Option<AgentId>,
         task_id: Option<TaskId>,
+        projection_version: crate::context_compaction::CompactionProjectionVersion,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
         covered_node_ids: Vec<String>,
@@ -2202,6 +2204,7 @@ impl ProvEvent {
             data: ProvEventData::ContextCompactionRecorded {
                 agent_id,
                 task_id,
+                projection_version,
                 covered_event_order_start,
                 covered_event_order_end,
                 covered_node_ids,

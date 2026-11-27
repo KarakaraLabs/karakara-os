@@ -3,18 +3,28 @@ function SummarizeConversationPrefix(
   active_planning_digest: string?,
   recent_tail_preview: string?,
   validation_feedback: string?,
+  is_operator_audit: bool?,
 ) -> string {
   client DefaultClient
   prompt #"
+    {% if is_operator_audit %}
+    You are producing an operator audit summary of a complete multi-agent
+    conversation context. Write in objective third-person prose for a human
+    operator or auditor inspecting the context timeline. Explicitly attribute
+    actions, delegations, handoffs, tool calls, and decisions to each
+    participating agent or actor — never collapse multiple agents into a single
+    first-person voice.
+    {% else %}
     You have been working on a task across a long conversation. The earlier
     transcript below will be removed from your context and replaced by the
     summary you now write. Write the summary for your future self so you can
     continue the task seamlessly without the raw history.
+    {% endif %}
 
     Preserve precisely:
     - Current state: what has been done and where things stand now
     - Decisions made, and the reasoning behind each
-    - Concrete facts established: identifiers, names, values, results
+    - Concrete facts established: identifiers, names, values, results{% if is_operator_audit %}, and actor/agent attribution{% endif %}
     - Constraints and rules, including any stated only once
     - Open questions and unresolved issues
     - Next steps, and whether the task is near completion
@@ -23,17 +33,18 @@ function SummarizeConversationPrefix(
     paraphrasing them away. Do not invent information not present in the
     transcript. Write dense, plain prose.
 
-    When citing transcript handles, use only `@N` / `#N` refs that appear in
-    the transcript below — do not invent ref numbers. Prefer paraphrasing;
-    cite handles only when a specific archived or history row must remain
-    addressable in later turns.
+    When citing transcript handles, use only `@N`, `@P/N`, or `#N` refs that
+    appear verbatim in the transcript below — do not invent ref numbers or strip
+    agent prefixes (`@P/N`). Prefer paraphrasing; cite handles only when a
+    specific archived or history row must remain addressable.
 
     {% if validation_feedback %}
     Your previous summary was rejected by the host validator:
     {{ validation_feedback }}
 
-    Rewrite the summary. Remove or replace any invalid `@N` / `#N` handles,
-    or omit refs and paraphrase instead. Do not repeat the same invalid refs.
+    Rewrite the summary. Remove or replace any invalid `@N`, `@P/N`, or `#N`
+    handles, or omit refs and paraphrase instead. Do not repeat the same invalid
+    refs.
     {% endif %}
 
     {% if active_planning_digest %}

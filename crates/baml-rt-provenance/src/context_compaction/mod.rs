@@ -22,7 +22,9 @@ pub use baml_rt_llm_config::{
 pub use compactor::{build_compaction_record, finalize_compaction_summary};
 pub use digest::{format_planning_digest, format_tail_preview};
 pub use partition::partition_items_for_compaction;
-pub use prepare::{CompactionPrepareError, PreparedCompaction, prepare_compaction};
+pub use prepare::{
+    CompactionPrepareError, PreparedCompaction, prepare_audit_compaction, prepare_compaction,
+};
 pub use projection::{CompactionSummaryItem, apply_compaction_profile};
 pub use range::{CompactableRange, item_is_live_planning_obligation, select_compactable_range};
 pub use render::{
@@ -30,11 +32,15 @@ pub use render::{
     render_items_for_context, render_items_with_ref_table, render_wire_history_rows,
     wire_history_byte_len,
 };
-pub use subscriber::{ContextCompactionSubscriber, resolve_safety_signals};
+pub use subscriber::{
+    AuditCompactionErrorKind, AuditCompactionOutcome, AuditCompactionProducer,
+    AuditCompactionSkipReason, ContextCompactionSubscriber, resolve_safety_signals,
+};
 pub use summarizer::{
-    COMPACTION_VALIDATION_RETRY_LIMIT, CompactionSummarizeError, ConversationCompactionSummarizer,
-    FixedCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION, compaction_runtime_scope,
-    invoke_summarizer_with_retry, summarize_with_validation_retry,
+    COMPACTION_VALIDATION_RETRY_LIMIT, CompactionSummarizeError, CompactionSummarizeFailureKind,
+    ConversationCompactionSummarizer, FixedCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION,
+    audit_compaction_runtime_scope, compaction_runtime_scope, invoke_summarizer_with_retry,
+    summarize_with_validation_retry,
 };
 pub use trigger::{
     CompactionDeferReason, CompactionSafetySignals, CompactionSkipReason,
@@ -42,7 +48,9 @@ pub use trigger::{
     evaluate_compaction_trigger,
 };
 pub use types::{
-    CompactionPrefixInput, CompactionRequest, ContextCompactionHead, ContextCompactionRecord,
+    AgentCompactionRequest, AuditCompactionRequest, CURRENT_COMPACTION_PROJECTION_VERSION,
+    CompactionPrefixInput, CompactionProjectionVersion, CompactionRequest,
+    CompactionSummaryAudience, ContextCompactionHead, ContextCompactionRecord,
     ContextCompactionTrigger,
 };
 

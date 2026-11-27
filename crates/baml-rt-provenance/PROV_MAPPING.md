@@ -138,6 +138,7 @@ semantics intact.
 | `MessageReceived` | `A2AMessageProcessing` activity, `Message` entity, `A2ATask` entity | `A2AMessageProcessing` -> `Message` (`WAS_RECEIVED_BY`), `A2AMessageProcessing` -> `Agent` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | `A2ATask` -> `Message` (`WAS_SPAWNED_BY`) |
 | `MessageSent` | `A2AMessageProcessing` activity, `Message` entity, `A2ATask` entity | `Message` -> `A2AMessageProcessing` (`WAS_EMITTED_BY`), `A2AMessageProcessing` -> `Agent` (`WAS_EXECUTED_BY`/`WAS_INVOKED_BY`) | `A2ATask` -> `Message` (`WAS_EMITTED_BY`) |
 | `CallbackDispatchContextsLinked` | scheduling and minted dispatch `A2ATask` entities | — | `A2ATask` (dispatch) -> `A2ATask` (scheduling) with semantic label `WAS_SCHEDULED_FROM` (runner emits when detached callback dispatch scope differs from the scheduling A2A turn) |
+| `ContextCompactionRecorded` | `ContextCompaction` activity (`context-compaction:<anchor>`, carrying `projection_version`, optional `agent_id`, covered range/node IDs, row/byte counts, `source_render_hash`), `CompactionSummary` entity (`compaction-summary:<anchor>`) | `CompactionSummary` -> `ContextCompaction` (`WAS_GENERATED_BY`) | Also upserts materialized `context_compaction_index` under deterministic `head_key` (`agent:<id>` for agent-prompt summaries, `audit` for operator/audit summaries, scoped by `projection_version`) |
 
 ## Notes
 

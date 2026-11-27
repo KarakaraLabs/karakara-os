@@ -13,11 +13,117 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::events::ContextCompactionTrigger;
 
-/// Identity for a compaction attempt (routing + provenance scope).
-#[derive(Debug, Clone)]
-pub struct CompactionRequest {
+/// Typed projection/visibility contract version embedded in compaction identity.
+///
+/// Increment [`Self::CURRENT`] whenever visibility or projection semantics change so summaries
+/// produced under an older contract are never reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CompactionProjectionVersion(pub u32);
+
+impl CompactionProjectionVersion {
+    pub const CURRENT: Self = Self(1);
+
+    #[must_use]
+    pub const fn new(version: u32) -> Self {
+        Self(version)
+    }
+
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for CompactionProjectionVersion {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+impl std::fmt::Display for CompactionProjectionVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Current projection/visibility contract version constant.
+pub const CURRENT_COMPACTION_PROJECTION_VERSION: CompactionProjectionVersion =
+    CompactionProjectionVersion::CURRENT;
+
+/// Target reader contract for a compaction summary, used to frame LLM summarization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionSummaryAudience {
+    /// Single-agent continuation summary for that agent's future prompt turns.
+    #[default]
+    AgentSelf,
+    /// Third-person, actor-attributed audit summary across all agents in the context.
+    OperatorAudit,
+}
+
+/// Identity for an agent-prompt compaction attempt (routing + provenance scope).
+///
+/// Always carries a concrete [`AgentId`]; cannot represent an operator/audit request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCompactionRequest {
     pub context_id: ContextId,
     pub agent_id: AgentId,
+    pub projection_version: CompactionProjectionVersion,
+}
+
+impl AgentCompactionRequest {
+    #[must_use]
+    pub fn new(context_id: ContextId, agent_id: AgentId) -> Self {
+        Self {
+            context_id,
+            agent_id,
+            projection_version: CompactionProjectionVersion::CURRENT,
+        }
+    }
+
+    #[must_use]
+    pub fn with_projection_version(
+        mut self,
+        projection_version: CompactionProjectionVersion,
+    ) -> Self {
+        self.projection_version = projection_version;
+        self
+    }
+}
+
+/// Backwards-compatible alias for [`AgentCompactionRequest`].
+pub type CompactionRequest = AgentCompactionRequest;
+
+/// Explicit identity for an operator/audit compaction attempt over the complete context.
+///
+/// Distinct from [`AgentCompactionRequest`]: carries no `agent_id`, always reads the
+/// complete context with [`crate::ProvenanceReadPrincipal::Operator`], and always persists
+/// under the operator head slot (`agent_id = None`). Must never be called from agent
+/// prompt execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditCompactionRequest {
+    pub context_id: ContextId,
+    pub projection_version: CompactionProjectionVersion,
+}
+
+impl AuditCompactionRequest {
+    #[must_use]
+    pub fn new(context_id: ContextId) -> Self {
+        Self {
+            context_id,
+            projection_version: CompactionProjectionVersion::CURRENT,
+        }
+    }
+
+    #[must_use]
+    pub fn with_projection_version(
+        mut self,
+        projection_version: CompactionProjectionVersion,
+    ) -> Self {
+        self.projection_version = projection_version;
+        self
+    }
 }
 
 /// Prepared prefix handed to any summarizer backend.
@@ -29,6 +135,8 @@ pub struct CompactionPrefixInput {
     pub recent_tail_preview: Option<String>,
     /// Hydrated ref table for validating wire refs cited in the summary.
     pub ref_table: Arc<RefTable>,
+    /// Target audience framing (`AgentSelf` vs `OperatorAudit`).
+    pub audience: CompactionSummaryAudience,
 }
 
 /// Latest compaction head for a context (optionally task-scoped).
@@ -49,6 +157,7 @@ pub struct ContextCompactionHead {
     pub task_entity_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<AgentId>,
+    pub projection_version: CompactionProjectionVersion,
 }
 
 /// Inputs collected before writing a compaction provenance event.
@@ -58,6 +167,7 @@ pub struct ContextCompactionRecord {
     /// `Some(agent)` for agent-prompt compaction; `None` for operator/audit compaction.
     pub agent_id: Option<AgentId>,
     pub task_id: Option<TaskId>,
+    pub projection_version: CompactionProjectionVersion,
     pub covered_event_order_start: u64,
     pub covered_event_order_end: u64,
     pub covered_node_ids: Vec<String>,

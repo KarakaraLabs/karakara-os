@@ -17,10 +17,13 @@ use baml_rt_core::{
 };
 use baml_rt_llm_config::LlmClientConfig;
 use baml_rt_provenance::{
-    AgentType, CompactionPrefixInput, CompactionRequest, CompactionSummarizeError,
-    CompactionTriggerInput, CompactionTriggerSource, ContextCompactionSubscriber,
-    ContextCompactionTrigger, ConversationCompactionSummarizer, DEFAULT_LLM_CONTEXT_ITEM_CAP,
-    ProvEvent, ProvenanceQueryApi, ProvenanceWriter, finalize_compaction_summary,
+    AgentCompactionRequest, AgentType, AuditCompactionOutcome, AuditCompactionProducer,
+    AuditCompactionRequest, CURRENT_COMPACTION_PROJECTION_VERSION, CompactionPrefixInput,
+    CompactionProjectionVersion, CompactionRequest, CompactionSummarizeError,
+    CompactionSummarizeFailureKind, CompactionSummaryAudience, CompactionTriggerInput,
+    CompactionTriggerSource, ContextCompactionSubscriber, ContextCompactionTrigger,
+    ConversationCompactionSummarizer, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvEvent, ProvenanceQueryApi,
+    ProvenanceWriter, finalize_compaction_summary, prepare_audit_compaction, prepare_compaction,
 };
 use baml_rt_tools::tools::ToolRegistry;
 use test_support::testing::provenance_fixtures::{build_isolated_store, wall_clock_tick};
@@ -104,12 +107,17 @@ impl ConversationCompactionSummarizer for SourceEchoSummarizer {
         input: &CompactionPrefixInput,
         _validation_feedback: Option<String>,
     ) -> Result<String, CompactionSummarizeError> {
-        let who = if input.source_rendered.contains("agent-a") {
-            "agent-a"
-        } else if input.source_rendered.contains("agent-b") {
-            "agent-b"
+        let mut markers = Vec::new();
+        if input.source_rendered.contains("agent-a") {
+            markers.push("agent-a");
+        }
+        if input.source_rendered.contains("agent-b") {
+            markers.push("agent-b");
+        }
+        let who = if markers.is_empty() {
+            "unknown".to_string()
         } else {
-            "unknown"
+            markers.join("+")
         };
         finalize_compaction_summary(&format!("summary derived from {who}"), &input.ref_table)
             .map_err(|e| CompactionSummarizeError::Validation(e.to_string()))
@@ -178,20 +186,14 @@ async fn two_agents_receive_private_summaries_while_operator_reads_full_context(
     let subscriber = subscriber(Arc::clone(&store));
     subscriber
         .evaluate_and_compact(
-            &CompactionRequest {
-                context_id: ctx.clone(),
-                agent_id: a.clone(),
-            },
+            &CompactionRequest::new(ctx.clone(), a.clone()),
             force_trigger(),
             "default",
         )
         .await;
     subscriber
         .evaluate_and_compact(
-            &CompactionRequest {
-                context_id: ctx.clone(),
-                agent_id: b.clone(),
-            },
+            &CompactionRequest::new(ctx.clone(), b.clone()),
             force_trigger(),
             "default",
         )
@@ -319,6 +321,7 @@ async fn two_agents_write_independent_task_scoped_heads_without_collision() {
             ctx.clone(),
             Some(agent.clone()),
             Some(task.clone()),
+            CURRENT_COMPACTION_PROJECTION_VERSION,
             0,
             100,
             vec!["n-1".to_string()],
@@ -379,10 +382,7 @@ async fn compacted_prompt_tail_is_bounded() {
     let subscriber = subscriber(Arc::clone(&store));
     subscriber
         .evaluate_and_compact(
-            &CompactionRequest {
-                context_id: ctx.clone(),
-                agent_id: a.clone(),
-            },
+            &CompactionRequest::new(ctx.clone(), a.clone()),
             force_trigger(),
             "default",
         )
@@ -416,4 +416,611 @@ async fn compacted_prompt_tail_is_bounded() {
         ),
         "compacted prompt leads with the summary"
     );
+}
+
+fn audit_producer(
+    store: Arc<baml_rt_provenance::SurrealProvenanceStore>,
+    summarizer: Arc<dyn ConversationCompactionSummarizer>,
+) -> AuditCompactionProducer {
+    let writer: Arc<dyn ProvenanceWriter> = Arc::clone(&store) as Arc<dyn ProvenanceWriter>;
+    AuditCompactionProducer::new(
+        store,
+        writer,
+        Arc::new(LlmClientConfig::sensible_default()),
+        summarizer,
+        Arc::new(ToolRegistry::new()),
+    )
+}
+
+struct FailingAuditSummarizer;
+
+#[async_trait]
+impl ConversationCompactionSummarizer for FailingAuditSummarizer {
+    fn backend_label(&self) -> &'static str {
+        "always-fail-audit"
+    }
+
+    async fn summarize_prefix_attempt(
+        &self,
+        _scope: &RuntimeScope,
+        _input: &CompactionPrefixInput,
+        _validation_feedback: Option<String>,
+    ) -> Result<String, CompactionSummarizeError> {
+        Err(CompactionSummarizeError::LlmInvoke(
+            "simulated operator summarizer failure".into(),
+        ))
+    }
+}
+
+/// Issue #9: explicit operator audit compaction covers all sibling agents in the context,
+/// persists strictly under `agent_id = None`, and never leaks into agent prompt reads.
+#[tokio::test]
+async fn operator_audit_compaction_covers_all_agents_and_stays_isolated_from_agent_prompts() {
+    let store = Arc::new(build_isolated_store().await);
+    let ctx = ContextId::new(9810, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let b = agent_id("00000000-0000-0000-0000-0000000000bb");
+    let task_a = TaskId::from_external(ExternalId::new("audit-task-a"));
+    let task_b = TaskId::from_external(ExternalId::new("audit-task-b"));
+    boot(&store, &a, "clickup-agent").await;
+    boot(&store, &b, "notion-agent").await;
+    ensure_task(&store, &ctx, &task_a, &a).await;
+    ensure_task(&store, &ctx, &task_b, &b).await;
+
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+    seed_messages(
+        &store,
+        &ctx,
+        &task_a,
+        &a,
+        "agent-a",
+        count,
+        1_900_100_000_000,
+    )
+    .await;
+    seed_messages(
+        &store,
+        &ctx,
+        &task_b,
+        &b,
+        "agent-b",
+        count,
+        1_900_100_100_000,
+    )
+    .await;
+
+    // Produce per-agent summaries first.
+    let sub = subscriber(Arc::clone(&store));
+    sub.evaluate_and_compact(
+        &AgentCompactionRequest::new(ctx.clone(), a.clone()),
+        force_trigger(),
+        "default",
+    )
+    .await;
+    sub.evaluate_and_compact(
+        &AgentCompactionRequest::new(ctx.clone(), b.clone()),
+        force_trigger(),
+        "default",
+    )
+    .await;
+
+    // Agent compaction must never populate the audit head.
+    assert!(
+        store
+            .latest_audit_compaction_head(&ctx, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+            .await
+            .expect("audit head lookup")
+            .is_none(),
+        "agent compaction must not write the operator/audit head"
+    );
+
+    let head_a_before = store
+        .latest_agent_compaction_head(&ctx, &a, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("head a")
+        .expect("agent-a head");
+    let head_b_before = store
+        .latest_agent_compaction_head(&ctx, &b, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("head b")
+        .expect("agent-b head");
+
+    // Now run the explicit operator audit compaction producer.
+    let producer = audit_producer(Arc::clone(&store), Arc::new(SourceEchoSummarizer));
+    let outcome = producer
+        .compact_audit(&AuditCompactionRequest::new(ctx.clone()), true, false)
+        .await;
+    assert!(
+        matches!(outcome, AuditCompactionOutcome::Succeeded { covered_rows, .. } if covered_rows > 0),
+        "operator audit compaction must succeed: {outcome:?}"
+    );
+
+    let audit_head = store
+        .latest_audit_compaction_head(&ctx, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("audit head")
+        .expect("operator audit head must exist");
+    assert_eq!(audit_head.agent_id, None, "audit head owns agent_id = None");
+    assert_eq!(
+        audit_head.projection_version,
+        CURRENT_COMPACTION_PROJECTION_VERSION
+    );
+    assert!(
+        audit_head.summary_text.contains("agent-a") && audit_head.summary_text.contains("agent-b"),
+        "audit summary must include rows from both sibling agents: {}",
+        audit_head.summary_text
+    );
+
+    // Agent heads remain untouched and private.
+    let head_a_after = store
+        .latest_agent_compaction_head(&ctx, &a, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("head a after")
+        .expect("agent-a head after");
+    let head_b_after = store
+        .latest_agent_compaction_head(&ctx, &b, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("head b after")
+        .expect("agent-b head after");
+    assert_eq!(head_a_after.activity_anchor, head_a_before.activity_anchor);
+    assert_eq!(head_b_after.activity_anchor, head_b_before.activity_anchor);
+    assert!(
+        head_a_after.summary_text.contains("agent-a")
+            && !head_a_after.summary_text.contains("agent-b")
+    );
+    assert!(
+        head_b_after.summary_text.contains("agent-b")
+            && !head_b_after.summary_text.contains("agent-a")
+    );
+
+    // Agent prompt reads never return the audit summary.
+    let prompt_a = store
+        .conversation_context_for_agent_prompt(&ctx, &a, None, None)
+        .await
+        .expect("prompt a");
+    let prompt_b = store
+        .conversation_context_for_agent_prompt(&ctx, &b, None, None)
+        .await
+        .expect("prompt b");
+    assert!(
+        prompt_a
+            .iter()
+            .all(|item| item.activity_anchor != audit_head.activity_anchor),
+        "agent-a prompt must never contain the audit head"
+    );
+    assert!(
+        prompt_b
+            .iter()
+            .all(|item| item.activity_anchor != audit_head.activity_anchor),
+        "agent-b prompt must never contain the audit head"
+    );
+
+    // Operator timeline picks up the audit compaction marker (never an agent head).
+    let operator_timeline = store
+        .query_conversation_context(&ctx, Some(count * 2), None, None)
+        .await
+        .expect("operator timeline");
+    assert!(
+        operator_timeline
+            .iter()
+            .any(|item| item.activity_anchor == audit_head.activity_anchor),
+        "operator timeline should surface the audit compaction marker"
+    );
+    assert!(
+        operator_timeline.iter().all(|item| {
+            item.activity_anchor != head_a_after.activity_anchor
+                && item.activity_anchor != head_b_after.activity_anchor
+        }),
+        "operator timeline must never surface an agent head"
+    );
+
+    // Full replay remains complete and ignores all compaction heads.
+    let replay = store
+        .conversation_context_for_operator(&ctx, None)
+        .await
+        .expect("full operator replay");
+    let message_count = replay
+        .iter()
+        .filter(|item| matches!(item.content, ConversationItemContent::Message { .. }))
+        .count();
+    assert_eq!(
+        message_count,
+        count * 2,
+        "raw provenance remains immutable and complete in full replay"
+    );
+}
+
+/// Issue #9: agent lookups never return an audit head, and operator lookups never return an
+/// agent head, even when only one of the two contracts has been compacted.
+#[tokio::test]
+async fn agent_lookup_never_returns_audit_head_and_operator_lookup_never_returns_agent_head() {
+    let store = Arc::new(build_isolated_store().await);
+    let ctx_audit_only = ContextId::new(9811, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let b = agent_id("00000000-0000-0000-0000-0000000000bb");
+    let task_a = TaskId::from_external(ExternalId::new("audit-only-a"));
+    let task_b = TaskId::from_external(ExternalId::new("audit-only-b"));
+    boot(&store, &a, "clickup-agent").await;
+    boot(&store, &b, "notion-agent").await;
+    ensure_task(&store, &ctx_audit_only, &task_a, &a).await;
+    ensure_task(&store, &ctx_audit_only, &task_b, &b).await;
+
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+    seed_messages(
+        &store,
+        &ctx_audit_only,
+        &task_a,
+        &a,
+        "agent-a",
+        count,
+        1_900_200_000_000,
+    )
+    .await;
+    seed_messages(
+        &store,
+        &ctx_audit_only,
+        &task_b,
+        &b,
+        "agent-b",
+        count,
+        1_900_200_100_000,
+    )
+    .await;
+
+    // Only run operator audit compaction.
+    let producer = audit_producer(Arc::clone(&store), Arc::new(SourceEchoSummarizer));
+    let outcome = producer
+        .compact_audit(
+            &AuditCompactionRequest::new(ctx_audit_only.clone()),
+            true,
+            false,
+        )
+        .await;
+    assert!(matches!(outcome, AuditCompactionOutcome::Succeeded { .. }));
+
+    assert!(
+        store
+            .latest_audit_compaction_head(
+                &ctx_audit_only,
+                None,
+                CURRENT_COMPACTION_PROJECTION_VERSION,
+            )
+            .await
+            .expect("audit head")
+            .is_some()
+    );
+    assert!(
+        store
+            .latest_agent_compaction_head(
+                &ctx_audit_only,
+                &a,
+                None,
+                CURRENT_COMPACTION_PROJECTION_VERSION,
+            )
+            .await
+            .expect("agent a head")
+            .is_none(),
+        "agent-a lookup must never return the audit head"
+    );
+    assert!(
+        store
+            .latest_agent_compaction_head(
+                &ctx_audit_only,
+                &b,
+                None,
+                CURRENT_COMPACTION_PROJECTION_VERSION,
+            )
+            .await
+            .expect("agent b head")
+            .is_none(),
+        "agent-b lookup must never return the audit head"
+    );
+
+    let prompt_a = store
+        .conversation_context_for_agent_prompt(&ctx_audit_only, &a, None, None)
+        .await
+        .expect("prompt a");
+    assert!(
+        prompt_a.iter().all(|item| !matches!(
+            item.content,
+            ConversationItemContent::CompactionSummary { .. }
+        )),
+        "agent prompt must not receive the operator audit summary"
+    );
+}
+
+/// Issue #9 invariants 10 & 12: audit preparation hydrates archive refs with Operator authority
+/// across all agents (whereas agent preparation hydrates only its own refs), and a failed audit
+/// summary attempt leaves the previous audit head untouched.
+#[tokio::test]
+async fn audit_compaction_hydrates_operator_refs_and_preserves_head_on_failure() {
+    use baml_rt_tools::{
+        archive_read::render_to_lines,
+        archive_refs::ArchiveEntry,
+        citations::{ParsedCitation, ResolvedCitation},
+    };
+
+    let store = Arc::new(build_isolated_store().await);
+    let ctx = ContextId::new(9812, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let b = agent_id("00000000-0000-0000-0000-0000000000bb");
+    let task_a = TaskId::from_external(ExternalId::new("refs-task-a"));
+    let task_b = TaskId::from_external(ExternalId::new("refs-task-b"));
+    boot(&store, &a, "clickup-agent").await;
+    boot(&store, &b, "notion-agent").await;
+    ensure_task(&store, &ctx, &task_a, &a).await;
+    ensure_task(&store, &ctx, &task_b, &b).await;
+
+    let entry = |anchor: &str| {
+        ArchiveEntry::new(
+            render_to_lines(&serde_json::json!({"anchor": anchor})),
+            "support/tool".to_string(),
+            None,
+            anchor.to_string(),
+            "tool_result".to_string(),
+        )
+    };
+    let ref_a = store
+        .archive_allocate_and_put(&ctx, &a, "anchor-a", entry("anchor-a"))
+        .await
+        .expect("archive a");
+    let ref_b = store
+        .archive_allocate_and_put(&ctx, &b, "anchor-b", entry("anchor-b"))
+        .await
+        .expect("archive b");
+
+    // Seed enough messages mentioning each agent's archive ref so the prefix includes them.
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+    let short_a = ref_a.to_string();
+    let short_b = ref_b.to_string();
+    store
+        .add_event(ProvEvent::message_received_task(
+            ctx.clone(),
+            task_a.clone(),
+            MessageId::from_external(ExternalId::new("ref-a-msg")),
+            "ROLE_USER".to_string(),
+            vec![format!("agent-a saw {short_a}")],
+            None,
+            a.clone(),
+            1_900_300_000_000,
+        ))
+        .await
+        .expect("msg a");
+    wall_clock_tick().await;
+    store
+        .add_event(ProvEvent::message_received_task(
+            ctx.clone(),
+            task_b.clone(),
+            MessageId::from_external(ExternalId::new("ref-b-msg")),
+            "ROLE_USER".to_string(),
+            vec![format!("agent-b saw {short_b}")],
+            None,
+            b.clone(),
+            1_900_300_000_010,
+        ))
+        .await
+        .expect("msg b");
+    wall_clock_tick().await;
+    seed_messages(
+        &store,
+        &ctx,
+        &task_a,
+        &a,
+        "agent-a",
+        count,
+        1_900_300_001_000,
+    )
+    .await;
+    seed_messages(
+        &store,
+        &ctx,
+        &task_b,
+        &b,
+        "agent-b",
+        count,
+        1_900_300_100_000,
+    )
+    .await;
+
+    let registry = ToolRegistry::new();
+    let producer = audit_producer(Arc::clone(&store), Arc::new(SourceEchoSummarizer));
+    let policy = producer.trigger_policy_for("default");
+
+    let prepared_audit = prepare_audit_compaction(
+        store.as_ref(),
+        &registry,
+        &policy,
+        &AuditCompactionRequest::new(ctx.clone()),
+        ContextCompactionTrigger::ManualOperator,
+    )
+    .await
+    .expect("prepare audit")
+    .expect("prepared audit");
+    assert_eq!(prepared_audit.record.agent_id, None);
+    assert_eq!(
+        prepared_audit.input.audience,
+        CompactionSummaryAudience::OperatorAudit
+    );
+
+    let parsed_a = ParsedCitation::parse(&short_a).expect("parse a");
+    let parsed_b = ParsedCitation::parse(&short_b).expect("parse b");
+    assert!(
+        ResolvedCitation::resolve(&parsed_a, &prepared_audit.input.ref_table).is_some(),
+        "operator audit preparation must hydrate agent-a archive ref {short_a}"
+    );
+    assert!(
+        ResolvedCitation::resolve(&parsed_b, &prepared_audit.input.ref_table).is_some(),
+        "operator audit preparation must hydrate agent-b archive ref {short_b}"
+    );
+
+    let prepared_agent_a = prepare_compaction(
+        store.as_ref(),
+        &registry,
+        &policy,
+        &AgentCompactionRequest::new(ctx.clone(), a.clone()),
+        ContextCompactionTrigger::ManualOperator,
+    )
+    .await
+    .expect("prepare agent a")
+    .expect("prepared agent a");
+    assert_eq!(prepared_agent_a.record.agent_id, Some(a.clone()));
+    assert_eq!(
+        prepared_agent_a.input.audience,
+        CompactionSummaryAudience::AgentSelf
+    );
+    assert!(
+        ResolvedCitation::resolve(&parsed_a, &prepared_agent_a.input.ref_table).is_some(),
+        "agent-a preparation hydrates its own ref {short_a}"
+    );
+    assert!(
+        ResolvedCitation::resolve(&parsed_b, &prepared_agent_a.input.ref_table).is_none(),
+        "agent-a preparation must not hydrate sibling agent-b ref {short_b}"
+    );
+
+    // First audit compaction succeeds and establishes a head.
+    let first = producer
+        .compact_audit(&AuditCompactionRequest::new(ctx.clone()), true, false)
+        .await;
+    assert!(matches!(first, AuditCompactionOutcome::Succeeded { .. }));
+    let original_head = store
+        .latest_audit_compaction_head(&ctx, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("original head")
+        .expect("audit head");
+
+    // Second audit compaction fails during summarization: previous head must remain active.
+    let failing_producer = audit_producer(Arc::clone(&store), Arc::new(FailingAuditSummarizer));
+    let failed = failing_producer
+        .compact_audit(&AuditCompactionRequest::new(ctx.clone()), true, false)
+        .await;
+    assert!(
+        matches!(
+            failed,
+            AuditCompactionOutcome::SummarizeFailed {
+                reason: CompactionSummarizeFailureKind::LlmInvoke
+            }
+        ),
+        "failed audit compaction must report SummarizeFailed: {failed:?}"
+    );
+    let head_after_failure = store
+        .latest_audit_compaction_head(&ctx, None, CURRENT_COMPACTION_PROJECTION_VERSION)
+        .await
+        .expect("head after failure")
+        .expect("previous audit head preserved");
+    assert_eq!(
+        head_after_failure.activity_anchor, original_head.activity_anchor,
+        "failed audit compaction must leave previous head active"
+    );
+}
+
+/// Issue #9 invariant 14: projection_version belongs in the compaction head identity so a summary
+/// created under one visibility/projection contract is never reused after that contract changes.
+#[tokio::test]
+async fn projection_version_isolates_agent_and_audit_compaction_heads() {
+    let store = Arc::new(build_isolated_store().await);
+    let ctx = ContextId::new(9813, 1);
+    let a = agent_id("00000000-0000-0000-0000-0000000000aa");
+    let task_a = TaskId::from_external(ExternalId::new("ver-task-a"));
+    boot(&store, &a, "clickup-agent").await;
+    ensure_task(&store, &ctx, &task_a, &a).await;
+
+    let count = DEFAULT_LLM_CONTEXT_ITEM_CAP + 5;
+    seed_messages(
+        &store,
+        &ctx,
+        &task_a,
+        &a,
+        "agent-a",
+        count,
+        1_900_400_000_000,
+    )
+    .await;
+
+    let producer = audit_producer(Arc::clone(&store), Arc::new(SourceEchoSummarizer));
+    let sub = subscriber(Arc::clone(&store));
+
+    let v1 = CURRENT_COMPACTION_PROJECTION_VERSION;
+    let v2 = CompactionProjectionVersion::new(v1.as_u32() + 1);
+
+    // Produce v1 heads for both agent and audit.
+    sub.evaluate_and_compact(
+        &AgentCompactionRequest::new(ctx.clone(), a.clone()).with_projection_version(v1),
+        force_trigger(),
+        "default",
+    )
+    .await;
+    assert!(matches!(
+        producer
+            .compact_audit(
+                &AuditCompactionRequest::new(ctx.clone()).with_projection_version(v1),
+                true,
+                false,
+            )
+            .await,
+        AuditCompactionOutcome::Succeeded { .. }
+    ));
+
+    // A v2 reader must NOT reuse v1 heads.
+    assert!(
+        store
+            .latest_agent_compaction_head(&ctx, &a, None, v2)
+            .await
+            .expect("v2 agent lookup")
+            .is_none(),
+        "v2 agent lookup must not reuse v1 head"
+    );
+    assert!(
+        store
+            .latest_audit_compaction_head(&ctx, None, v2)
+            .await
+            .expect("v2 audit lookup")
+            .is_none(),
+        "v2 audit lookup must not reuse v1 head"
+    );
+
+    // Writing v2 heads must not overwrite v1 heads (both coexist cleanly).
+    sub.evaluate_and_compact(
+        &AgentCompactionRequest::new(ctx.clone(), a.clone()).with_projection_version(v2),
+        force_trigger(),
+        "default",
+    )
+    .await;
+    assert!(matches!(
+        producer
+            .compact_audit(
+                &AuditCompactionRequest::new(ctx.clone()).with_projection_version(v2),
+                true,
+                false,
+            )
+            .await,
+        AuditCompactionOutcome::Succeeded { .. }
+    ));
+
+    let agent_v1 = store
+        .latest_agent_compaction_head(&ctx, &a, None, v1)
+        .await
+        .expect("v1 agent")
+        .expect("v1 agent head");
+    let agent_v2 = store
+        .latest_agent_compaction_head(&ctx, &a, None, v2)
+        .await
+        .expect("v2 agent")
+        .expect("v2 agent head");
+    let audit_v1 = store
+        .latest_audit_compaction_head(&ctx, None, v1)
+        .await
+        .expect("v1 audit")
+        .expect("v1 audit head");
+    let audit_v2 = store
+        .latest_audit_compaction_head(&ctx, None, v2)
+        .await
+        .expect("v2 audit")
+        .expect("v2 audit head");
+
+    assert_eq!(agent_v1.projection_version, v1);
+    assert_eq!(agent_v2.projection_version, v2);
+    assert_ne!(agent_v1.activity_anchor, agent_v2.activity_anchor);
+    assert_eq!(audit_v1.projection_version, v1);
+    assert_eq!(audit_v2.projection_version, v2);
+    assert_ne!(audit_v1.activity_anchor, audit_v2.activity_anchor);
 }

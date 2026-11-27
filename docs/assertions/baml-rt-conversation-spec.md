@@ -203,9 +203,54 @@ edge (e.g. `Task -[HAS_LABEL]-> Label`) and exposed through
 - **Builder preambles (mitigated for generated phase tools):** long `[OPEN]` / `[ACT]` / `[CONTINUE]` **lines** or pasted `Phase: SELECT|ACT|CONTINUE` cues in the parent IR template duplicated **PhaseOverlay** material; [`strip_phase_executor_ir_template`](../../crates/baml-rt-builder/src/builder/baml_gen/session_from_ir/phase_prompt.rs) strips them when emitting `__entry` / `__active__*`. Hand-written BAML should still document FSM in `@@description` or comments rather than relying on stripping.
 - **Intra-turn async:** `LlmCompleted` can lag; the step executor supplement exists until the graph catches up; this is not non-monotonic *provenance*, but a composite read until sync.
 
-## R9 — Prefix cacheability (append-only before compaction)
+## R9 — Prefix cacheability and host context compaction
 
-The default **projection** appends new rows; it does not rewrite earlier projected history lines on every turn. Compaction or windowing (if added) must be an explicit policy change. This keeps **LLM prefix caches** stable when the left prefix of the prompt is intentionally reused.
+The default **projection** appends new rows; it does not rewrite earlier projected history lines on every turn. When a context grows past configured model budget thresholds (or when an operator explicitly triggers compaction), host-owned compaction summarizes only a sealed chronological prefix while leaving raw provenance untouched. This keeps **LLM prefix caches** stable between compaction boundaries.
+
+### Dual compaction contracts: agent-prompt vs. operator audit
+
+Host compaction in [`crates/baml-rt-provenance/src/context_compaction/`](../../crates/baml-rt-provenance/src/context_compaction/mod.rs) separates **agent-prompt compaction** and **operator/audit compaction** at the type, read-authority, prompt-framing, and index-key levels:
+
+| Contract | Request Type | Producer | Source View & Ref Principal | Audience Framing (`SummarizeConversationPrefix`) | Index Key (`context_compaction_index`) | Reader |
+|---|---|---|---|---|---|---|
+| **Agent prompt** | `AgentCompactionRequest` (`CompactionRequest`) — requires concrete `AgentId` + `CompactionProjectionVersion` | `ContextCompactionSubscriber` (`PostTurn`, `PreModel`, `Manual`) | `conversation_context_for_agent` + `ProvenanceReadPrincipal::Agent(agent_id)` | `CompactionSummaryAudience::AgentSelf` (`is_operator_audit: false`) | `<ctx>\x1fv<ver>\x1fagent:<agent_id>\x1f<task\|context>` (`agent_id = Some(agent)`) | `conversation_context_for_agent_prompt` (`AgentPromptCompacted`) |
+| **Operator audit** | `AuditCompactionRequest` — carries `ContextId` + `CompactionProjectionVersion` (no `agent_id`) | `AuditCompactionProducer` (`ManualOperator` only; never wired into `ProjectingContextProvider` or `EffectSubscriber`) | `conversation_context_for_operator` + `ProvenanceReadPrincipal::Operator` | `CompactionSummaryAudience::OperatorAudit` (`is_operator_audit: true`, third-person actor-attributed prose) | `<ctx>\x1fv<ver>\x1faudit\x1f<task\|context>` (`agent_id = None`) | `query_conversation_context` (`OperatorTimeline`) / `latest_audit_compaction_head` |
+
+```mermaid
+flowchart LR
+  subgraph AGENT_PATH["Agent-Prompt Compaction Path"]
+    AREQ["AgentCompactionRequest (ContextId, AgentId, CompactionProjectionVersion)"] --> SUB["ContextCompactionSubscriber"]
+    SUB -->|"Agent(agent_id)"| APREP["prepare_compaction"]
+    APREP -->|"agent:<id> slot"| IDX[("context_compaction_index (SurrealDB)")]
+  end
+
+  subgraph AUDIT_PATH["Operator Audit Compaction Path"]
+    OREQ["AuditCompactionRequest (ContextId, CompactionProjectionVersion)"] --> PROD["AuditCompactionProducer"]
+    PROD -->|"Operator principal"| OPREP["prepare_audit_compaction"]
+    OPREP -->|"audit slot (agent_id = None)"| IDX
+  end
+
+  IDX -->|"latest_agent_compaction_head"| APROMPT(["Agent Prompt (Summary + Bounded Tail)"])
+  IDX -->|"latest_audit_compaction_head"| OTIMELINE(["Operator Timeline Marker"])
+  IDX -.->|"cross-read or version mismatch"| BLOCK{{"Rejected by Disjoint head_key"}}
+
+  classDef allow stroke:#0072B2,stroke-width:2px
+  classDef deny stroke:#D55E00,stroke-width:2px
+  class IDX,APROMPT,OTIMELINE allow
+  class BLOCK deny
+```
+
+### Non-negotiable compaction invariants
+
+1. **Raw provenance is immutable.** Compaction never deletes, rewrites, or marks covered graph nodes as unavailable.
+2. **Replay remains complete.** Full replay (`TranscriptProjectionProfile::ReplayFull`, `CompactionAudit`, and `conversation_context_for_operator`) ignores compaction heads and returns all original events.
+3. **Compaction is additive.** A successful run appends a `ContextCompactionRecorded` provenance event (`ContextCompaction` activity + `CompactionSummary` entity) recording the summary, covered node IDs, covered event-order range, `CompactionProjectionVersion`, `source_render_hash`, and byte/row metrics.
+4. **Heads are only materialized indexes.** Updating `context_compaction_index` via laned MVCC `UPSERT` replaces only the latest-head pointer for that `(context_id, projection_version, principal, task)` key; historical provenance and prior compaction events remain intact.
+5. **Source & citation authority match the reader.** Agent compaction reads only that agent's actor-or-target participation view and hydrates refs with `ProvenanceReadPrincipal::Agent(agent_id)`; audit compaction reads the complete context across all sibling agents and hydrates `@N` / `@P/N` / `#N` refs with `ProvenanceReadPrincipal::Operator`.
+6. **Strict ownership & no cross-read.** Agent compaction always writes `agent_id = Some(agent)`; audit compaction always writes `agent_id = None`. `latest_agent_compaction_head` never returns an audit head, `latest_audit_compaction_head` never returns an agent head, and operator audit compaction leaves all agents' `ref_table_cache` entries (including pending `Send` receipts) untouched.
+7. **No agent execution access to audit compaction.** Only explicit operator/admin code paths construct `AuditCompactionRequest` and invoke `AuditCompactionProducer`; agent prompt providers only hold `ContextCompactionSubscriber`.
+8. **Sealed-only summarization & atomic failure preservation.** In-flight state and live planning obligations (`item_is_live_planning_obligation`) stay verbatim in the tail; if preparation, wire-citation validation (`COMPACTION_VALIDATION_RETRY_LIMIT`), or persistence fails, the previous head remains active.
+9. **Bounded prompt tail & versioned identity.** `conversation_context_for_agent_prompt` caps `summary + newest tail` to `limit` (`DEFAULT_LLM_CONTEXT_ITEM_CAP`), and `CompactionProjectionVersion` (`CURRENT_COMPACTION_PROJECTION_VERSION`) is part of `head_key` so summaries created under an older visibility/projection contract are never reused after the contract changes.
 
 ## End-to-end pipeline (A2A + episode)
 
@@ -259,6 +304,7 @@ The episode reader sorts merged status + conversation + artifacts with a **total
 | `context_history` retrieval resource | `crates/tools/system/src/provenance_session_tools.rs` |
 | Context route bindings | `crates/baml-rt-provenance/src/context_route_bindings.rs` |
 | Execution-ownership leases | `crates/baml-rt-provenance/src/context_agent_leases.rs` |
+| Host context compaction (agent & operator audit) | `crates/baml-rt-provenance/src/context_compaction/`, `crates/baml-rt-provenance/src/surreal_store/context_compaction_index.rs`, `crates/baml-rt-a2a/src/host_compaction/mod.rs`, `baml_src/host/context_compaction.baml` |
 | Cross-runner routing and preconditions | `crates/baml-agent-runner/src/routing.rs`, `cluster.rs` |
 
 ## Test gaps and enforced checks
@@ -274,5 +320,6 @@ The episode reader sorts merged status + conversation + artifacts with a **total
 - **Local fanout completeness** — `test_internal_a2a_parallel_same_context_child_tasks_and_provenance` asserts per-branch inbound/outbound messages, delegation lineage, tool start/completion, and terminal task state under concurrent writes.
 - **Pinning and deploy guard** — `crates/baml-rt-provenance/tests/context_route_binding_test.rs` covers concurrent first participation and binding audit rows; `crates/baml-agent-runner/src/lib.rs` covers the recorded-override undeploy guard, rebind, fork, and artifact-bound lease rejection.
 - **Cross-runner identity** — `crates/baml-rt-api/tests/api_test.rs` rejects the same `AgentId` with a different artifact hash; the router test asserts both preconditions travel on the forwarded request.
+- **Agent vs. operator audit compaction isolation** — [`crates/baml-rt-provenance/tests/context_compaction_isolation_test.rs`](../../crates/baml-rt-provenance/tests/context_compaction_isolation_test.rs) pins per-agent private summaries, multi-agent `AuditCompactionProducer` coverage, strict no-cross-read between `latest_agent_compaction_head` and `latest_audit_compaction_head`, operator vs. agent `@P/N` archive ref hydration authority, head preservation on summarizer failure, bounded compacted prompt tails, and `CompactionProjectionVersion` isolation.
 
 **What existing snapshots still primarily cover:** JSON shape, `SessionStep` Open + reads (SendDone present on graph only), `ArchiveReader` wiring, episode `session_history` goldens, step-executor merged history growth.

@@ -244,10 +244,7 @@ async fn agent_prompt_read_applies_compaction_head_after_write() {
         "agent read is capped before compaction"
     );
 
-    let request = CompactionRequest {
-        context_id: ctx.clone(),
-        agent_id: agent_id.clone(),
-    };
+    let request = CompactionRequest::new(ctx.clone(), agent_id.clone());
     let llm_config = LlmClientConfig::sensible_default();
     compaction_subscriber(Arc::clone(&store), agent_id.clone(), &llm_config)
         .evaluate_and_compact(
@@ -368,10 +365,7 @@ async fn compaction_rejects_summary_citing_unresolved_ref() {
         summarizer,
         Arc::new(ToolRegistry::new()),
     );
-    let request = CompactionRequest {
-        context_id: ctx.clone(),
-        agent_id: agent_id.clone(),
-    };
+    let request = CompactionRequest::new(ctx.clone(), agent_id.clone());
     subscriber
         .evaluate_and_compact(
             &request,
@@ -455,10 +449,7 @@ async fn compaction_retries_on_next_settlement_after_validation_failure() {
         summarizer,
         Arc::new(ToolRegistry::new()),
     );
-    let request = CompactionRequest {
-        context_id: ctx.clone(),
-        agent_id: agent_id.clone(),
-    };
+    let request = CompactionRequest::new(ctx.clone(), agent_id.clone());
     let trigger = CompactionTriggerInput {
         source: CompactionTriggerSource::PostTurn,
         item_count: message_count,
@@ -541,10 +532,7 @@ async fn compaction_recovers_within_settlement_when_retry_fixes_validation() {
         summarizer,
         Arc::new(ToolRegistry::new()),
     );
-    let request = CompactionRequest {
-        context_id: ctx.clone(),
-        agent_id: agent_id.clone(),
-    };
+    let request = CompactionRequest::new(ctx.clone(), agent_id.clone());
 
     subscriber
         .evaluate_and_compact(
@@ -615,10 +603,7 @@ async fn pre_model_emergency_trigger_compacts_large_agent_prompt() {
         "fixture must exceed emergency prompt threshold (bytes={bytes_before}, threshold={emergency_bytes})"
     );
 
-    let request = CompactionRequest {
-        context_id: ctx.clone(),
-        agent_id: agent_id.clone(),
-    };
+    let request = CompactionRequest::new(ctx.clone(), agent_id.clone());
     let subscriber = compaction_subscriber(Arc::clone(&store), agent_id.clone(), &llm_config);
     let projection_items: Vec<_> = agent_before
         .iter()

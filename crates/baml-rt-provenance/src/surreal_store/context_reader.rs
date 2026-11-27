@@ -380,7 +380,12 @@ impl SurrealProvenanceStore {
             .conversation_context_for_agent(context_id, agent_id, task_id)
             .await?;
         let head = self
-            .latest_compaction_head(context_id, Some(agent_id), task_id)
+            .latest_agent_compaction_head(
+                context_id,
+                agent_id,
+                task_id,
+                crate::context_compaction::CURRENT_COMPACTION_PROJECTION_VERSION,
+            )
             .await?;
         let cap = limit.unwrap_or(DEFAULT_LLM_CONTEXT_ITEM_CAP).max(1);
         if head.is_some() {
@@ -541,6 +546,19 @@ impl SurrealProvenanceStore {
             cursor: next_cursor.map(|cursor| cursor.encode()),
             truncated,
         })
+    }
+
+    /// Full, uncapped operator/audit conversation view across all agents in a context.
+    ///
+    /// Source for operator/audit compaction: returns every conversation row across every
+    /// agent and task in chronological order, without applying any compaction head.
+    pub async fn conversation_context_for_operator(
+        &self,
+        context_id: &ContextId,
+        task_id: Option<&TaskId>,
+    ) -> Result<Vec<ProvenanceConversationContextItem>> {
+        self.conversation_context_filtered(context_id, None, task_id, None, None, false, true, None)
+            .await
     }
 
     /// Full, uncapped agent participation view for exactly one agent.
@@ -935,7 +953,11 @@ impl SurrealProvenanceStore {
         // Operator/audit reads may carry a context-wide audit summary (agent_id = None),
         // never an agent-prompt summary.
         let head = self
-            .latest_compaction_head(context_id, None, task_id)
+            .latest_audit_compaction_head(
+                context_id,
+                task_id,
+                crate::context_compaction::CURRENT_COMPACTION_PROJECTION_VERSION,
+            )
             .await?;
         Ok(crate::context_compaction::apply_compaction_profile(
             TranscriptProjectionProfile::OperatorTimeline,

@@ -11,7 +11,7 @@ use baml_rt_core::context::RuntimeScope;
 
 use super::{
     compactor::finalize_compaction_summary,
-    types::{CompactionPrefixInput, CompactionRequest},
+    types::{AgentCompactionRequest, AuditCompactionRequest, CompactionPrefixInput},
 };
 
 /// BAML function name in `baml_src/host/context_compaction.baml`.
@@ -19,6 +19,25 @@ pub const HOST_COMPACTION_BAML_FUNCTION: &str = "SummarizeConversationPrefix";
 
 /// LLM attempts per compaction trigger when wire-ref validation fails (initial + one feedback retry).
 pub const COMPACTION_VALIDATION_RETRY_LIMIT: usize = 2;
+
+/// Structured failure category for compaction summarization attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionSummarizeFailureKind {
+    LlmInvoke,
+    InvalidOutput,
+    Validation,
+}
+
+impl CompactionSummarizeFailureKind {
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::LlmInvoke => "llm_invoke",
+            Self::InvalidOutput => "invalid_output",
+            Self::Validation => "validation",
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompactionSummarizeError {
@@ -32,12 +51,17 @@ pub enum CompactionSummarizeError {
 
 impl CompactionSummarizeError {
     #[must_use]
-    pub fn metric_label(&self) -> &'static str {
+    pub const fn failure_kind(&self) -> CompactionSummarizeFailureKind {
         match self {
-            Self::LlmInvoke(_) => "llm_invoke",
-            Self::InvalidOutput(_) => "invalid_output",
-            Self::Validation(_) => "validation",
+            Self::LlmInvoke(_) => CompactionSummarizeFailureKind::LlmInvoke,
+            Self::InvalidOutput(_) => CompactionSummarizeFailureKind::InvalidOutput,
+            Self::Validation(_) => CompactionSummarizeFailureKind::Validation,
         }
+    }
+
+    #[must_use]
+    pub fn metric_label(&self) -> &'static str {
+        self.failure_kind().as_wire_str()
     }
 }
 
@@ -139,15 +163,32 @@ impl ConversationCompactionSummarizer for FixedCompactionSummarizer {
     }
 }
 
-/// Build a stable synthetic scope for compaction LLM routing and effect attribution.
+/// Build a stable synthetic scope for agent compaction LLM routing and effect attribution.
 #[must_use]
-pub fn compaction_runtime_scope(request: &CompactionRequest) -> RuntimeScope {
+pub fn compaction_runtime_scope(request: &AgentCompactionRequest) -> RuntimeScope {
     use baml_rt_core::ids::{ExternalId, MessageId};
     RuntimeScope::message_scope(
         request.context_id.clone(),
         request.agent_id.clone(),
         MessageId::from_external(ExternalId::new(format!(
             "host-compaction:{}",
+            request.context_id.as_str()
+        ))),
+    )
+}
+
+/// Build a stable synthetic host scope for operator/audit compaction LLM routing.
+///
+/// Uses the nil sentinel [`baml_rt_core::ids::AgentId`] so audit summarization is never
+/// attributed to any individual agent in the context.
+#[must_use]
+pub fn audit_compaction_runtime_scope(request: &AuditCompactionRequest) -> RuntimeScope {
+    use baml_rt_core::ids::{AgentId, ExternalId, MessageId, UuidId};
+    RuntimeScope::message_scope(
+        request.context_id.clone(),
+        AgentId::from_uuid(UuidId::new(uuid::Uuid::nil())),
+        MessageId::from_external(ExternalId::new(format!(
+            "host-audit-compaction:{}",
             request.context_id.as_str()
         ))),
     )
@@ -207,16 +248,15 @@ mod tests {
             attempts: Arc::clone(&attempts),
             feedback_seen: Arc::clone(&feedback_seen),
         };
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_001),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_001), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let summary = invoke_summarizer_with_retry(&summarizer, &scope, &input)
@@ -253,16 +293,15 @@ mod tests {
             }
         }
 
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_002),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_002), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let err = invoke_summarizer_with_retry(&AlwaysFailValidation, &scope, &input)
@@ -300,16 +339,15 @@ mod tests {
         let summarizer = InvokeOnceFails {
             attempts: Arc::clone(&attempts),
         };
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_003),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_003), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let err = invoke_summarizer_with_retry(&summarizer, &scope, &input)

@@ -192,16 +192,28 @@ impl SurrealProvenanceStore {
             cache.invalidate(ctx);
         }
         if let Some(ctx) = context_id_opt.as_deref()
+            && !matches!(
+                event.data(),
+                crate::events::ProvEventData::ContextCompactionRecorded { agent_id: None, .. }
+            )
             && let Ok(guard) = self.ref_table_cache.read()
             && let Some(tables) = guard.as_ref()
         {
             // Narrow invalidation to the agents this write touches. A sibling agent's ref table
-            // (including its in-memory pending receipts) survives an unrelated write.
+            // (including its in-memory pending receipts) survives an unrelated write, and an
+            // operator/audit compaction (agent_id = None) leaves every agent's ref table intact.
             let mut affected_agents: Vec<String> = Vec::new();
             if let Some(agent) = context.task_agent_id.as_ref() {
                 affected_agents.push(agent.as_str().to_string());
             }
             if let Some(agent) = event.message_agent_id() {
+                affected_agents.push(agent.as_str().to_string());
+            }
+            if let crate::events::ProvEventData::ContextCompactionRecorded {
+                agent_id: Some(agent),
+                ..
+            } = event.data()
+            {
                 affected_agents.push(agent.as_str().to_string());
             }
             affected_agents.sort();

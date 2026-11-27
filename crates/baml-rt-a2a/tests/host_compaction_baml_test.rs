@@ -103,10 +103,7 @@ async fn host_compaction_baml_validates_wire_refs_after_finalize() {
         .await,
     );
 
-    let request = CompactionRequest {
-        context_id: provenance_context_id(42),
-        agent_id: provenance_agent_id(),
-    };
+    let request = CompactionRequest::new(provenance_context_id(42), provenance_agent_id());
     let scope = compaction_runtime_scope(&request);
     let source = "user: inspect archive @3 and cite #2\nassistant: opened @3 for review";
     let ref_table = compaction_ref_table_with_at3_and_hash2();
@@ -115,6 +112,7 @@ async fn host_compaction_baml_validates_wire_refs_after_finalize() {
         active_planning_digest: None,
         recent_tail_preview: Some("user: latest ping".into()),
         ref_table: Arc::clone(&ref_table),
+        audience: baml_rt_provenance::CompactionSummaryAudience::AgentSelf,
     };
     let summary = invoke_summarizer_with_retry(engine.as_ref(), &scope, &input)
         .await

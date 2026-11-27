@@ -155,6 +155,7 @@ mod tests {
             event_order: 35,
             task_entity_id: None,
             agent_id: None,
+            projection_version: super::super::types::CURRENT_COMPACTION_PROJECTION_VERSION,
         };
         let out = apply_compaction_profile(
             TranscriptProjectionProfile::AgentPromptCompacted,
