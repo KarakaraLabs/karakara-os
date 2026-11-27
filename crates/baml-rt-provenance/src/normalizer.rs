@@ -3045,6 +3045,7 @@ fn normalize_event_with_registry(
         }
         ProvEventData::ContextCompactionRecorded {
             agent_id,
+            projection_version,
             covered_event_order_start,
             covered_event_order_end,
             covered_node_ids,
@@ -3075,6 +3076,10 @@ fn normalize_event_with_registry(
                     Value::String(agent_id.as_str().to_string()),
                 );
             }
+            activity_attrs.insert(
+                "projection_version".to_string(),
+                Value::Number((*projection_version).into()),
+            );
             activity_attrs.insert(
                 "covered_event_order_start".to_string(),
                 Value::Number((*covered_event_order_start).into()),

@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use baml_rt_conversation::view::ProvenanceConversationContextItem;
+use baml_rt_core::ids::{AgentId, ContextId};
 use baml_rt_llm_config::CompactionTriggerPolicy;
 use baml_rt_tools::tools::ToolRegistry;
 use sha2::{Digest, Sha256};
@@ -17,10 +19,13 @@ use super::{
     range::select_compactable_range,
     render::prepare_render_context,
     types::{
-        CompactionPrefixInput, CompactionRequest, ContextCompactionRecord, ContextCompactionTrigger,
+        AgentCompactionRequest, AuditCompactionRequest, CompactionPrefixInput,
+        ContextCompactionRecord, ContextCompactionTrigger,
     },
 };
-use crate::{error::ProvenanceError, surreal_store::SurrealProvenanceStore};
+use crate::{
+    ProvenanceReadPrincipal, error::ProvenanceError, surreal_store::SurrealProvenanceStore,
+};
 
 /// Inputs ready for summarization and provenance record emission.
 pub struct PreparedCompaction {
@@ -37,20 +42,78 @@ pub enum CompactionPrepareError {
     Store(#[from] ProvenanceError),
 }
 
-/// Load store state, select range, partition items, and render prefix.
+/// Load an agent's participation view, select range, partition items, and render prefix.
+///
+/// Always reads with [`ProvenanceReadPrincipal::Agent`] and produces a record owned by
+/// `Some(request.agent_id)`. Cannot populate an operator/audit head.
 pub async fn prepare_compaction(
     store: &SurrealProvenanceStore,
     tool_registry: &ToolRegistry,
     policy: &CompactionTriggerPolicy,
-    request: &CompactionRequest,
+    request: &AgentCompactionRequest,
     trigger: ContextCompactionTrigger,
 ) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
-    let context_id = &request.context_id;
     // Agent-prompt compaction is derived from exactly this agent's own view:
     // sibling rows must not change the covered prefix or the rendered summary.
     let items = store
-        .conversation_context_for_agent(context_id, &request.agent_id, None)
+        .conversation_context_for_agent(&request.context_id, &request.agent_id, None)
         .await?;
+    let principal = ProvenanceReadPrincipal::Agent(request.agent_id.clone());
+    prepare_compaction_from_items(
+        store,
+        tool_registry,
+        policy,
+        &request.context_id,
+        &principal,
+        Some(request.agent_id.clone()),
+        request.projection_version,
+        items,
+        trigger,
+    )
+    .await
+}
+
+/// Load the complete operator timeline, hydrate refs with [`ProvenanceReadPrincipal::Operator`],
+/// select range, partition items, and render an operator/audit compaction prefix.
+///
+/// Always produces a record owned by the operator slot (`agent_id = None`). Cannot populate
+/// an agent-owned compaction head.
+pub async fn prepare_audit_compaction(
+    store: &SurrealProvenanceStore,
+    tool_registry: &ToolRegistry,
+    policy: &CompactionTriggerPolicy,
+    request: &AuditCompactionRequest,
+    trigger: ContextCompactionTrigger,
+) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
+    let items = store
+        .conversation_context_for_operator(&request.context_id, None)
+        .await?;
+    prepare_compaction_from_items(
+        store,
+        tool_registry,
+        policy,
+        &request.context_id,
+        &ProvenanceReadPrincipal::Operator,
+        None,
+        request.projection_version,
+        items,
+        trigger,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn prepare_compaction_from_items(
+    store: &SurrealProvenanceStore,
+    tool_registry: &ToolRegistry,
+    policy: &CompactionTriggerPolicy,
+    context_id: &ContextId,
+    principal: &ProvenanceReadPrincipal,
+    record_agent_id: Option<AgentId>,
+    projection_version: u32,
+    items: Vec<ProvenanceConversationContextItem>,
+    trigger: ContextCompactionTrigger,
+) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
     let Some(range) = select_compactable_range(&items, policy) else {
         return Ok(None);
     };
@@ -60,9 +123,8 @@ pub async fn prepare_compaction(
         return Ok(None);
     }
 
-    let principal = crate::ProvenanceReadPrincipal::Agent(request.agent_id.clone());
     let Some(render_context) =
-        prepare_render_context(store, context_id, &principal, &items, tool_registry).await?
+        prepare_render_context(store, context_id, principal, &items, tool_registry).await?
     else {
         return Ok(None);
     };
@@ -97,8 +159,9 @@ pub async fn prepare_compaction(
 
     let record = ContextCompactionRecord {
         context_id: context_id.clone(),
-        agent_id: Some(request.agent_id.clone()),
+        agent_id: record_agent_id,
         task_id: None,
+        projection_version,
         covered_event_order_start: range.covered_event_order_start,
         covered_event_order_end: range.covered_event_order_end,
         covered_node_ids,

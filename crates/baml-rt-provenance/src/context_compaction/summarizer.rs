@@ -11,7 +11,7 @@ use baml_rt_core::context::RuntimeScope;
 
 use super::{
     compactor::finalize_compaction_summary,
-    types::{CompactionPrefixInput, CompactionRequest},
+    types::{AgentCompactionRequest, AuditCompactionRequest, CompactionPrefixInput},
 };
 
 /// BAML function name in `baml_src/host/context_compaction.baml`.
@@ -139,15 +139,32 @@ impl ConversationCompactionSummarizer for FixedCompactionSummarizer {
     }
 }
 
-/// Build a stable synthetic scope for compaction LLM routing and effect attribution.
+/// Build a stable synthetic scope for agent compaction LLM routing and effect attribution.
 #[must_use]
-pub fn compaction_runtime_scope(request: &CompactionRequest) -> RuntimeScope {
+pub fn compaction_runtime_scope(request: &AgentCompactionRequest) -> RuntimeScope {
     use baml_rt_core::ids::{ExternalId, MessageId};
     RuntimeScope::message_scope(
         request.context_id.clone(),
         request.agent_id.clone(),
         MessageId::from_external(ExternalId::new(format!(
             "host-compaction:{}",
+            request.context_id.as_str()
+        ))),
+    )
+}
+
+/// Build a stable synthetic host scope for operator/audit compaction LLM routing.
+///
+/// Uses the nil sentinel [`baml_rt_core::ids::AgentId`] so audit summarization is never
+/// attributed to any individual agent in the context.
+#[must_use]
+pub fn audit_compaction_runtime_scope(request: &AuditCompactionRequest) -> RuntimeScope {
+    use baml_rt_core::ids::{AgentId, ExternalId, MessageId, UuidId};
+    RuntimeScope::message_scope(
+        request.context_id.clone(),
+        AgentId::from_uuid(UuidId::new(uuid::Uuid::nil())),
+        MessageId::from_external(ExternalId::new(format!(
+            "host-audit-compaction:{}",
             request.context_id.as_str()
         ))),
     )
@@ -207,10 +224,8 @@ mod tests {
             attempts: Arc::clone(&attempts),
             feedback_seen: Arc::clone(&feedback_seen),
         };
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_001),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_001), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),
@@ -253,10 +268,8 @@ mod tests {
             }
         }
 
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_002),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_002), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),
@@ -300,10 +313,8 @@ mod tests {
         let summarizer = InvokeOnceFails {
             attempts: Arc::clone(&attempts),
         };
-        let request = CompactionRequest {
-            context_id: provenance_context_id(1_900_003),
-            agent_id: provenance_agent_id(),
-        };
+        let request =
+            AgentCompactionRequest::new(provenance_context_id(1_900_003), provenance_agent_id());
         let scope = compaction_runtime_scope(&request);
         let input = CompactionPrefixInput {
             source_rendered: String::new(),

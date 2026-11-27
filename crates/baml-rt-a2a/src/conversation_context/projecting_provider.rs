@@ -397,10 +397,7 @@ impl ConversationContextProvider for ProjectingConversationContextProvider {
         ) {
             return Ok(payload);
         }
-        let request = CompactionRequest {
-            context_id: scope.context_id().clone(),
-            agent_id: scope.agent_id().clone(),
-        };
+        let request = CompactionRequest::new(scope.context_id().clone(), scope.agent_id().clone());
         subscriber
             .evaluate_pre_model_emergency(
                 &request,

@@ -230,10 +230,7 @@ async fn pre_model_emergency_compacts_on_large_prompt() {
 
     subscriber
         .evaluate_pre_model_emergency(
-            &baml_rt_provenance::CompactionRequest {
-                context_id: ctx.clone(),
-                agent_id: agent_id.clone(),
-            },
+            &baml_rt_provenance::CompactionRequest::new(ctx.clone(), agent_id.clone()),
             prompt_bytes,
             items.len(),
             "default",
@@ -275,10 +272,7 @@ async fn post_turn_runs_at_settlement_despite_awaiting_input_hint() {
 
     subscriber
         .evaluate_post_turn(
-            &baml_rt_provenance::CompactionRequest {
-                context_id: ctx.clone(),
-                agent_id: agent_id.clone(),
-            },
+            &baml_rt_provenance::CompactionRequest::new(ctx.clone(), agent_id.clone()),
             "default",
         )
         .await;

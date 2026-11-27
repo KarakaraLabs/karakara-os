@@ -99,7 +99,9 @@ pub use context_agent_leases::{
     DEFAULT_CONTEXT_AGENT_LEASE_STALE_AFTER_MS, LeaseAcquisition, LeaseTransition,
 };
 pub use context_compaction::{
-    COMPACTION_VALIDATION_RETRY_LIMIT, CompactionDeferReason, CompactionPrefixInput,
+    AgentCompactionRequest, AuditCompactionOutcome, AuditCompactionProducer,
+    AuditCompactionRequest, COMPACTION_VALIDATION_RETRY_LIMIT,
+    CURRENT_COMPACTION_PROJECTION_VERSION, CompactionDeferReason, CompactionPrefixInput,
     CompactionPrepareError, CompactionRenderContext, CompactionRequest, CompactionSafetySignals,
     CompactionSkipReason, CompactionSummarizeError, CompactionTriggerDecision,
     CompactionTriggerInput, CompactionTriggerPolicy, CompactionTriggerSource,
@@ -107,13 +109,14 @@ pub use context_compaction::{
     ConversationCompactionSummarizer, DEFAULT_COMPACTION_ITEM_THRESHOLD,
     DEFAULT_COMPACTION_PROMPT_BYTES_THRESHOLD, DEFAULT_RECENT_TAIL_RETENTION,
     FixedCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION, PreparedCompaction,
-    apply_compaction_profile, build_compaction_record, compaction_runtime_scope,
-    estimate_compaction_prompt_bytes, evaluate_compaction_trigger, finalize_compaction_summary,
-    invoke_summarizer_with_retry, item_is_live_planning_obligation, partition_items_for_compaction,
-    prepare_compaction, prepare_render_context, render_items_for_context,
-    render_items_with_ref_table, render_wire_history_rows, resolve_compaction_trigger_policy,
-    resolve_safety_signals, select_compactable_range, summarize_with_validation_retry,
-    trigger_policy_from_budget, wire_history_byte_len,
+    apply_compaction_profile, audit_compaction_runtime_scope, build_compaction_record,
+    compaction_runtime_scope, estimate_compaction_prompt_bytes, evaluate_compaction_trigger,
+    finalize_compaction_summary, invoke_summarizer_with_retry, item_is_live_planning_obligation,
+    partition_items_for_compaction, prepare_audit_compaction, prepare_compaction,
+    prepare_render_context, render_items_for_context, render_items_with_ref_table,
+    render_wire_history_rows, resolve_compaction_trigger_policy, resolve_safety_signals,
+    select_compactable_range, summarize_with_validation_retry, trigger_policy_from_budget,
+    wire_history_byte_len,
 };
 pub use context_route_bindings::{
     BindingResolution, ContextRouteBinding, ContextRouteBindingRequest, ContextRouteForkRequest,

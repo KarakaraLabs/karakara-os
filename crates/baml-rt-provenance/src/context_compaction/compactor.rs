@@ -46,6 +46,7 @@ pub fn build_compaction_record(
         record.context_id,
         record.agent_id,
         record.task_id,
+        record.projection_version,
         record.covered_event_order_start,
         record.covered_event_order_end,
         record.covered_node_ids,

@@ -598,6 +598,8 @@ pub enum ProvEventData {
         agent_id: Option<AgentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<TaskId>,
+        #[serde(default = "default_compaction_projection_version")]
+        projection_version: u32,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
         covered_node_ids: Vec<String>,
@@ -2182,6 +2184,7 @@ impl ProvEvent {
         context_id: ContextId,
         agent_id: Option<AgentId>,
         task_id: Option<TaskId>,
+        projection_version: u32,
         covered_event_order_start: u64,
         covered_event_order_end: u64,
         covered_node_ids: Vec<String>,
@@ -2202,6 +2205,7 @@ impl ProvEvent {
             data: ProvEventData::ContextCompactionRecorded {
                 agent_id,
                 task_id,
+                projection_version,
                 covered_event_order_start,
                 covered_event_order_end,
                 covered_node_ids,
@@ -2217,6 +2221,10 @@ impl ProvEvent {
             },
         })
     }
+}
+
+const fn default_compaction_projection_version() -> u32 {
+    crate::context_compaction::CURRENT_COMPACTION_PROJECTION_VERSION
 }
 
 fn parse_task_status_kind_lossy(raw: &str) -> Option<TaskStatusKind> {
