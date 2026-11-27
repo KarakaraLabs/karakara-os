@@ -21,7 +21,7 @@ flowchart TD
   S3 -->|"2. poll HTTP"| GATE{"Probes Ready?<br/>/healthz & /readyz == 200"}
   GATE -->|"pass"| LIVE(["Runner + Web UI Active<br/>/healthz, /readyz, /agents, /openapi.json, /"])
   GATE -->|"timeout / non-200"| FAIL{{"Probe Verification Failed"}}
-  CLI -.->|"structured JSONL"| LOGS[(".hack-logs/containers.jsonl")]
+  CLI -.->|"structured JSONL"| LOGS[("logs/containers.jsonl")]
 
   classDef ok stroke:#0072B2,stroke-width:2px
   classDef deny stroke:#D55E00,stroke-width:2px

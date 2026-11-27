@@ -1,6 +1,6 @@
 # Developer Tooling (`hack/`)
 
-Local developer automation scripts managed with [`uv`](https://docs.astral.sh/uv/) (PEP 723 inline script metadata) and [`rich`](https://github.com/Textualize/rich), writing structured JSONL execution logs to `.hack-logs/`.
+Local developer automation scripts managed with [`uv`](https://docs.astral.sh/uv/) (PEP 723 inline script metadata) and [`rich`](https://github.com/Textualize/rich), writing structured JSONL execution logs to `logs/`.
 
 ## Modules
 

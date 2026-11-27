@@ -76,5 +76,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Local hack/ tooling logs
-.hack-logs/
+# Local tooling & runtime logs
+/logs/

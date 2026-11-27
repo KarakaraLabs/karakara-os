@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-LOGS_DIR = REPO_ROOT / ".hack-logs"
+LOGS_DIR = REPO_ROOT / "logs"
 
 
 def init_logs_dir(logs_dir: Path = LOGS_DIR) -> Path:
@@ -28,7 +28,7 @@ def log_event(
     log_name: str = "containers.jsonl",
     logs_dir: Path = LOGS_DIR,
 ) -> None:
-    """Append a structured JSONL entry to `.hack-logs/<log_name>`."""
+    """Append a structured JSONL entry to `logs/<log_name>`."""
     try:
         target_dir = init_logs_dir(logs_dir)
         log_file = target_dir / log_name

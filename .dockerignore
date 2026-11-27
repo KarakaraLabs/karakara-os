@@ -11,7 +11,7 @@ operations/observability/
 tests/
 scripts/
 hack/
-.hack-logs/
+logs/
 .ravs/
 **/__pycache__/
 *.py[cod]
