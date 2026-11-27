@@ -39,6 +39,11 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      - name: Install ripgrep for static doc & BAML checks
+        run: |
+          bash scripts/ci/apt-update-retry.sh
+          sudo apt-get install -y ripgrep
+
       - name: Detect Helm chart changes
         id: filter
         uses: dorny/paths-filter@v3
