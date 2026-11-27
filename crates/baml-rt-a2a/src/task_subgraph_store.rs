@@ -498,6 +498,12 @@ impl TaskRepository for TaskSubgraphStore {
         // `a2a_message` mirror it previously wrote no longer exists.
         Ok(())
     }
+
+    async fn is_task_owned_by_another_agent(&self, _task_id: &TaskId) -> bool {
+        // `TaskSubgraphStore` is the host-wide, agent-agnostic task graph store;
+        // per-agent ownership checks run through `AgentStoreView`.
+        false
+    }
 }
 
 #[async_trait]

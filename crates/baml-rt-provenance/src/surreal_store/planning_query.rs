@@ -376,7 +376,7 @@ impl SurrealProvenanceStore {
     /// `AgentRuntimeInstance` atomically inside the same write batch, so
     /// resolution collapses to a single edge lookup plus one node read
     /// for the `a2a_agent_id` property — and the cache layer is gone.
-    pub(crate) async fn get_task_agent_id(
+    pub async fn get_task_agent_id(
         &self,
         task_id: &TaskId,
     ) -> Result<crate::store::TaskAgentResolution> {
