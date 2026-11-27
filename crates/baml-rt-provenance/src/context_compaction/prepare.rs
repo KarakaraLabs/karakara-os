@@ -20,7 +20,8 @@ use super::{
     render::prepare_render_context,
     types::{
         AgentCompactionRequest, AuditCompactionRequest, CompactionPrefixInput,
-        ContextCompactionRecord, ContextCompactionTrigger,
+        CompactionProjectionVersion, CompactionSummaryAudience, ContextCompactionRecord,
+        ContextCompactionTrigger,
     },
 };
 use crate::{
@@ -40,6 +41,15 @@ pub struct PreparedCompaction {
 pub enum CompactionPrepareError {
     #[error("store/projection read failed: {0}")]
     Store(#[from] ProvenanceError),
+}
+
+struct CompactionPrepareTarget<'a> {
+    context_id: &'a ContextId,
+    principal: &'a ProvenanceReadPrincipal,
+    record_agent_id: Option<AgentId>,
+    projection_version: CompactionProjectionVersion,
+    audience: CompactionSummaryAudience,
+    trigger: ContextCompactionTrigger,
 }
 
 /// Load an agent's participation view, select range, partition items, and render prefix.
@@ -63,12 +73,15 @@ pub async fn prepare_compaction(
         store,
         tool_registry,
         policy,
-        &request.context_id,
-        &principal,
-        Some(request.agent_id.clone()),
-        request.projection_version,
+        CompactionPrepareTarget {
+            context_id: &request.context_id,
+            principal: &principal,
+            record_agent_id: Some(request.agent_id.clone()),
+            projection_version: request.projection_version,
+            audience: CompactionSummaryAudience::AgentSelf,
+            trigger,
+        },
         items,
-        trigger,
     )
     .await
 }
@@ -88,31 +101,42 @@ pub async fn prepare_audit_compaction(
     let items = store
         .conversation_context_for_operator(&request.context_id, None)
         .await?;
+    prepare_audit_compaction_from_items(store, tool_registry, policy, request, items, trigger).await
+}
+
+/// Prepare operator/audit compaction from an already-loaded operator timeline snapshot so
+/// trigger evaluation and prefix rendering share one consistent store read.
+pub(crate) async fn prepare_audit_compaction_from_items(
+    store: &SurrealProvenanceStore,
+    tool_registry: &ToolRegistry,
+    policy: &CompactionTriggerPolicy,
+    request: &AuditCompactionRequest,
+    items: Vec<ProvenanceConversationContextItem>,
+    trigger: ContextCompactionTrigger,
+) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
     prepare_compaction_from_items(
         store,
         tool_registry,
         policy,
-        &request.context_id,
-        &ProvenanceReadPrincipal::Operator,
-        None,
-        request.projection_version,
+        CompactionPrepareTarget {
+            context_id: &request.context_id,
+            principal: &ProvenanceReadPrincipal::Operator,
+            record_agent_id: None,
+            projection_version: request.projection_version,
+            audience: CompactionSummaryAudience::OperatorAudit,
+            trigger,
+        },
         items,
-        trigger,
     )
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn prepare_compaction_from_items(
     store: &SurrealProvenanceStore,
     tool_registry: &ToolRegistry,
     policy: &CompactionTriggerPolicy,
-    context_id: &ContextId,
-    principal: &ProvenanceReadPrincipal,
-    record_agent_id: Option<AgentId>,
-    projection_version: u32,
+    target: CompactionPrepareTarget<'_>,
     items: Vec<ProvenanceConversationContextItem>,
-    trigger: ContextCompactionTrigger,
 ) -> Result<Option<PreparedCompaction>, CompactionPrepareError> {
     let Some(range) = select_compactable_range(&items, policy) else {
         return Ok(None);
@@ -123,8 +147,14 @@ async fn prepare_compaction_from_items(
         return Ok(None);
     }
 
-    let Some(render_context) =
-        prepare_render_context(store, context_id, principal, &items, tool_registry).await?
+    let Some(render_context) = prepare_render_context(
+        store,
+        target.context_id,
+        target.principal,
+        &items,
+        tool_registry,
+    )
+    .await?
     else {
         return Ok(None);
     };
@@ -146,6 +176,7 @@ async fn prepare_compaction_from_items(
         active_planning_digest: format_planning_digest(&prefix_items),
         recent_tail_preview: tail_preview,
         ref_table: Arc::clone(&render_context.ref_table),
+        audience: target.audience,
     };
 
     let mut hasher = Sha256::new();
@@ -158,15 +189,15 @@ async fn prepare_compaction_from_items(
         .collect();
 
     let record = ContextCompactionRecord {
-        context_id: context_id.clone(),
-        agent_id: record_agent_id,
+        context_id: target.context_id.clone(),
+        agent_id: target.record_agent_id,
         task_id: None,
-        projection_version,
+        projection_version: target.projection_version,
         covered_event_order_start: range.covered_event_order_start,
         covered_event_order_end: range.covered_event_order_end,
         covered_node_ids,
         summary_text: String::new(),
-        trigger,
+        trigger: target.trigger,
         recent_tail_retention: policy.recent_tail_retention,
         pre_row_count,
         post_row_count: tail_count + 1,

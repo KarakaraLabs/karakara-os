@@ -3078,7 +3078,7 @@ fn normalize_event_with_registry(
             }
             activity_attrs.insert(
                 "projection_version".to_string(),
-                Value::Number((*projection_version).into()),
+                Value::Number(projection_version.as_u32().into()),
             );
             activity_attrs.insert(
                 "covered_event_order_start".to_string(),

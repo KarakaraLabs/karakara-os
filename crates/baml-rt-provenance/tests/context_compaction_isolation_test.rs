@@ -19,10 +19,11 @@ use baml_rt_llm_config::LlmClientConfig;
 use baml_rt_provenance::{
     AgentCompactionRequest, AgentType, AuditCompactionOutcome, AuditCompactionProducer,
     AuditCompactionRequest, CURRENT_COMPACTION_PROJECTION_VERSION, CompactionPrefixInput,
-    CompactionRequest, CompactionSummarizeError, CompactionTriggerInput, CompactionTriggerSource,
-    ContextCompactionSubscriber, ContextCompactionTrigger, ConversationCompactionSummarizer,
-    DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvEvent, ProvenanceQueryApi, ProvenanceWriter,
-    finalize_compaction_summary, prepare_audit_compaction, prepare_compaction,
+    CompactionProjectionVersion, CompactionRequest, CompactionSummarizeError,
+    CompactionSummarizeFailureKind, CompactionSummaryAudience, CompactionTriggerInput,
+    CompactionTriggerSource, ContextCompactionSubscriber, ContextCompactionTrigger,
+    ConversationCompactionSummarizer, DEFAULT_LLM_CONTEXT_ITEM_CAP, ProvEvent, ProvenanceQueryApi,
+    ProvenanceWriter, finalize_compaction_summary, prepare_audit_compaction, prepare_compaction,
 };
 use baml_rt_tools::tools::ToolRegistry;
 use test_support::testing::provenance_fixtures::{build_isolated_store, wall_clock_tick};
@@ -836,6 +837,10 @@ async fn audit_compaction_hydrates_operator_refs_and_preserves_head_on_failure()
     .expect("prepare audit")
     .expect("prepared audit");
     assert_eq!(prepared_audit.record.agent_id, None);
+    assert_eq!(
+        prepared_audit.input.audience,
+        CompactionSummaryAudience::OperatorAudit
+    );
 
     let parsed_a = ParsedCitation::parse(&short_a).expect("parse a");
     let parsed_b = ParsedCitation::parse(&short_b).expect("parse b");
@@ -859,6 +864,10 @@ async fn audit_compaction_hydrates_operator_refs_and_preserves_head_on_failure()
     .expect("prepare agent a")
     .expect("prepared agent a");
     assert_eq!(prepared_agent_a.record.agent_id, Some(a.clone()));
+    assert_eq!(
+        prepared_agent_a.input.audience,
+        CompactionSummaryAudience::AgentSelf
+    );
     assert!(
         ResolvedCitation::resolve(&parsed_a, &prepared_agent_a.input.ref_table).is_some(),
         "agent-a preparation hydrates its own ref {short_a}"
@@ -888,7 +897,7 @@ async fn audit_compaction_hydrates_operator_refs_and_preserves_head_on_failure()
         matches!(
             failed,
             AuditCompactionOutcome::SummarizeFailed {
-                reason: "llm_invoke"
+                reason: CompactionSummarizeFailureKind::LlmInvoke
             }
         ),
         "failed audit compaction must report SummarizeFailed: {failed:?}"
@@ -931,7 +940,7 @@ async fn projection_version_isolates_agent_and_audit_compaction_heads() {
     let sub = subscriber(Arc::clone(&store));
 
     let v1 = CURRENT_COMPACTION_PROJECTION_VERSION;
-    let v2 = v1 + 1;
+    let v2 = CompactionProjectionVersion::new(v1.as_u32() + 1);
 
     // Produce v1 heads for both agent and audit.
     sub.evaluate_and_compact(

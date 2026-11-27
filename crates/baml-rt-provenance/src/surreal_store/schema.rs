@@ -152,9 +152,6 @@ pub(super) async fn init_schema(db: &Surreal<Any>) -> Result<()> {
             "REMOVE INDEX IF EXISTS idx_context_compaction_ctx_agent_task ON {TBL_CONTEXT_COMPACTION_INDEX}"
         ),
         format!(
-            "REMOVE INDEX IF EXISTS idx_context_compaction_ctx_agent_task_ver ON {TBL_CONTEXT_COMPACTION_INDEX}"
-        ),
-        format!(
             "DEFINE INDEX IF NOT EXISTS idx_context_compaction_head_key ON {TBL_CONTEXT_COMPACTION_INDEX} FIELDS head_key UNIQUE"
         ),
         format!(

@@ -8,14 +8,18 @@
 use baml_rt_core::ids::{ActivityAnchorId, AgentId, ContextId, TaskId};
 use serde_json::Value;
 
-use super::SurrealProvenanceStore;
+use super::{
+    SurrealProvenanceStore, WRITE_CONFLICT_MAX_ATTEMPTS,
+    helpers::{check_and_take_zero, map_surreal_error},
+    is_transaction_conflict, jittered_backoff,
+};
 use crate::{
     context_compaction::types::{
-        CURRENT_COMPACTION_PROJECTION_VERSION, ContextCompactionHead, ContextCompactionTrigger,
+        CURRENT_COMPACTION_PROJECTION_VERSION, CompactionProjectionVersion, ContextCompactionHead,
+        ContextCompactionTrigger,
     },
-    error::Result,
+    error::{ProvenanceError, Result},
     events::{ProvEvent, ProvEventData},
-    surreal_store::helpers::{check_and_take_zero, map_surreal_error},
     surreal_tables::TBL_CONTEXT_COMPACTION_INDEX,
 };
 
@@ -23,14 +27,17 @@ fn compaction_head_key(
     context_id: &str,
     agent_id: Option<&str>,
     task_entity_id: Option<&str>,
-    projection_version: u32,
+    projection_version: CompactionProjectionVersion,
 ) -> String {
     let principal = match agent_id {
         Some(agent) => format!("agent:{agent}"),
         None => "audit".to_string(),
     };
     let task = task_entity_id.unwrap_or("context");
-    format!("{context_id}\u{1f}v{projection_version}\u{1f}{principal}\u{1f}{task}")
+    format!(
+        "{context_id}\u{1f}v{}\u{1f}{principal}\u{1f}{task}",
+        projection_version.as_u32()
+    )
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -80,10 +87,10 @@ impl SurrealProvenanceStore {
         );
         let row = ContextCompactionIndexRow {
             head_key,
-            context_id: ctx_str,
+            context_id: ctx_str.clone(),
             agent_id: agent_str,
             task_entity_id: task_str,
-            projection_version: *projection_version,
+            projection_version: projection_version.as_u32(),
             activity_anchor: event.id().as_str().to_string(),
             covered_event_order_start: *covered_event_order_start,
             covered_event_order_end: *covered_event_order_end,
@@ -116,28 +123,42 @@ impl SurrealProvenanceStore {
                event_order = $event_order \
              WHERE head_key = $head_key"
         );
-        let mut q = self
-            .db()
-            .query(&sql)
-            .bind(("head_key", row.head_key))
-            .bind(("context_id", row.context_id))
-            .bind(("projection_version", row.projection_version))
-            .bind(("activity_anchor", row.activity_anchor))
-            .bind(("covered_event_order_start", row.covered_event_order_start))
-            .bind(("covered_event_order_end", row.covered_event_order_end))
-            .bind(("summary_text", row.summary_text))
-            .bind(("trigger", row.trigger))
-            .bind(("event_order", row.event_order));
-        if let Some(agent_id) = row.agent_id {
-            q = q.bind(("agent_id", agent_id));
+
+        let lane = self.shared_write_lanes[self.shared_write_lane(Some(&ctx_str))].clone();
+        let _lane_guard = lane.lock().await;
+        for attempt in 0..WRITE_CONFLICT_MAX_ATTEMPTS {
+            let mut q = self
+                .db()
+                .query(&sql)
+                .bind(("head_key", row.head_key.clone()))
+                .bind(("context_id", row.context_id.clone()))
+                .bind(("projection_version", row.projection_version))
+                .bind(("activity_anchor", row.activity_anchor.clone()))
+                .bind(("covered_event_order_start", row.covered_event_order_start))
+                .bind(("covered_event_order_end", row.covered_event_order_end))
+                .bind(("summary_text", row.summary_text.clone()))
+                .bind(("trigger", row.trigger.clone()))
+                .bind(("event_order", row.event_order));
+            if let Some(agent_id) = &row.agent_id {
+                q = q.bind(("agent_id", agent_id.clone()));
+            }
+            if let Some(task_entity_id) = &row.task_entity_id {
+                q = q.bind(("task_entity_id", task_entity_id.clone()));
+            }
+            let outcome = q.await.and_then(surrealdb::IndexedResults::check);
+            match outcome {
+                Ok(_) => return Ok(()),
+                Err(e) if is_transaction_conflict(&e) => {
+                    if attempt + 1 >= WRITE_CONFLICT_MAX_ATTEMPTS {
+                        return Err(ProvenanceError::Contention {
+                            details: e.message().to_string(),
+                        });
+                    }
+                    tokio::time::sleep(jittered_backoff(attempt)).await;
+                }
+                Err(e) => return Err(map_surreal_error(e)),
+            }
         }
-        if let Some(task_entity_id) = row.task_entity_id {
-            q = q.bind(("task_entity_id", task_entity_id));
-        }
-        q.await
-            .map_err(map_surreal_error)?
-            .check()
-            .map_err(map_surreal_error)?;
         Ok(())
     }
 
@@ -149,7 +170,7 @@ impl SurrealProvenanceStore {
         context_id: &ContextId,
         agent_id: &AgentId,
         task_id: Option<&TaskId>,
-        projection_version: u32,
+        projection_version: CompactionProjectionVersion,
     ) -> Result<Option<ContextCompactionHead>> {
         self.latest_compaction_head_for_version(
             context_id,
@@ -167,7 +188,7 @@ impl SurrealProvenanceStore {
         &self,
         context_id: &ContextId,
         task_id: Option<&TaskId>,
-        projection_version: u32,
+        projection_version: CompactionProjectionVersion,
     ) -> Result<Option<ContextCompactionHead>> {
         self.latest_compaction_head_for_version(context_id, None, task_id, projection_version)
             .await
@@ -198,7 +219,7 @@ impl SurrealProvenanceStore {
         context_id: &ContextId,
         agent_id: Option<&AgentId>,
         task_id: Option<&TaskId>,
-        projection_version: u32,
+        projection_version: CompactionProjectionVersion,
     ) -> Result<Option<ContextCompactionHead>> {
         let task_entity = task_id.map(|t| format!("task:{}", t.as_str()));
         let head_key = compaction_head_key(
@@ -220,36 +241,40 @@ impl SurrealProvenanceStore {
             .map_err(map_surreal_error)?;
         let rows: Vec<Value> = check_and_take_zero(response, map_surreal_error)?;
         Ok(rows.into_iter().next().and_then(|row| {
+            let stored_version = row
+                .get("projection_version")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .map(CompactionProjectionVersion)?;
+            let parsed_agent_id = match row.get("agent_id").and_then(Value::as_str) {
+                Some(raw) => Some(AgentId::from_uuid(
+                    baml_rt_core::ids::UuidId::parse_str(raw).ok()?,
+                )),
+                None => None,
+            };
             Some(ContextCompactionHead {
                 activity_anchor: ActivityAnchorId::from(row.get("activity_anchor")?.as_str()?),
                 covered_event_order_start: row.get("covered_event_order_start")?.as_u64()?,
                 covered_event_order_end: row.get("covered_event_order_end")?.as_u64()?,
                 summary_text: row.get("summary_text")?.as_str()?.to_string(),
-                trigger: parse_trigger(row.get("trigger")?.as_str()?),
+                trigger: parse_trigger(row.get("trigger")?.as_str()?)?,
                 event_order: row.get("event_order")?.as_u64()?,
                 task_entity_id: row
                     .get("task_entity_id")
-                    .and_then(|v| v.as_str())
+                    .and_then(Value::as_str)
                     .map(str::to_string),
-                agent_id: row
-                    .get("agent_id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|raw| baml_rt_core::ids::UuidId::parse_str(raw).ok())
-                    .map(AgentId::from_uuid),
-                projection_version: row
-                    .get("projection_version")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|v| u32::try_from(v).ok())
-                    .unwrap_or(CURRENT_COMPACTION_PROJECTION_VERSION),
+                agent_id: parsed_agent_id,
+                projection_version: stored_version,
             })
         }))
     }
 }
 
-fn parse_trigger(raw: &str) -> ContextCompactionTrigger {
+fn parse_trigger(raw: &str) -> Option<ContextCompactionTrigger> {
     match raw {
-        "pre_model_emergency" => ContextCompactionTrigger::PreModelEmergency,
-        "manual_operator" => ContextCompactionTrigger::ManualOperator,
-        _ => ContextCompactionTrigger::PostTurnThreshold,
+        "post_turn_threshold" => Some(ContextCompactionTrigger::PostTurnThreshold),
+        "pre_model_emergency" => Some(ContextCompactionTrigger::PreModelEmergency),
+        "manual_operator" => Some(ContextCompactionTrigger::ManualOperator),
+        _ => None,
     }
 }

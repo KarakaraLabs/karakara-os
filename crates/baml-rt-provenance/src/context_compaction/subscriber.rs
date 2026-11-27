@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use baml_rt_conversation::view::ProvenanceConversationContextItem;
 use baml_rt_core::{
     bus::{EffectEvent, EffectSubscriber, EffectSubscriberTier},
     ids::ContextId,
@@ -19,15 +20,16 @@ use baml_rt_tools::tools::ToolRegistry;
 
 use super::{
     compactor::build_compaction_record,
-    prepare::{prepare_audit_compaction, prepare_compaction},
+    prepare::{prepare_audit_compaction_from_items, prepare_compaction},
     render::estimate_compaction_prompt_bytes,
     summarizer::{
-        ConversationCompactionSummarizer, audit_compaction_runtime_scope, compaction_runtime_scope,
-        invoke_summarizer_with_retry,
+        CompactionSummarizeFailureKind, ConversationCompactionSummarizer,
+        audit_compaction_runtime_scope, compaction_runtime_scope, invoke_summarizer_with_retry,
     },
     trigger::{
-        CompactionSafetySignals, CompactionTriggerDecision, CompactionTriggerInput,
-        CompactionTriggerSource, evaluate_compaction_trigger,
+        CompactionDeferReason, CompactionSafetySignals, CompactionSkipReason,
+        CompactionTriggerDecision, CompactionTriggerInput, CompactionTriggerSource,
+        evaluate_compaction_trigger,
     },
     types::{
         AgentCompactionRequest, AuditCompactionRequest, CompactionRequest, ContextCompactionTrigger,
@@ -312,7 +314,9 @@ impl ContextCompactionSubscriber {
                 return;
             }
             Ok(CompactionAttempt::Skipped) => ("skipped", Some("empty_prefix")),
-            Ok(CompactionAttempt::SummarizeFailed { reason }) => ("summarize_failed", Some(reason)),
+            Ok(CompactionAttempt::SummarizeFailed { kind }) => {
+                ("summarize_failed", Some(kind.as_wire_str()))
+            }
             Err(_) => ("error", Some("prepare_error")),
         };
         record_trigger_outcome(TriggerOutcomeRecord {
@@ -372,7 +376,7 @@ impl ContextCompactionSubscriber {
                         "compaction summarization failed"
                     );
                     return Ok(CompactionAttempt::SummarizeFailed {
-                        reason: err.metric_label(),
+                        kind: err.failure_kind(),
                     });
                 }
             };
@@ -448,7 +452,7 @@ fn record_trigger_outcome(record: TriggerOutcomeRecord<'_>) {
 enum CompactionAttempt {
     Skipped,
     SummarizeFailed {
-        reason: &'static str,
+        kind: CompactionSummarizeFailureKind,
     },
     Succeeded {
         pre_prompt_bytes: u64,
@@ -484,6 +488,40 @@ impl EffectSubscriber for ContextCompactionSubscriber {
     }
 }
 
+/// Why an operator/audit compaction request did not produce a summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditCompactionSkipReason {
+    Trigger(CompactionSkipReason),
+    EmptyPrefix,
+}
+
+impl AuditCompactionSkipReason {
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Trigger(reason) => reason.as_wire_str(),
+            Self::EmptyPrefix => "empty_prefix",
+        }
+    }
+}
+
+/// Store/persistence failure phase during an operator/audit compaction attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditCompactionErrorKind {
+    Prepare,
+    Persist,
+}
+
+impl AuditCompactionErrorKind {
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare_error",
+            Self::Persist => "persist_error",
+        }
+    }
+}
+
 /// Outcome of an explicit operator/audit compaction attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditCompactionOutcome {
@@ -493,16 +531,16 @@ pub enum AuditCompactionOutcome {
         covered_rows: u64,
     },
     Skipped {
-        reason: &'static str,
+        reason: AuditCompactionSkipReason,
     },
     Deferred {
-        reason: &'static str,
+        reason: CompactionDeferReason,
     },
     SummarizeFailed {
-        reason: &'static str,
+        reason: CompactionSummarizeFailureKind,
     },
     Error {
-        reason: &'static str,
+        kind: AuditCompactionErrorKind,
     },
 }
 
@@ -510,8 +548,8 @@ pub enum AuditCompactionOutcome {
 ///
 /// Separate from [`ContextCompactionSubscriber`] so agent prompt execution and effect
 /// subscribers cannot invoke operator-authority compaction. Reads the complete operator
-/// timeline, hydrates references with [`crate::ProvenanceReadPrincipal::Operator`], and
-/// persists the resulting summary strictly under the operator key (`agent_id = None`).
+/// timeline once per attempt, hydrates references with [`crate::ProvenanceReadPrincipal::Operator`],
+/// and persists the resulting summary strictly under the operator key (`agent_id = None`).
 #[derive(Clone)]
 pub struct AuditCompactionProducer {
     store: Arc<SurrealProvenanceStore>,
@@ -567,22 +605,25 @@ impl AuditCompactionProducer {
         let backend = self.summarizer.backend_label();
         let budget = &policy.budget;
 
-        let item_count = match self
+        // Load the complete operator timeline once so trigger evaluation and prefix rendering
+        // share a single consistent store snapshot.
+        let items = match self
             .store
             .conversation_context_for_operator(&request.context_id, None)
             .await
         {
-            Ok(items) => items.len(),
+            Ok(items) => items,
             Err(err) => {
                 tracing::warn!(
                     context_id = %request.context_id,
                     error = ?err,
                     "audit compaction operator timeline read failed"
                 );
+                let kind = AuditCompactionErrorKind::Prepare;
                 record_trigger_outcome(TriggerOutcomeRecord {
                     source: CompactionTriggerSource::Manual,
                     result: "error",
-                    reason: Some("prepare_error"),
+                    reason: Some(kind.as_wire_str()),
                     backend,
                     budget,
                     started_at: start,
@@ -590,9 +631,7 @@ impl AuditCompactionProducer {
                     post_prompt_bytes: 0,
                     covered_rows: 0,
                 });
-                return AuditCompactionOutcome::Error {
-                    reason: "prepare_error",
-                };
+                return AuditCompactionOutcome::Error { kind };
             }
         };
 
@@ -600,7 +639,7 @@ impl AuditCompactionProducer {
             resolve_safety_signals(self.store.as_ref(), &request.context_id, Some(in_flight)).await;
         let input = CompactionTriggerInput {
             source: CompactionTriggerSource::Manual,
-            item_count,
+            item_count: items.len(),
             prompt_bytes: 0,
             safety,
             force,
@@ -608,15 +647,15 @@ impl AuditCompactionProducer {
         let decision = evaluate_compaction_trigger(&policy, &input);
         match decision {
             CompactionTriggerDecision::Run(trigger) => {
-                self.run_audit_compact(request, trigger, start, backend, budget, function_name)
+                self.run_audit_compact(request, items, trigger, start, backend, &policy)
                     .await
             }
             CompactionTriggerDecision::Skip(reason) => {
-                let wire = reason.as_wire_str();
+                let skip = AuditCompactionSkipReason::Trigger(reason);
                 record_trigger_outcome(TriggerOutcomeRecord {
                     source: CompactionTriggerSource::Manual,
                     result: "skipped",
-                    reason: Some(wire),
+                    reason: Some(skip.as_wire_str()),
                     backend,
                     budget,
                     started_at: start,
@@ -624,14 +663,13 @@ impl AuditCompactionProducer {
                     post_prompt_bytes: 0,
                     covered_rows: 0,
                 });
-                AuditCompactionOutcome::Skipped { reason: wire }
+                AuditCompactionOutcome::Skipped { reason: skip }
             }
             CompactionTriggerDecision::Defer(reason) => {
-                let wire = reason.as_wire_str();
                 record_trigger_outcome(TriggerOutcomeRecord {
                     source: CompactionTriggerSource::Manual,
                     result: "deferred",
-                    reason: Some(wire),
+                    reason: Some(reason.as_wire_str()),
                     backend,
                     budget,
                     started_at: start,
@@ -639,7 +677,7 @@ impl AuditCompactionProducer {
                     post_prompt_bytes: 0,
                     covered_rows: 0,
                 });
-                AuditCompactionOutcome::Deferred { reason: wire }
+                AuditCompactionOutcome::Deferred { reason }
             }
         }
     }
@@ -647,14 +685,15 @@ impl AuditCompactionProducer {
     async fn run_audit_compact(
         &self,
         request: &AuditCompactionRequest,
+        items: Vec<ProvenanceConversationContextItem>,
         trigger: ContextCompactionTrigger,
         start: std::time::Instant,
         backend: &str,
-        budget: &baml_rt_llm_config::ModelContextBudget,
-        function_name: &str,
+        policy: &CompactionTriggerPolicy,
     ) -> AuditCompactionOutcome {
+        let budget = &policy.budget;
         let outcome = match self
-            .try_audit_compact_inner(request, trigger, function_name)
+            .try_audit_compact_inner(request, items, trigger, policy)
             .await
         {
             Ok(CompactionAttempt::Succeeded {
@@ -679,22 +718,23 @@ impl AuditCompactionProducer {
                     covered_rows,
                 };
             }
-            Ok(CompactionAttempt::Skipped) => (
-                "skipped",
-                Some("empty_prefix"),
-                AuditCompactionOutcome::Skipped {
-                    reason: "empty_prefix",
-                },
-            ),
-            Ok(CompactionAttempt::SummarizeFailed { reason }) => (
+            Ok(CompactionAttempt::Skipped) => {
+                let skip = AuditCompactionSkipReason::EmptyPrefix;
+                (
+                    "skipped",
+                    Some(skip.as_wire_str()),
+                    AuditCompactionOutcome::Skipped { reason: skip },
+                )
+            }
+            Ok(CompactionAttempt::SummarizeFailed { kind }) => (
                 "summarize_failed",
-                Some(reason),
-                AuditCompactionOutcome::SummarizeFailed { reason },
+                Some(kind.as_wire_str()),
+                AuditCompactionOutcome::SummarizeFailed { reason: kind },
             ),
-            Err(reason) => (
+            Err(kind) => (
                 "error",
-                Some(reason),
-                AuditCompactionOutcome::Error { reason },
+                Some(kind.as_wire_str()),
+                AuditCompactionOutcome::Error { kind },
             ),
         };
         record_trigger_outcome(TriggerOutcomeRecord {
@@ -714,16 +754,17 @@ impl AuditCompactionProducer {
     async fn try_audit_compact_inner(
         &self,
         request: &AuditCompactionRequest,
+        items: Vec<ProvenanceConversationContextItem>,
         trigger: ContextCompactionTrigger,
-        function_name: &str,
-    ) -> Result<CompactionAttempt, &'static str> {
+        policy: &CompactionTriggerPolicy,
+    ) -> Result<CompactionAttempt, AuditCompactionErrorKind> {
         let context_id = &request.context_id;
-        let policy = self.trigger_policy_for(function_name);
-        let prepared = match prepare_audit_compaction(
+        let prepared = match prepare_audit_compaction_from_items(
             self.store.as_ref(),
             self.tool_registry.as_ref(),
-            &policy,
+            policy,
             request,
+            items,
             trigger,
         )
         .await
@@ -736,7 +777,7 @@ impl AuditCompactionProducer {
                     error = ?err,
                     "audit compaction preparation failed"
                 );
-                return Err("prepare_error");
+                return Err(AuditCompactionErrorKind::Prepare);
             }
         };
 
@@ -753,7 +794,7 @@ impl AuditCompactionProducer {
                         "audit compaction summarization failed"
                     );
                     return Ok(CompactionAttempt::SummarizeFailed {
-                        reason: err.metric_label(),
+                        kind: err.failure_kind(),
                     });
                 }
             };
@@ -770,7 +811,7 @@ impl AuditCompactionProducer {
                 error = ?err,
                 "failed to record audit compaction provenance event"
             );
-            "persist_error"
+            AuditCompactionErrorKind::Persist
         })?;
         Ok(CompactionAttempt::Succeeded {
             pre_prompt_bytes: prepared.pre_prompt_bytes,

@@ -99,11 +99,13 @@ pub use context_agent_leases::{
     DEFAULT_CONTEXT_AGENT_LEASE_STALE_AFTER_MS, LeaseAcquisition, LeaseTransition,
 };
 pub use context_compaction::{
-    AgentCompactionRequest, AuditCompactionOutcome, AuditCompactionProducer,
-    AuditCompactionRequest, COMPACTION_VALIDATION_RETRY_LIMIT,
-    CURRENT_COMPACTION_PROJECTION_VERSION, CompactionDeferReason, CompactionPrefixInput,
-    CompactionPrepareError, CompactionRenderContext, CompactionRequest, CompactionSafetySignals,
-    CompactionSkipReason, CompactionSummarizeError, CompactionTriggerDecision,
+    AgentCompactionRequest, AuditCompactionErrorKind, AuditCompactionOutcome,
+    AuditCompactionProducer, AuditCompactionRequest, AuditCompactionSkipReason,
+    COMPACTION_VALIDATION_RETRY_LIMIT, CURRENT_COMPACTION_PROJECTION_VERSION,
+    CompactionDeferReason, CompactionPrefixInput, CompactionPrepareError,
+    CompactionProjectionVersion, CompactionRenderContext, CompactionRequest,
+    CompactionSafetySignals, CompactionSkipReason, CompactionSummarizeError,
+    CompactionSummarizeFailureKind, CompactionSummaryAudience, CompactionTriggerDecision,
     CompactionTriggerInput, CompactionTriggerPolicy, CompactionTriggerSource,
     ContextCompactionHead, ContextCompactionSubscriber, ContextCompactionTrigger,
     ConversationCompactionSummarizer, DEFAULT_COMPACTION_ITEM_THRESHOLD,

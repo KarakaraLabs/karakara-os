@@ -20,6 +20,25 @@ pub const HOST_COMPACTION_BAML_FUNCTION: &str = "SummarizeConversationPrefix";
 /// LLM attempts per compaction trigger when wire-ref validation fails (initial + one feedback retry).
 pub const COMPACTION_VALIDATION_RETRY_LIMIT: usize = 2;
 
+/// Structured failure category for compaction summarization attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionSummarizeFailureKind {
+    LlmInvoke,
+    InvalidOutput,
+    Validation,
+}
+
+impl CompactionSummarizeFailureKind {
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::LlmInvoke => "llm_invoke",
+            Self::InvalidOutput => "invalid_output",
+            Self::Validation => "validation",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CompactionSummarizeError {
     #[error("llm invoke: {0}")]
@@ -32,12 +51,17 @@ pub enum CompactionSummarizeError {
 
 impl CompactionSummarizeError {
     #[must_use]
-    pub fn metric_label(&self) -> &'static str {
+    pub const fn failure_kind(&self) -> CompactionSummarizeFailureKind {
         match self {
-            Self::LlmInvoke(_) => "llm_invoke",
-            Self::InvalidOutput(_) => "invalid_output",
-            Self::Validation(_) => "validation",
+            Self::LlmInvoke(_) => CompactionSummarizeFailureKind::LlmInvoke,
+            Self::InvalidOutput(_) => CompactionSummarizeFailureKind::InvalidOutput,
+            Self::Validation(_) => CompactionSummarizeFailureKind::Validation,
         }
+    }
+
+    #[must_use]
+    pub fn metric_label(&self) -> &'static str {
+        self.failure_kind().as_wire_str()
     }
 }
 
@@ -232,6 +256,7 @@ mod tests {
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let summary = invoke_summarizer_with_retry(&summarizer, &scope, &input)
@@ -276,6 +301,7 @@ mod tests {
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let err = invoke_summarizer_with_retry(&AlwaysFailValidation, &scope, &input)
@@ -321,6 +347,7 @@ mod tests {
             active_planning_digest: None,
             recent_tail_preview: None,
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: super::super::types::CompactionSummaryAudience::AgentSelf,
         };
 
         let err = invoke_summarizer_with_retry(&summarizer, &scope, &input)

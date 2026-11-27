@@ -112,6 +112,7 @@ async fn host_compaction_baml_validates_wire_refs_after_finalize() {
         active_planning_digest: None,
         recent_tail_preview: Some("user: latest ping".into()),
         ref_table: Arc::clone(&ref_table),
+        audience: baml_rt_provenance::CompactionSummaryAudience::AgentSelf,
     };
     let summary = invoke_summarizer_with_retry(engine.as_ref(), &scope, &input)
         .await

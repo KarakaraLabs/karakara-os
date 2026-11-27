@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use baml_rt_core::{Result, bus::EffectEmitter, context::RuntimeScope};
 use baml_rt_llm_config::LlmClientResolver;
 use baml_rt_provenance::{
-    CompactionPrefixInput, CompactionSummarizeError, ConversationCompactionSummarizer,
-    HOST_COMPACTION_BAML_FUNCTION, finalize_compaction_summary,
+    CompactionPrefixInput, CompactionSummarizeError, CompactionSummaryAudience,
+    ConversationCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION, finalize_compaction_summary,
 };
 use baml_rt_quickjs::{BamlRuntimeManager, llm_client_registry::LlmSecretResolver};
 use serde_json::{Value, json};
@@ -78,6 +78,7 @@ pub fn compaction_baml_invoke_args(
         "active_planning_digest": input.active_planning_digest,
         "recent_tail_preview": input.recent_tail_preview,
         "validation_feedback": validation_feedback,
+        "is_operator_audit": matches!(input.audience, CompactionSummaryAudience::OperatorAudit),
     })
 }
 
@@ -120,14 +121,22 @@ mod tests {
             active_planning_digest: Some("plan".into()),
             recent_tail_preview: Some("tail".into()),
             ref_table: Arc::new(baml_rt_tools::archive_refs::RefTable::new()),
+            audience: CompactionSummaryAudience::AgentSelf,
         };
         let args = compaction_baml_invoke_args(&input, Some("unresolved @9"));
         assert_eq!(args["transcript_prefix"], "user: hello");
         assert_eq!(args["active_planning_digest"], "plan");
         assert_eq!(args["recent_tail_preview"], "tail");
         assert_eq!(args["validation_feedback"], "unresolved @9");
+        assert_eq!(args["is_operator_audit"], false);
 
         let args = compaction_baml_invoke_args(&input, None);
         assert!(args["validation_feedback"].is_null());
+        assert_eq!(args["is_operator_audit"], false);
+
+        let mut audit_input = input;
+        audit_input.audience = CompactionSummaryAudience::OperatorAudit;
+        let audit_args = compaction_baml_invoke_args(&audit_input, None);
+        assert_eq!(audit_args["is_operator_audit"], true);
     }
 }

@@ -33,13 +33,14 @@ pub use render::{
     wire_history_byte_len,
 };
 pub use subscriber::{
-    AuditCompactionOutcome, AuditCompactionProducer, ContextCompactionSubscriber,
-    resolve_safety_signals,
+    AuditCompactionErrorKind, AuditCompactionOutcome, AuditCompactionProducer,
+    AuditCompactionSkipReason, ContextCompactionSubscriber, resolve_safety_signals,
 };
 pub use summarizer::{
-    COMPACTION_VALIDATION_RETRY_LIMIT, CompactionSummarizeError, ConversationCompactionSummarizer,
-    FixedCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION, audit_compaction_runtime_scope,
-    compaction_runtime_scope, invoke_summarizer_with_retry, summarize_with_validation_retry,
+    COMPACTION_VALIDATION_RETRY_LIMIT, CompactionSummarizeError, CompactionSummarizeFailureKind,
+    ConversationCompactionSummarizer, FixedCompactionSummarizer, HOST_COMPACTION_BAML_FUNCTION,
+    audit_compaction_runtime_scope, compaction_runtime_scope, invoke_summarizer_with_retry,
+    summarize_with_validation_retry,
 };
 pub use trigger::{
     CompactionDeferReason, CompactionSafetySignals, CompactionSkipReason,
@@ -48,7 +49,8 @@ pub use trigger::{
 };
 pub use types::{
     AgentCompactionRequest, AuditCompactionRequest, CURRENT_COMPACTION_PROJECTION_VERSION,
-    CompactionPrefixInput, CompactionRequest, ContextCompactionHead, ContextCompactionRecord,
+    CompactionPrefixInput, CompactionProjectionVersion, CompactionRequest,
+    CompactionSummaryAudience, ContextCompactionHead, ContextCompactionRecord,
     ContextCompactionTrigger,
 };
 
