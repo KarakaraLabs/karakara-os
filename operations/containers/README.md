@@ -2,6 +2,9 @@
 
 First-party OCI container image definitions for running Karakara OS locally or standalone on Linux and macOS (Docker / Podman), plus microVM guest images for external tools.
 
+> [!IMPORTANT]
+> **Platform Validation Status:** Local builds, Web UI bundling, and `hack/containers/` lifecycle workflows are currently validated on **macOS (`aarch64` Apple Silicon with Podman)**. Native **Linux (`x86_64` / `aarch64`) validation** is queued next. See the full architecture diagram and runbook in [`docs/runbooks/local-containers.md`](../../docs/runbooks/local-containers.md).
+
 - [`runner.Dockerfile`](runner.Dockerfile) — Multi-stage image bundling `karak serve`, Node.js 22 + TypeScript 6 (for `POST /repository/publish`), and the built Vue Web UI (`/app/web/dist`).
 - [`tool-runtime/`](tool-runtime/README.md) — MicroVM guest images for the External Tools v2 sandbox tier.
 

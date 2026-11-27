@@ -54,7 +54,7 @@ MCP walkthrough (weather agent, no `just` wrapper): [`scripts/meteo_mcp.sh`](../
 ## Deployment (Linux Binary & Container)
 
 - **Prebuilt Linux release binaries (`karak`):** [`INSTALL.md`](../../INSTALL.md)
-- **Container definitions:** [`operations/containers/`](../../operations/containers/)
+- **Local Podman / Docker container (runner + Web UI):** [`local-containers.md`](local-containers.md) and [`operations/containers/`](../../operations/containers/)
 - **Kubernetes Helm chart (dormant pilot):** [`operations/deployment/helm/karakara-os/`](../../operations/deployment/helm/karakara-os/) — see [`k8s-pilot-operator-guide.md`](k8s-pilot-operator-guide.md)
 
 ---
